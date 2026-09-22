@@ -68,10 +68,10 @@ direnv allow                      # 或手动 nix develop（仓库根即项目�
 dev shell 提供：rust stable（wasm32 target、rust-src、clippy、rust-analyzer）、
 dioxus-cli、binaryen、lld、以及与本项目 wasm-bindgen 0.2.126 严格对齐的 wasm-bindgen-cli。
 
-`tools/bin/dx` 是 [官方 v0.7.10 预编译二进制](https://github.com/DioxusLabs/dioxus/releases)——
-nixpkgs 的 dioxus-cli 落后于 crates.io 版本，而 dx 与 dioxus 子 crate 版本必须一致
-（否则 devserver 注入的解释器 JS 与客户端协议错位，水合时崩溃）。
-Cargo.toml 中 facade 用 `=0.7.10` 锁死，子 crate 精确版本由 Cargo.lock 保证。
+dx 与 dioxus 子 crate 版本必须严格一致——版本错位时 devserver 注入的
+解释器 JS 与客户端协议不匹配，水合会直接崩溃。flake 里的 nixpkgs 输入
+已更新到提供 dioxus-cli 0.7.10 的版本，Cargo.toml 中 facade 用
+`=0.7.10` 锁死、子 crate 精确版本由 Cargo.lock 保证，三者对齐。
 
 ```bash
 just serve        # nix develop -c tools/bin/dx serve --addr 127.0.0.1 --port 8230 --open false

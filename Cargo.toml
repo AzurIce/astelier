@@ -1,0 +1,44 @@
+[package]
+name = "atelier"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# dx（tools/bin/dx 0.7.10）与 dioxus 同版本；子 crate 的精确版本在 Cargo.lock 锁定，
+# 避免 facade semver 漂移导致 dx 与客户端协议不一致。
+# devtools（subsecond 热补丁）在本环境会残留「must rebuild」提示层并拦截点击，故关闭；
+# 开发时 dx watch 仍会整页刷新。
+dioxus = { version = "=0.7.10", default-features = false, features = [
+  "fullstack",
+  "launch",
+  "lib",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 与 dx 自带的 wasm-bindgen-cli 0.2.126 严格对齐（dx 链接 wasm 时校验版本）
+wasm-bindgen = "=0.2.126"
+
+# 客户端延时（轮询批次状态）
+gloo-timers = { version = "0.3", features = ["futures"], optional = true }
+
+# --- server 独占（wasm 客户端不编译）---
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "sync"], optional = true }
+axum = { version = "0.8", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart"], optional = true }
+base64 = { version = "0.22", optional = true }
+pulldown-cmark = { version = "0.13", optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window", "Storage", "Document", "Element", "MediaQueryList", "HtmlElement"] }
+
+[features]
+default = []
+web = ["dioxus/web", "dep:gloo-timers"]
+server = ["dioxus/server", "dep:tokio", "dep:axum", "dep:reqwest", "dep:base64", "dep:uuid", "dep:pulldown-cmark"]
+
+[profile.dev]
+opt-level = 1

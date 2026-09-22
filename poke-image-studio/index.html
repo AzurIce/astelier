@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Poke Image Studio · gpt-image 调用工作台</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">🎨</span>
+    <div>
+      <h1>Poke Image Studio</h1>
+      <p class="subtitle">OpenAI Images 兼容协议 · gpt-image 全参数调用工作台</p>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <select id="providerQuickSelect" title="切换 Provider"></select>
+    <button id="btnManageProvider" class="ghost" title="编辑当前 Provider">管理</button>
+    <button id="btnExportConfig" class="ghost" title="导出配置为 JSON">导出配置</button>
+    <button id="btnImportConfig" class="ghost" title="从 JSON 导入配置">导入配置</button>
+    <input type="file" id="importConfigFile" accept=".json" hidden>
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- ======== 左侧：模型列表 ======== -->
+  <aside class="panel provider-panel">
+    <div class="panel-head">
+      <h2>模型</h2>
+      <div class="row gap">
+        <button id="btnFetchModels" class="ghost small" title="从当前 Provider 的 /v1/models 拉取图像模型">拉取</button>
+        <button id="btnAddProvider" class="ghost small" title="新增 Provider">+ Provider</button>
+      </div>
+    </div>
+
+    <div id="modelList" class="model-list"></div>
+
+    <div class="add-model-row">
+      <input type="text" id="newModelId" placeholder="添加自定义模型 ID" spellcheck="false">
+      <button id="btnAddModel" class="ghost small">添加</button>
+    </div>
+    <p class="hint" style="margin-top:8px">徽章：任意尺寸 / 透明底 / 流式 / mask 编辑 / 画质档 / style；红 = 不可编辑；橙 = 网关转换模型，参数以网关为准。点选模型作用于当前模式（文生图 / 编辑分开记忆）。</p>
+
+    <div id="providerEditor" class="provider-editor" hidden>
+      <h3 id="providerEditorTitle">编辑 Provider</h3>
+      <label>名称
+        <input type="text" id="pName" placeholder="例如 OpenAI 官方 / Poke API">
+      </label>
+      <label>Base URL（含 /v1）
+        <input type="text" id="pBaseUrl" placeholder="https://api.openai.com/v1">
+      </label>
+      <label>API Key
+        <div class="key-row">
+          <input type="password" id="pApiKey" placeholder="sk-..." autocomplete="off">
+          <button id="btnToggleKey" class="ghost small" type="button">显示</button>
+        </div>
+      </label>
+      <label>代理前缀（可选，CORS 受限时使用）
+        <input type="text" id="pProxy" placeholder="https://your-proxy.example/  （直接拼接在请求 URL 前）">
+      </label>
+      <label>模型列表（每行一个）
+        <textarea id="pModels" rows="8" spellcheck="false" placeholder="gpt-image-2"></textarea>
+      </label>
+      <div class="row gap">
+        <span class="hint">修改 Base URL / Key 后先「保存」再点上方「拉取」。</span>
+      </div>
+      <div class="row gap">
+        <button id="btnSaveProvider" class="primary small">保存</button>
+        <button id="btnDeleteProvider" class="danger small">删除</button>
+        <button id="btnCancelProvider" class="ghost small">取消</button>
+      </div>
+    </div>
+
+    <div class="panel-foot hint">
+      配置保存在浏览器 localStorage，可随时「导出配置」备份。Key 不会发送到除目标 Provider 以外的任何地址。
+    </div>
+  </aside>
+
+  <!-- ======== 主区域 ======== -->
+  <main class="main">
+    <nav class="tabs">
+      <button class="tab active" data-mode="gen">文生图 <code>/images/generations</code></button>
+      <button class="tab" data-mode="edit">图片编辑 <code>/images/edits</code></button>
+    </nav>
+
+    <!-- 文生图表单 -->
+    <section id="genSection" class="form-section">
+      <div class="form-grid">
+        <label class="span2">当前模型<span class="hint">（在左侧列表点选，按模式分别记忆）</span>
+          <div class="row gap"><span class="current-model" id="genCurrentModel">—</span></div>
+          <span class="hint" id="genModelHint"></span>
+        </label>
+
+        <label class="span2">Prompt <span id="genPromptCount" class="hint"></span>
+          <textarea id="genPrompt" rows="5" maxlength="32000" placeholder="描述想要生成的图像…（最长 32000 字符）"></textarea>
+        </label>
+
+        <div class="span2 common-params" id="genCommon"></div>
+      </div>
+      <div class="actions">
+        <button id="btnGenerate" class="primary">生成图片 <kbd>⌘↩</kbd></button>
+        <label class="check"><input type="checkbox" id="genStream"> 流式（stream）</label>
+      </div>
+    </section>
+
+    <!-- 图片编辑表单 -->
+    <section id="editSection" class="form-section" hidden>
+      <div class="form-grid">
+        <label class="span2">当前模型<span class="hint">（在左侧列表点选，按模式分别记忆）</span>
+          <div class="row gap"><span class="current-model" id="editCurrentModel">—</span></div>
+          <span class="hint" id="editModelHint"></span>
+        </label>
+
+        <label class="span2">Prompt（编辑指令）<span id="editPromptCount" class="hint"></span>
+          <textarea id="editPrompt" rows="3" maxlength="32000" placeholder="例如：保留主体，把背景改成夜晚城市，并增加蓝色霓虹灯"></textarea>
+        </label>
+
+        <div class="span2">
+          <div class="row space-between">
+            <span class="field-label">参考图（最多 16 张）</span>
+            <div class="row gap">
+              <button id="btnAddLastResult" class="ghost small" type="button">＋ 以最近结果添加</button>
+              <button id="btnClearImages" class="ghost small" type="button">清空</button>
+            </div>
+          </div>
+          <div id="imageDrop" class="dropzone">点击或拖入图片文件到此区域上传</div>
+          <input type="file" id="imageFiles" accept="image/*" multiple hidden>
+          <div id="imageThumbs" class="thumbs"></div>
+          <label style="margin-top:10px">参考图 URL（JSON 模式，每行一个公网 URL 或 file_id:xxx；与本地文件二选一）
+            <textarea id="editImageUrls" rows="2" spellcheck="false" placeholder="https://example.com/ref1.png&#10;fileid:file-abc123"></textarea>
+          </label>
+        </div>
+
+        <div class="span2">
+          <div class="row space-between">
+            <span class="field-label">蒙版 mask（PNG，透明区 = 重绘区域）</span>
+            <div class="row gap">
+              <button id="btnOpenMaskPainter" class="ghost small" type="button">🖌 蒙版画板</button>
+              <button id="btnUploadMask" class="ghost small" type="button">上传 mask 文件</button>
+              <button id="btnClearMask" class="ghost small" type="button">移除</button>
+            </div>
+          </div>
+          <input type="file" id="maskFile" accept="image/png" hidden>
+          <div class="row gap">
+            <div id="maskThumb" class="mask-thumb" hidden></div>
+            <div class="grow">
+              <label>JSON 模式下 mask 也可用 URL / file_id</label>
+              <input type="text" id="editMaskUrl" placeholder="https://example.com/mask.png 或 file_id（留空则用本地画板结果）" spellcheck="false">
+            </div>
+          </div>
+          <p class="hint">提交方式：本地文件 → multipart/form-data；下方填写 URL → JSON body。透明像素 = 需要重绘的区域。</p>
+        </div>
+
+        <div class="span2 common-params" id="editCommon"></div>
+      </div>
+
+      <div class="actions">
+        <button id="btnEdit" class="primary">执行编辑 <kbd>⌘↩</kbd></button>
+        <label class="check"><input type="checkbox" id="editStream"> 流式（stream）</label>
+      </div>
+    </section>
+
+    <!-- 结果区 -->
+    <section class="result-section">
+      <div class="panel-head">
+        <h2>结果</h2>
+        <div class="row gap">
+          <button id="btnToggleReqLog" class="ghost small">请求详情</button>
+          <button id="btnClearHistory" class="ghost small">清空历史</button>
+        </div>
+      </div>
+      <div id="statusBar" class="status" hidden></div>
+      <div id="historyList" class="history"></div>
+    </section>
+  </main>
+</div>
+
+<!-- ======== 请求详情弹窗 ======== -->
+<div id="reqLogModal" class="modal" hidden>
+  <div class="modal-card wide">
+    <div class="modal-head">
+      <h3>请求详情</h3>
+      <button class="modal-close ghost small" data-close="reqLogModal">✕</button>
+    </div>
+    <div class="modal-body">
+      <h4>等价 cURL（Key 已脱敏）</h4>
+      <pre id="curlPreview" class="code"></pre>
+      <h4>请求 Body（JSON 模式预览）</h4>
+      <pre id="bodyPreview" class="code"></pre>
+      <h4>原始响应</h4>
+      <pre id="respPreview" class="code"></pre>
+    </div>
+  </div>
+</div>
+
+<!-- ======== 蒙版画板 ======== -->
+<div id="maskModal" class="modal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3>蒙版画板 <span class="hint">涂刷的区域 = 重绘区域（导出时转为透明）</span></h3>
+      <button class="modal-close ghost small" data-close="maskModal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="row gap wrap" style="margin-bottom:8px">
+        <button id="maskLoadRef" class="ghost small" type="button">载入参考图 1</button>
+        <button id="maskLoadLast" class="ghost small" type="button">载入最近结果</button>
+        <label class="ghost small file-label">载入本地图片<input type="file" id="maskLoadFile" accept="image/*" hidden></label>
+        <span class="sep"></span>
+        <button id="maskBrush" class="ghost small active-tool" type="button">画笔</button>
+        <button id="maskEraser" class="ghost small" type="button">橡皮</button>
+        <label class="inline-slider">粗细
+          <input type="range" id="maskBrushSize" min="4" max="120" value="36">
+        </label>
+        <span class="sep"></span>
+        <button id="maskUndo" class="ghost small" type="button">撤销</button>
+        <button id="maskInvert" class="ghost small" type="button">反相</button>
+        <button id="maskClear" class="ghost small" type="button">清空</button>
+      </div>
+      <div class="mask-canvas-wrap" id="maskCanvasWrap">
+        <canvas id="maskBase"></canvas>
+        <canvas id="maskPaint"></canvas>
+      </div>
+      <p class="hint" id="maskSizeHint">提示：不载入底图也可直接涂刷（将使用画布尺寸）。</p>
+      <div class="row gap" style="margin-top:12px">
+        <button id="maskApply" class="primary small">应用蒙版</button>
+        <span class="hint">应用后作为本地 mask 文件随 multipart 请求上传。</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 模型元数据配置 -->
+<div id="modelCfgModal" class="modal" hidden>
+  <div class="modal-card wide">
+    <div class="modal-head">
+      <h3>模型元数据配置 <span class="hint" id="mCfgSubtitle"></span></h3>
+      <button class="modal-close ghost small" data-close="modelCfgModal">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="hint">以 JSON 元数据描述该模型在当前 Provider 下的参数能力。params 数组即参数区渲染契约：key = 请求体字段名，type ∈ select / number / text / size，select/size 需 options，size 可加 sizeCustom 与 sizeRule，modes 限定出现模式，requiresStream 表示仅流式时发送。保存后参数区、能力树、请求收集全部按此生成。</p>
+      <div class="row gap" style="margin:10px 0">
+        <select id="mCfgTemplate" class="grow"></select>
+        <button id="mCfgApplyTemplate" class="ghost small">载入模板</button>
+      </div>
+      <textarea id="mCfgJson" rows="16" spellcheck="false"></textarea>
+      <div class="row gap" style="margin-top:10px">
+        <button id="mCfgSave" class="primary small">保存并应用</button>
+        <button id="mCfgReset" class="ghost small">重置为内置档案</button>
+        <span class="hint" id="mCfgStatus"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 图片查看 -->
+<div id="viewerModal" class="modal" hidden>
+  <div class="modal-card viewer">
+    <div class="modal-head">
+      <h3 id="viewerTitle">图片预览</h3>
+      <div class="row gap">
+        <a id="viewerDownload" class="ghost small" download>下载</a>
+        <button class="modal-close ghost small" data-close="viewerModal">✕</button>
+      </div>
+    </div>
+    <div class="modal-body"><img id="viewerImg" alt="预览"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

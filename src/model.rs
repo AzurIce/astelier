@@ -1,8 +1,13 @@
 //! 统一数据模型 —— 客户端 / 服务端共享。
 //!
-//! 核心思想：模型能力以 `ModelProfile`（含 params schema）元数据描述，
-//! UI 表单与输入持久化都使用统一的 `ParamKey → ParamValue` 表示；
-//! 发送请求时由 adapter 按 `api` 种类转换成各协议的具体字段。
+//! 核心思想：
+//! - 模型能力以 `ModelProfile`（含 params schema）元数据描述，UI 表单与
+//!   请求都使用统一的 `ParamKey → ParamValue` 表示；
+//! - **Run 不依赖任何模板**：run 就是把一套装配好的请求（`ResolvedRequest`）
+//!   发给 API。节点图上的生图节点是装配请求的发起入口；历史上以
+//!   「配方 + 输入」装配的批次仍以 `RunRequest` 快照形式保留可读可重放。
+//! - `Graph`（节点图）是创作入口：画布上摆放 `Gen`（生图）与 `Display`
+//!   （显示）两类节点，连线表达数据流。
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -234,30 +239,6 @@ impl ModelProfile {
             snap(fh * s).clamp(min_side, max_h),
         )
     }
-
-    /// 宽高互换后夹回规则上限（等比缩放 + 边长对齐 step）
-    #[allow(dead_code)]
-    pub fn clamp_size(&self, w: u32, h: u32) -> (u32, u32) {
-        let (step, max_w, max_h, min_side) = match &self.size_rule {
-            Some(rule) => (rule.step, rule.max_w, rule.max_h, rule.min_side),
-            None => (16, 8192, 8192, 16),
-        };
-        let mut s = 1.0f32;
-        if let Some(rule) = &self.size_rule {
-            s = s
-                .min(rule.max_w as f32 / w as f32)
-                .min(rule.max_h as f32 / h as f32);
-        }
-        let snap = |v: f32| -> u32 {
-            let n = ((v / step as f32).round() as u32).max(1);
-            n * step
-        };
-        (
-            snap(w as f32 * s).clamp(min_side, max_w),
-            snap(h as f32 * s).clamp(min_side, max_h),
-        )
-    }
-
 }
 
 /// 资产引用（生成的图 / 上传的参考图 / mask），文件存服务端 data/assets/
@@ -277,9 +258,9 @@ impl AssetRef {
     }
 }
 
-/// 输入分组（文件夹）。删除分组时其输入回到未分组，不连带删除。
+/// 节点图分组（文件夹）。删除分组时其图回到未分组，不连带删除。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct InputGroup {
+pub struct GraphGroup {
     pub id: String,
     pub name: String,
     #[serde(default)]
@@ -314,411 +295,161 @@ impl Config {
     }
 }
 
-/// 配方：可复用的创作定义 —— prompt 模板 + 参数 + 固定参考图。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct Recipe {
-    pub id: String,
+// ---------- 节点图 ----------
+
+/// 图上节点的种类。
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeKind {
+    /// 生图：把装配好的请求发给 API
+    Gen,
+    /// 显示：展示上游生图节点的输出
+    Display,
+}
+
+impl NodeKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            NodeKind::Gen => "生图",
+            NodeKind::Display => "显示",
+        }
+    }
+}
+
+/// 生图节点的装配内容：一份可直接发送的请求草案。
+/// prompt / params 目前在节点体内编辑；日后可由上游节点喂入。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct GenNodeData {
+    #[serde(default)]
     pub provider_id: String,
+    #[serde(default)]
     pub model_id: String,
     #[serde(default)]
-    pub prompt_template: String,
-    /// 手动标题；空 = 从模板推导
+    pub prompt: String,
     #[serde(default)]
-    pub title: Option<String>,
+    pub params: ParamMap,
+}
+
+/// 显示节点的附加数据（暂无字段，留作扩展位）
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct DisplayNodeData {}
+
+/// 节点数据（按种类区分）。新加节点种类 = 加一个变体 + 一个视图。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum NodeData {
+    Gen(GenNodeData),
+    Display(DisplayNodeData),
+}
+
+impl NodeData {
+    pub fn kind(&self) -> NodeKind {
+        match self {
+            NodeData::Gen(_) => NodeKind::Gen,
+            NodeData::Display(_) => NodeKind::Display,
+        }
+    }
+
+    pub fn gen(&self) -> Option<&GenNodeData> {
+        match self {
+            NodeData::Gen(g) => Some(g),
+            NodeData::Display(_) => None,
+        }
+    }
+}
+
+/// 图上的一个节点。位置独立存放（对应 react-flow 画布坐标）。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct GraphNode {
+    pub id: String,
+    pub x: f64,
+    pub y: f64,
+    pub data: NodeData,
+}
+
+impl GraphNode {
+    pub fn kind(&self) -> NodeKind {
+        self.data.kind()
+    }
+
+    #[allow(dead_code)]
+    pub fn gen(&self) -> Option<&GenNodeData> {
+        match &self.data {
+            NodeData::Gen(g) => Some(g),
+            NodeData::Display(_) => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn gen_mut(&mut self) -> Option<&mut GenNodeData> {
+        match &mut self.data {
+            NodeData::Gen(g) => Some(g),
+            NodeData::Display(_) => None,
+        }
+    }
+}
+
+/// 节点间的连线。source/target 为节点 id；handle 留作多端口扩展。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct GraphEdge {
+    #[serde(default = "default_edge_id")]
+    pub id: String,
+    pub source: String,
+    pub target: String,
+    #[serde(default)]
+    pub source_handle: Option<String>,
+    #[serde(default)]
+    pub target_handle: Option<String>,
+}
+
+fn default_edge_id() -> String {
+    String::new()
+}
+
+/// 节点图：可复用的创作画布。文件夹组织与旧配方一致。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct Graph {
+    pub id: String,
+    #[serde(default)]
+    pub title: String,
     /// 所属分组；None = 未分组
     #[serde(default)]
     pub group_id: Option<String>,
     #[serde(default)]
-    pub params: ParamMap,
-    /// 固定参考图（编辑区维护，随配方走）
+    pub nodes: Vec<GraphNode>,
     #[serde(default)]
-    pub refs: Vec<AssetRef>,
-    #[serde(default)]
-    pub mask: Option<AssetRef>,
-    /// 每次修改模板/参数/固定图后 +1；Run 记录当时的版本号
-    #[serde(default)]
-    pub version: u32,
+    pub edges: Vec<GraphEdge>,
     pub created_at: u64,
     pub updated_at: u64,
 }
 
-impl Recipe {
-    #[allow(dead_code)]
-    pub fn mode(&self) -> Mode {
-        if self.refs.is_empty() {
-            Mode::Gen
-        } else {
-            Mode::Edit
-        }
-    }
-
+impl Graph {
     pub fn display_title(&self) -> String {
-        if let Some(t) = self.title.as_deref() {
-            let t = t.trim();
-            if !t.is_empty() {
-                return truncate_label(t);
-            }
-        }
-        let line = self
-            .prompt_template
-            .lines()
-            .map(str::trim)
-            .find(|l| !l.is_empty() && !l.contains('{'))
-            .unwrap_or("");
-        if line.is_empty() {
-            "未命名配方".into()
+        let t = self.title.trim();
+        if t.is_empty() {
+            "未命名图".into()
         } else {
-            truncate_label(line)
+            truncate_label(t)
         }
     }
 
-// 参数校验统一走自由函数 validate_request(profile, model_id, params, image_count)
-}
-
-/// 输入层 mask 覆盖。字段为 None = 跟随配方；Off = 显式不用；Custom = 用指定 mask。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum MaskOverride {
-    Off,
-    Custom(AssetRef),
-}
-
-/// 配方下的输入：一次具体化 —— 变量值 + 槽位图片 + 额外参考图 / mask / 参数覆盖。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct RecipeInput {
-    pub id: String,
-    pub recipe_id: String,
-    /// 手动标题；空 = 自动推导
-    #[serde(default)]
-    pub title: Option<String>,
-    /// 文字槽 {xxx} 的值
-    #[serde(default)]
-    pub variables: BTreeMap<String, String>,
-    /// 图片槽 {img:xxx} → 图片；未出现的槽 = 未绑定
-    #[serde(default)]
-    pub images: BTreeMap<String, AssetRef>,
-    /// 额外参考图（跟输入走，拼在配方固定图之后、槽位图之前）
-    #[serde(default)]
-    pub extra_refs: Vec<AssetRef>,
-    /// mask 覆盖；None = 跟随配方
-    #[serde(default)]
-    pub mask_override: Option<MaskOverride>,
-    /// 参数覆盖：只存显式覆盖项；缺省键 = 继承配方，Unset = 显式置空不发送
-    #[serde(default)]
-    pub param_overrides: ParamMap,
-    /// 每次修改内容后 +1；Run 记录当时的版本号
-    #[serde(default = "default_input_version")]
-    pub version: u32,
-    pub created_at: u64,
-    pub updated_at: u64,
-}
-
-fn default_input_version() -> u32 {
-    1
-}
-
-impl RecipeInput {
-    pub fn display_title(&self, index: usize) -> String {
-        if let Some(t) = self.title.as_deref() {
-            let t = t.trim();
-            if !t.is_empty() {
-                return truncate_label(t);
-            }
-        }
-        if let Some(v) = self.variables.values().next() {
-            let v = v.trim();
-            if !v.is_empty() {
-                return truncate_label(v);
-            }
-        }
-        format!("输入 {}", index + 1)
-    }
-
-    /// 内容性字段是否一致（决定版本是否 +1；标题不算内容）
-    pub fn same_content(&self, other: &RecipeInput) -> bool {
-        self.variables == other.variables
-            && self.images == other.images
-            && self.extra_refs == other.extra_refs
-            && self.mask_override == other.mask_override
-            && self.param_overrides == other.param_overrides
-    }
-
-    /// 生效 mask：显式 Off → None；Custom → 指定资产；未覆盖 → 配方 mask
-    pub fn effective_mask(&self, recipe_mask: Option<&AssetRef>) -> Option<AssetRef> {
-        match &self.mask_override {
-            Some(MaskOverride::Off) => None,
-            Some(MaskOverride::Custom(a)) => Some(a.clone()),
-            None => recipe_mask.cloned(),
-        }
+    #[allow(dead_code)]
+    pub fn node(&self, id: &str) -> Option<&GraphNode> {
+        self.nodes.iter().find(|n| n.id == id)
     }
 }
 
-// ---------- Prompt 模板 ----------
+// ---------- 请求与校验 ----------
 
-/// 模板片段：{xxx} 文字槽、{img:xxx} 图片槽、其余为字面文本
-#[derive(Clone, Debug, PartialEq)]
-pub enum TemplatePiece {
-    Text(String),
-    Var(String),
-    Img(String),
-}
-
-/// 解析模板。`{{` 为 `{` 的转义；未闭合的 `{` 按字面处理。
-pub fn parse_template(template: &str) -> Vec<TemplatePiece> {
-    let mut out = vec![];
-    let mut text = String::new();
-    let mut chars = template.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '{' {
-            if chars.peek() == Some(&'{') {
-                chars.next();
-                text.push('{');
-                continue;
-            }
-            let mut inner = String::new();
-            let mut closed = false;
-            for c2 in chars.by_ref() {
-                if c2 == '}' {
-                    closed = true;
-                    break;
-                }
-                inner.push(c2);
-            }
-            if !closed {
-                text.push('{');
-                text.push_str(&inner);
-                continue;
-            }
-            let name = inner.trim();
-            if let Some(img) = name.strip_prefix("img:") {
-                let img = img.trim();
-                if !img.is_empty() {
-                    if !text.is_empty() {
-                        out.push(TemplatePiece::Text(std::mem::take(&mut text)));
-                    }
-                    out.push(TemplatePiece::Img(img.into()));
-                    continue;
-                }
-            }
-            if !name.is_empty() {
-                if !text.is_empty() {
-                    out.push(TemplatePiece::Text(std::mem::take(&mut text)));
-                }
-                out.push(TemplatePiece::Var(name.into()));
-                continue;
-            }
-            // 空槽按字面输出
-            text.push('{');
-            text.push_str(&inner);
-            text.push('}');
-        } else {
-            text.push(c);
-        }
-    }
-    if !text.is_empty() {
-        out.push(TemplatePiece::Text(text));
-    }
-    out
-}
-
-/// 模板里的全部槽名（去重，保持首次出现顺序）
-pub fn template_variables(template: &str) -> (Vec<String>, Vec<String>) {
-    let mut vars: Vec<String> = vec![];
-    let mut imgs: Vec<String> = vec![];
-    for piece in parse_template(template) {
-        match piece {
-            TemplatePiece::Var(v) => {
-                if !vars.contains(&v) {
-                    vars.push(v);
-                }
-            }
-            TemplatePiece::Img(i) => {
-                if !imgs.contains(&i) {
-                    imgs.push(i);
-                }
-            }
-            TemplatePiece::Text(_) => {}
-        }
-    }
-    (vars, imgs)
-}
-
-/// 渲染结果
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct RenderedPrompt {
-    pub prompt: String,
-    /// 按模板出现顺序排列的槽位图片（拼在固定参考图之后发送）
-    pub slot_images: Vec<AssetRef>,
-    pub missing_vars: Vec<String>,
-    pub missing_imgs: Vec<String>,
-}
-
-impl RenderedPrompt {
-    pub fn is_complete(&self) -> bool {
-        self.missing_vars.is_empty() && self.missing_imgs.is_empty()
-    }
-}
-
-/// 用输入的变量值与槽位图片渲染模板。
-/// `base_refs` 为配方固定参考图数量——{img:xxx} 渲染为 [图N]，
-/// N 是它在「固定图 + 槽位图」合并序列中的位置（从 1 起）。
-pub fn render_recipe(
-    template: &str,
-    values: &BTreeMap<String, String>,
-    images: &BTreeMap<String, AssetRef>,
-    base_refs: usize,
-) -> RenderedPrompt {
-    let mut out = RenderedPrompt::default();
-    let mut slot_seen: Vec<String> = vec![];
-    for piece in parse_template(template) {
-        match piece {
-            TemplatePiece::Text(t) => out.prompt.push_str(&t),
-            TemplatePiece::Var(name) => match values.get(&name).map(|s| s.trim()) {
-                Some(v) if !v.is_empty() => out.prompt.push_str(v),
-                _ => {
-                    out.missing_vars.push(name.clone());
-                    out.prompt.push('{');
-                    out.prompt.push_str(&name);
-                    out.prompt.push('}');
-                }
-            },
-            TemplatePiece::Img(name) => {
-                let idx = if let Some(pos) = slot_seen.iter().position(|s| s == &name) {
-                    pos
-                } else {
-                    slot_seen.push(name.clone());
-                    slot_seen.len() - 1
-                };
-                out.prompt.push_str(&format!("[图{}]", base_refs + idx + 1));
-                if let Some(asset) = images.get(&name) {
-                    if out.slot_images.len() == idx {
-                        out.slot_images.push(asset.clone());
-                    } else {
-                        out.slot_images[idx] = asset.clone();
-                    }
-                } else {
-                    out.missing_imgs.push(name.clone());
-                }
-            }
-        }
-    }
-    out
-}
-
-// ---------- 请求解析与快照 ----------
-
-/// 模板快照：执行时刻配方的内容性字段。自包含，不随配方后续修改变化。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct TemplateSnapshot {
-    pub provider_id: String,
-    pub model_id: String,
-    pub version: u32,
-    pub prompt_template: String,
-    pub params: ParamMap,
-    pub refs: Vec<AssetRef>,
-    pub mask: Option<AssetRef>,
-}
-
-impl TemplateSnapshot {
-    /// 模板快照（内容性字段；执行批次时物化进 Run）
-    #[cfg(any(feature = "server", test))]
-    pub fn capture(recipe: &Recipe) -> Self {
-        Self {
-            provider_id: recipe.provider_id.clone(),
-            model_id: recipe.model_id.clone(),
-            version: recipe.version,
-            prompt_template: recipe.prompt_template.clone(),
-            params: recipe.params.clone(),
-            refs: recipe.refs.clone(),
-            mask: recipe.mask.clone(),
-        }
-    }
-}
-
-/// 输入快照：执行时刻输入的内容性字段。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct InputSnapshot {
-    pub version: u32,
-    pub variables: BTreeMap<String, String>,
-    pub images: BTreeMap<String, AssetRef>,
-    pub extra_refs: Vec<AssetRef>,
-    pub mask_override: Option<MaskOverride>,
-    pub param_overrides: ParamMap,
-}
-
-impl InputSnapshot {
-    #[cfg(any(feature = "server", test))]
-    pub fn capture(input: &RecipeInput) -> Self {
-        Self {
-            version: input.version,
-            variables: input.variables.clone(),
-            images: input.images.clone(),
-            extra_refs: input.extra_refs.clone(),
-            mask_override: input.mask_override.clone(),
-            param_overrides: input.param_overrides.clone(),
-        }
-    }
-}
-
-/// 模板 + 输入合并后的最终请求 = 实际发送的内容。
+/// 装配完成的最终请求 = 实际发送的内容。Run 的本质就是把它发给 API。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ResolvedRequest {
     pub prompt: String,
     pub params: ParamMap,
-    /// 发送图片序列：配方固定图 → 输入额外图 → 槽位图（{img:x} 的 [图N] 按此序编号）
+    /// 发送图片序列
     pub images: Vec<AssetRef>,
     pub mask: Option<AssetRef>,
     pub mode: Mode,
-}
-
-/// 批次快照：执行时刻的模板 / 输入 / 最终请求，共同构成可重放、可回溯的完整档案。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct RunRequest {
-    pub template: TemplateSnapshot,
-    pub input: InputSnapshot,
-    pub resolved: ResolvedRequest,
-}
-
-/// 合并逻辑唯一来源（不做完整性校验，预览与正式执行共用）。
-pub fn merge_request(recipe: &Recipe, input: &RecipeInput) -> ResolvedRequest {
-    let mut params = recipe.params.clone();
-    for (k, v) in &input.param_overrides {
-        params.insert(k.clone(), v.clone());
-    }
-    let base_refs = recipe.refs.len() + input.extra_refs.len();
-    let rendered = render_recipe(&recipe.prompt_template, &input.variables, &input.images, base_refs);
-    let mut images = recipe.refs.clone();
-    images.extend(input.extra_refs.iter().cloned());
-    images.extend(rendered.slot_images.iter().cloned());
-    let mode = if images.is_empty() { Mode::Gen } else { Mode::Edit };
-    ResolvedRequest {
-        prompt: rendered.prompt,
-        params,
-        images,
-        mask: input.effective_mask(recipe.mask.as_ref()),
-        mode,
-    }
-}
-
-/// 模板 + 输入 → 最终请求。槽位不齐 / prompt 为空时返回错误。
-pub fn resolve_request(recipe: &Recipe, input: &RecipeInput) -> Result<ResolvedRequest, String> {
-    let base_refs = recipe.refs.len() + input.extra_refs.len();
-    let rendered = render_recipe(&recipe.prompt_template, &input.variables, &input.images, base_refs);
-    if !rendered.is_complete() {
-        let mut problems = vec![];
-        if !rendered.missing_vars.is_empty() {
-            problems.push(format!("未填变量：{}", rendered.missing_vars.join("、")));
-        }
-        if !rendered.missing_imgs.is_empty() {
-            problems.push(format!("未绑定图片槽：{}", rendered.missing_imgs.join("、")));
-        }
-        return Err(problems.join("；"));
-    }
-    let merged = merge_request(recipe, input);
-    if merged.prompt.trim().is_empty() {
-        return Err("Prompt 模板为空".into());
-    }
-    Ok(merged)
 }
 
 /// 请求级校验：模型已选、图片总数上限、参数取值（按 profile 元数据）。
@@ -752,6 +483,8 @@ pub fn validate_request(
     Ok(())
 }
 
+// ---------- 批次档案 ----------
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum RunStatus {
@@ -772,26 +505,77 @@ pub struct Usage {
     pub image_tokens: Option<u64>,
 }
 
-/// 一次生成 = 一个批次。创建时完整快照当时的模板/输入/最终请求（request），
-/// 此后配方与输入的修改不影响历史批次；重跑即重放快照。
+/// 模板快照：历史批次（配方时代）执行时刻的模板内容。仅作旧档回看，不再产生。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct TemplateSnapshot {
+    pub provider_id: String,
+    pub model_id: String,
+    pub version: u32,
+    pub prompt_template: String,
+    pub params: ParamMap,
+    pub refs: Vec<AssetRef>,
+    pub mask: Option<AssetRef>,
+}
+
+/// mask 覆盖（旧档）。字段为 None = 跟随配方；Off = 显式不用；Custom = 用指定 mask。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum MaskOverride {
+    Off,
+    Custom(AssetRef),
+}
+
+/// 输入快照：历史批次（配方时代）执行时刻的输入内容。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct InputSnapshot {
+    pub version: u32,
+    pub variables: BTreeMap<String, String>,
+    pub images: BTreeMap<String, AssetRef>,
+    pub extra_refs: Vec<AssetRef>,
+    pub mask_override: Option<MaskOverride>,
+    pub param_overrides: ParamMap,
+}
+
+/// 配方时代的完整快照 = 模板 + 输入 + 最终请求。仅旧批次持有。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct RunRequest {
+    pub template: TemplateSnapshot,
+    pub input: InputSnapshot,
+    pub resolved: ResolvedRequest,
+}
+
+/// 一次生成 = 一个批次。新批次直接归档最终请求（`resolved`）与来源
+/// 节点（`graph_id`/`node_id`）；旧批次归档 `request`（配方快照）或
+/// 仅 legacy 字段。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Run {
     pub id: String,
-    /// 出自哪个配方
+    /// 旧结构：出自哪个配方（节点图批次为空）
+    #[serde(default)]
     pub recipe_id: String,
-    /// 出自哪个输入（快捷运行也会自动落成输入）
+    /// 旧结构：出自哪个输入
+    #[serde(default)]
     pub input_id: Option<String>,
-    /// 执行时配方版本号
+    /// 执行时配方版本号（旧批次）
+    #[serde(default)]
     pub recipe_version: u32,
-    /// 执行时输入版本号（旧批次为 0）
+    /// 执行时输入版本号（旧批次）
     #[serde(default)]
     pub input_version: u32,
     pub provider_id: String,
     pub model_id: String,
     pub mode: Mode,
-    /// 执行时刻的完整快照；None = 旧版批次（仅有下方 legacy 字段）
+    /// 配方时代快照；None = 非配方批次
     #[serde(default)]
     pub request: Option<RunRequest>,
+    /// 出自哪个节点图 / 图上哪个节点（新批次）
+    #[serde(default)]
+    pub graph_id: Option<String>,
+    #[serde(default)]
+    pub node_id: Option<String>,
+    /// 最终请求归档：实际发送的内容（新批次一律有）
+    #[serde(default)]
+    pub resolved: Option<ResolvedRequest>,
     /// 若本批次是对另一批次的快照重放，记录原批次 id
     #[serde(default)]
     pub rerun_of: Option<String>,
@@ -819,19 +603,23 @@ fn is_zero(n: &usize) -> bool {
 }
 
 impl Run {
-    /// 渲染后的完整 prompt（快照优先，旧批次回退 legacy 字段）
+    /// 渲染后的完整 prompt（新批次归档 → 配方快照 → legacy 字段）
     pub fn display_prompt(&self) -> &str {
-        match &self.request {
-            Some(req) => &req.resolved.prompt,
-            None => &self.prompt,
+        if let Some(req) = &self.request {
+            return &req.resolved.prompt;
         }
+        if let Some(resolved) = &self.resolved {
+            return &resolved.prompt;
+        }
+        &self.prompt
     }
 
-    /// 实际发送的图片序列；旧批次未知 → None
+    /// 实际发送的图片序列；未知 → None
     pub fn sent_images(&self) -> Option<&[AssetRef]> {
-        self.request
-            .as_ref()
-            .map(|r| r.resolved.images.as_slice())
+        if let Some(req) = &self.request {
+            return Some(req.resolved.images.as_slice());
+        }
+        self.resolved.as_ref().map(|r| r.images.as_slice())
     }
 
     /// 实际发送图片数量
@@ -839,12 +627,20 @@ impl Run {
         self.sent_images().map(|s| s.len()).unwrap_or(self.ref_count)
     }
 
-    /// 最终生效参数（模板参数合并输入覆盖后）
+    /// 最终生效参数
     pub fn effective_params(&self) -> &ParamMap {
-        match &self.request {
-            Some(req) => &req.resolved.params,
-            None => &self.params,
+        if let Some(req) = &self.request {
+            return &req.resolved.params;
         }
+        if let Some(resolved) = &self.resolved {
+            return &resolved.params;
+        }
+        &self.params
+    }
+
+    /// 是否出自节点图
+    pub fn from_graph(&self) -> bool {
+        self.graph_id.is_some()
     }
 }
 
@@ -870,104 +666,70 @@ mod tests {
         }
     }
 
-    fn recipe() -> Recipe {
-        Recipe {
-            id: "r1".into(),
-            provider_id: "p1".into(),
-            model_id: "m1".into(),
-            prompt_template: "画一只{animal}，参考 {img:subject}，{style} 风格".into(),
-            title: None,
-            group_id: None,
+    fn resolved(prompt: &str) -> ResolvedRequest {
+        ResolvedRequest {
+            prompt: prompt.into(),
             params: [("size".to_string(), ParamValue::Size("1024x1024".into()))]
                 .into_iter()
                 .collect(),
-            refs: vec![asset("fix1")],
-            mask: Some(asset("mask1")),
-            version: 3,
-            created_at: 0,
-            updated_at: 0,
-        }
-    }
-
-    fn input() -> RecipeInput {
-        RecipeInput {
-            id: "i1".into(),
-            recipe_id: "r1".into(),
-            title: None,
-            variables: [
-                ("animal".to_string(), "橘猫".into()),
-                ("style".to_string(), "水彩".into()),
-            ]
-            .into_iter()
-            .collect(),
-            images: [("subject".to_string(), asset("slot1"))].into_iter().collect(),
-            extra_refs: vec![asset("extra1")],
-            mask_override: None,
-            param_overrides: Default::default(),
-            version: 2,
-            created_at: 0,
-            updated_at: 0,
+            images: vec![asset("out1")],
+            mask: None,
+            mode: Mode::Gen,
         }
     }
 
     #[test]
-    fn merge_images_order_and_numbering() {
-        let r = recipe();
-        let i = input();
-        let resolved = resolve_request(&r, &i).unwrap();
-        let ids: Vec<&str> = resolved.images.iter().map(|a| a.id.as_str()).collect();
-        assert_eq!(ids, vec!["fix1", "extra1", "slot1"]);
-        // {img:subject} 是合并序列第 3 张 → 渲染为 [图3]
-        assert!(resolved.prompt.contains("[图3]"));
-        assert_eq!(resolved.mode, Mode::Edit);
+    fn graph_serde_roundtrip() {
+        let g = Graph {
+            id: "g1".into(),
+            title: "测试图".into(),
+            group_id: None,
+            nodes: vec![
+                GraphNode {
+                    id: "n1".into(),
+                    x: 10.0,
+                    y: 20.0,
+                    data: NodeData::Gen(GenNodeData {
+                        provider_id: "openai".into(),
+                        model_id: "gpt-image-2".into(),
+                        prompt: "一只猫".into(),
+                        params: Default::default(),
+                    }),
+                },
+                GraphNode {
+                    id: "n2".into(),
+                    x: 300.0,
+                    y: 20.0,
+                    data: NodeData::Display(DisplayNodeData::default()),
+                },
+            ],
+            edges: vec![GraphEdge {
+                id: "e1".into(),
+                source: "n1".into(),
+                target: "n2".into(),
+                source_handle: None,
+                target_handle: None,
+            }],
+            created_at: 1,
+            updated_at: 2,
+        };
+        let bytes = serde_json::to_vec(&g).unwrap();
+        let back: Graph = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(back, g);
+        // 节点种类标签可读
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.contains("\"kind\":\"gen\""));
+        assert!(text.contains("\"kind\":\"display\""));
     }
 
     #[test]
-    fn merge_params_overlay_and_mask() {
-        let mut r = recipe();
-        r.params.insert("n".into(), ParamValue::Number(1.0));
-        let mut i = input();
-        // 覆盖：size 改值、n 显式置空
-        i.param_overrides.insert(
-            "size".into(),
-            ParamValue::Size("1536x1024".into()),
-        );
-        i.param_overrides.insert("n".into(), ParamValue::Unset);
-        let resolved = merge_request(&r, &i);
-        assert_eq!(resolved.params.get("size"), Some(&ParamValue::Size("1536x1024".into())));
-        assert_eq!(resolved.params.get("n"), Some(&ParamValue::Unset));
-        // 未覆盖 mask → 跟随配方
-        assert_eq!(resolved.mask.as_ref().map(|m| m.id.as_str()), Some("mask1"));
-    }
-
-    #[test]
-    fn mask_override_semantics() {
-        let r = recipe();
-        let mut i = input();
-        i.mask_override = Some(MaskOverride::Off);
-        assert_eq!(merge_request(&r, &i).mask, None);
-        i.mask_override = Some(MaskOverride::Custom(asset("mask2")));
-        assert_eq!(merge_request(&r, &i).mask.as_ref().map(|m| m.id.as_str()), Some("mask2"));
-    }
-
-    #[test]
-    fn resolve_missing_var_errors() {
-        let r = recipe();
-        let mut i = input();
-        i.variables.remove("style");
-        let err = resolve_request(&r, &i).unwrap_err();
-        assert!(err.contains("style"));
-    }
-
-    #[test]
-    fn input_version_predicate() {
-        let a = input();
-        let mut b = a.clone();
-        assert!(a.same_content(&b));
-        b.title = Some("改名".into());
-        assert!(a.same_content(&b), "标题不算内容");
-        b.extra_refs.push(asset("x"));
-        assert!(!a.same_content(&b));
+    fn graph_default_fields_tolerate_old_json() {
+        let g: Graph = serde_json::from_str(
+            r#"{"id":"g1","created_at":1,"updated_at":2}"#,
+        )
+        .unwrap();
+        assert!(g.nodes.is_empty());
+        assert_eq!(g.display_title(), "未命名图");
     }
 
     #[test]
@@ -988,8 +750,43 @@ mod tests {
     }
 
     #[test]
+    fn graph_run_json_roundtrip() {
+        let run = Run {
+            id: "x".into(),
+            recipe_id: String::new(),
+            input_id: None,
+            recipe_version: 0,
+            input_version: 0,
+            provider_id: "p1".into(),
+            model_id: "m1".into(),
+            mode: Mode::Gen,
+            request: None,
+            graph_id: Some("g1".into()),
+            node_id: Some("n1".into()),
+            resolved: Some(resolved("一只猫")),
+            rerun_of: None,
+            status: RunStatus::Done,
+            error: None,
+            images: vec![asset("out1")],
+            usage: None,
+            created_at: 1,
+            duration_ms: Some(2),
+            prompt: String::new(),
+            params: Default::default(),
+            ref_count: 0,
+        };
+        let bytes = serde_json::to_vec(&run).unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(!text.contains("\"ref_count\""), "新批次不序列化 legacy 字段");
+        let back: Run = serde_json::from_slice(&text.as_bytes()).unwrap();
+        assert_eq!(back.display_prompt(), "一只猫");
+        assert_eq!(back.image_count(), 1);
+        assert!(back.from_graph());
+    }
+
+    #[test]
     fn legacy_run_json_still_parses() {
-        // 旧版批次文件：没有 request/input_version/rerun_of 字段
+        // 旧版批次文件：没有 request/graph_id/resolved 等字段
         let old = r#"{
             "id": "abc",
             "recipe_id": "r1",
@@ -1007,48 +804,44 @@ mod tests {
         }"#;
         let run: Run = serde_json::from_str(old).unwrap();
         assert!(run.request.is_none());
+        assert!(run.resolved.is_none());
         assert_eq!(run.display_prompt(), "旧 prompt");
         assert_eq!(run.image_count(), 3);
         assert_eq!(run.input_version, 0);
+        assert!(!run.from_graph());
     }
 
     #[test]
-    fn run_snapshot_roundtrip() {
-        let r = recipe();
-        let i = input();
-        let resolved = resolve_request(&r, &i).unwrap();
-        let req = RunRequest {
-            template: TemplateSnapshot::capture(&r),
-            input: InputSnapshot::capture(&i),
-            resolved,
-        };
-        let run = Run {
-            id: "x".into(),
-            recipe_id: "r1".into(),
-            input_id: Some("i1".into()),
-            recipe_version: 3,
-            input_version: 2,
-            provider_id: "p1".into(),
-            model_id: "m1".into(),
-            mode: Mode::Edit,
-            request: Some(req.clone()),
-            rerun_of: None,
-            status: RunStatus::Done,
-            error: None,
-            images: vec![asset("out1")],
-            usage: None,
-            created_at: 1,
-            duration_ms: Some(2),
-            prompt: String::new(),
-            params: Default::default(),
-            ref_count: 0,
-        };
-        let bytes = serde_json::to_vec(&run).unwrap();
-        // 新批次不再序列化 legacy 字段
-        let text = String::from_utf8(bytes.clone()).unwrap();
-        assert!(!text.contains("\"ref_count\""));
-        let back: Run = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(back.request, Some(req));
+    fn recipe_run_json_with_snapshot_still_parses() {
+        // 配方时代批次：request 快照可读，且读接口回退顺序正确
+        let old = r#"{
+            "id": "abc",
+            "recipe_id": "r1",
+            "provider_id": "p1",
+            "model_id": "m1",
+            "mode": "gen",
+            "request": {
+                "template": {
+                    "provider_id": "p1", "model_id": "m1", "version": 3,
+                    "prompt_template": "", "params": {}, "refs": [], "mask": null
+                },
+                "input": {
+                    "version": 1, "variables": {}, "images": {},
+                    "extra_refs": [], "mask_override": null, "param_overrides": {}
+                },
+                "resolved": {
+                    "prompt": "快照 prompt", "params": {}, "images": [],
+                    "mask": null, "mode": "gen"
+                }
+            },
+            "status": "done",
+            "images": [],
+            "created_at": 123,
+            "prompt": "legacy prompt"
+        }"#;
+        let run: Run = serde_json::from_str(old).unwrap();
+        assert_eq!(run.display_prompt(), "快照 prompt");
+        assert!(run.sent_images().is_some());
     }
 }
 

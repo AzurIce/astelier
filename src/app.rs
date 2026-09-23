@@ -11,14 +11,11 @@ pub struct AppState {
     pub config: Signal<Option<Config>>,
     /// 当前 provider 的模型档案
     pub profiles: Signal<Vec<ModelProfile>>,
-    pub recipes: Signal<Vec<Recipe>>,
-    /// 选中配方的输入列表
-    pub recipe_inputs: Signal<Vec<RecipeInput>>,
-    pub groups: Signal<Vec<InputGroup>>,
-    /// 选中的配方；空 = 未选（全局批次视图）
-    pub selected_recipe: Signal<String>,
-    /// 选中的输入；空 = 快捷框为空白草稿
-    pub selected_input: Signal<String>,
+    pub graphs: Signal<Vec<Graph>>,
+    /// 节点图分组（文件夹）
+    pub groups: Signal<Vec<GraphGroup>>,
+    /// 选中的节点图；空 = 全局批次视图
+    pub selected_graph: Signal<String>,
     pub runs: Signal<Vec<Run>>,
     pub theme: Signal<Theme>,
     pub show_settings: Signal<bool>,
@@ -27,8 +24,6 @@ pub struct AppState {
     pub lightbox: Signal<Option<(String, usize)>>,
     /// 打开快照弹窗的批次 id
     pub snapshot_run: Signal<Option<String>>,
-    /// 待载入模板编辑区草稿的快照（来自「恢复模板为此快照」，保存后才成为新版本）
-    pub restore_template: Signal<Option<Recipe>>,
     pub toasts: Signal<Vec<Toast>>,
 }
 
@@ -40,20 +35,14 @@ impl AppState {
     pub fn profiles(&self) -> Vec<ModelProfile> {
         self.profiles.cloned()
     }
-    pub fn recipes(&self) -> Vec<Recipe> {
-        self.recipes.cloned()
+    pub fn graphs(&self) -> Vec<Graph> {
+        self.graphs.cloned()
     }
-    pub fn recipe_inputs(&self) -> Vec<RecipeInput> {
-        self.recipe_inputs.cloned()
-    }
-    pub fn groups(&self) -> Vec<InputGroup> {
+    pub fn groups(&self) -> Vec<GraphGroup> {
         self.groups.cloned()
     }
-    pub fn selected_recipe_id(&self) -> String {
-        self.selected_recipe.cloned()
-    }
-    pub fn selected_input_id(&self) -> String {
-        self.selected_input.cloned()
+    pub fn selected_graph_id(&self) -> String {
+        self.selected_graph.cloned()
     }
     pub fn runs(&self) -> Vec<Run> {
         self.runs.cloned()
@@ -74,14 +63,9 @@ impl AppState {
         self.toasts.cloned()
     }
 
-    pub fn selected_recipe(&self) -> Option<Recipe> {
-        let id = self.selected_recipe_id();
-        self.recipes().into_iter().find(|r| r.id == id)
-    }
-
-    pub fn selected_input(&self) -> Option<RecipeInput> {
-        let id = self.selected_input_id();
-        self.recipe_inputs().into_iter().find(|i| i.id == id)
+    pub fn selected_graph(&self) -> Option<Graph> {
+        let id = self.selected_graph_id();
+        self.graphs().into_iter().find(|g| g.id == id)
     }
 
     pub fn profile_of(&self, model_id: &str) -> Option<ModelProfile> {
@@ -103,56 +87,31 @@ impl AppState {
         });
     }
 
-    /// 修改配方字段并同步服务端（标题等非内容性字段；不触发版本 +1）
-    pub fn patch_recipe(mut self, id: &str, f: impl FnOnce(&mut Recipe)) {
-        self.recipes.with_mut(|list| {
-            if let Some(x) = list.iter_mut().find(|x| x.id == id) {
-                f(x);
-            }
-        });
-        let snapshot = self.recipes().into_iter().find(|r| r.id == id);
-        if let Some(recipe) = snapshot {
-            spawn(async move {
-                let _ = update_recipe(recipe).await;
-            });
-        }
-    }
-
-    /// 用服务端返回的配方整体替换本地副本
-    pub fn patch_replace_recipe(mut self, recipe: Recipe) {
-        self.recipes.with_mut(|v| {
-            if let Some(x) = v.iter_mut().find(|x| x.id == recipe.id) {
-                *x = recipe;
+    /// 本地替换一张图（服务端返回后同步）
+    pub fn patch_replace_graph(mut self, graph: Graph) {
+        self.graphs.with_mut(|v| {
+            if let Some(x) = v.iter_mut().find(|x| x.id == graph.id) {
+                *x = graph;
             }
         });
     }
 
-    /// 修改选中配方的输入并同步服务端
-    pub fn mutate_input(self, id: &str, f: impl FnOnce(&mut RecipeInput)) {
-        let mut inputs_sig = self.recipe_inputs;
-        inputs_sig.with_mut(|list| {
-            if let Some(x) = list.iter_mut().find(|x| x.id == id) {
-                f(x);
+    /// 修改一张图并同步服务端（整图落盘；节点内容/连线/位置/标题共用此路径）
+    pub fn patch_graph(self, graph: Graph, f: impl FnOnce(&mut Graph)) {
+        let mut graph = graph;
+        f(&mut graph);
+        self.patch_replace_graph(graph.clone());
+        spawn(async move {
+            if let Ok(saved) = update_graph(graph).await {
+                let state = self;
+                state.patch_replace_graph(saved);
             }
         });
-        let snapshot = self.recipe_inputs().into_iter().find(|i| i.id == id);
-        if let Some(input) = snapshot {
-            spawn(async move {
-                let _ = update_input(input).await;
-            });
-        }
     }
 
-    /// 选中配方（并清空输入选择）
-    pub fn select_recipe(mut self, id: &str) {
-        self.selected_recipe.set(id.to_string());
-        self.selected_input.set(String::new());
-    }
-
-    /// 选中输入（连带选中其配方）
-    pub fn select_input(mut self, recipe_id: &str, input_id: &str) {
-        self.selected_recipe.set(recipe_id.to_string());
-        self.selected_input.set(input_id.to_string());
+    /// 选中节点图
+    pub fn select_graph(mut self, id: &str) {
+        self.selected_graph.set(id.to_string());
     }
 }
 
@@ -161,39 +120,35 @@ pub fn App() -> Element {
     let state = AppState {
         config: use_signal(|| None),
         profiles: use_signal(Vec::new),
-        recipes: use_signal(Vec::new),
-        recipe_inputs: use_signal(Vec::new),
+        graphs: use_signal(Vec::new),
         groups: use_signal(Vec::new),
-        selected_recipe: use_signal(String::new),
-        selected_input: use_signal(String::new),
+        selected_graph: use_signal(String::new),
         runs: use_signal(Vec::new),
         theme: use_signal(theme::stored),
         show_settings: use_signal(|| false),
         show_advanced: use_signal(|| false),
         lightbox: use_signal(|| None),
         snapshot_run: use_signal(|| None),
-        restore_template: use_signal(|| None),
         toasts: use_signal(Vec::new),
     };
     let mut config = state.config;
     let mut profiles = state.profiles;
-    let mut recipes = state.recipes;
+    let mut graphs = state.graphs;
     let mut groups = state.groups;
-    let selected_recipe = state.selected_recipe;
     let mut runs = state.runs;
 
     use_hook(move || {
         theme::apply(state.theme());
     });
 
-    // ---- 首次加载：配置 / 配方 / 分组 / 批次 ----
+    // ---- 首次加载：配置 / 节点图 / 分组 / 批次 ----
     use_effect(move || {
         spawn(async move {
             if let Ok(cfg) = get_config().await {
                 config.set(Some(cfg));
             }
-            if let Ok(rs) = list_recipes().await {
-                recipes.set(rs);
+            if let Ok(gs) = list_graphs().await {
+                graphs.set(gs);
             }
             if let Ok(gs) = list_groups().await {
                 groups.set(gs);
@@ -212,21 +167,6 @@ pub fn App() -> Element {
                 if let Ok(list) = resolve_profiles(cfg.active_provider).await {
                     profiles.set(list);
                 }
-            }
-        });
-    });
-
-    // ---- 选中配方变化 → 加载其输入列表 ----
-    let state_for_inputs = state;
-    use_effect(move || {
-        let rid = selected_recipe.cloned();
-        let mut inputs_sig = state_for_inputs.recipe_inputs;
-        spawn(async move {
-            if rid.is_empty() {
-                return;
-            }
-            if let Ok(list) = list_inputs(rid).await {
-                inputs_sig.set(list);
             }
         });
     });
@@ -257,14 +197,14 @@ pub fn App() -> Element {
                 class: "main",
                 crate::ui::sidebar::Sidebar { state }
 
-                if let Some(recipe) = state.selected_recipe() {
-                    crate::ui::recipe::RecipePage { key: "{recipe.id}", state, recipe }
+                if let Some(graph) = state.selected_graph() {
+                    crate::ui::graph::GraphPage { key: "{graph.id}", state, graph }
                 } else if config().is_some() {
                     div {
                         class: "stage",
                         crate::ui::feed::Feed { state }
                         div { class: "stage-hint",
-                            "← 从左侧选择或新建一个配方开始 · 配方下可创建多个输入"
+                            "← 从左侧选择或新建一个节点图开始 · 生图节点的输出连线到显示节点"
                         }
                     }
                 } else {

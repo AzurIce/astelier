@@ -3,17 +3,16 @@
 //! ```text
 //! data/
 //! ├── config.json            Provider 配置
-//! ├── groups.json            配方分组（文件夹）
+//! ├── groups.json            节点图分组（文件夹）
 //! ├── assets/{id}.{ext}      全部图片资产（统一池，被各方按 id 引用）
-//! ├── recipes/{rid}/
-//! │   ├── recipe.json        配方定义
-//! │   └── inputs/{iid}.json  配方下的输入（变量值 + 槽位图片）
-//! └── runs/{run_id}.json     批次档案：状态 + 执行时刻的模板/输入/最终请求完整快照
+//! ├── graphs/{gid}/
+//! │   └── graph.json         节点图：节点（种类/位置/装配内容）+ 连线
+//! └── runs/{run_id}.json     批次档案：状态 + 最终请求归档（旧批次为配方快照）
 //! ```
 //!
 //! 单用户本地工具，JSON 落盘足够；写入用 tmp+rename 原子替换。
 
-use crate::model::{AssetRef, Config, InputGroup, Recipe, RecipeInput, Run};
+use crate::model::{AssetRef, Config, Graph, GraphGroup, Run};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::de::DeserializeOwned;
@@ -69,147 +68,6 @@ async fn write_json<T: serde::Serialize>(rel: &[&str], value: &T) {
     write_json_at(&sub_dir(rel), value).await;
 }
 
-/// 旧版扁平存储（inputs.json / runs.json）迁移到目录结构。
-/// 幂等：recipes 目录非空或旧文件不存在时直接跳过。
-pub async fn migrate_legacy() {
-    let legacy_inputs = sub_dir(&["inputs.json"]);
-    let legacy_runs = sub_dir(&["runs.json"]);
-    if !legacy_inputs.exists() || sub_dir(&["recipes"]).exists() {
-        return;
-    }
-    let _guard = STORE_LOCK.lock().await;
-
-    #[derive(serde::Deserialize)]
-    struct LegacyInput {
-        id: String,
-        provider_id: String,
-        model_id: String,
-        #[serde(default)]
-        prompt: String,
-        #[serde(default)]
-        title: Option<String>,
-        #[serde(default)]
-        group_id: Option<String>,
-        #[serde(default)]
-        params: crate::model::ParamMap,
-        #[serde(default)]
-        refs: Vec<AssetRef>,
-        #[serde(default)]
-        mask: Option<AssetRef>,
-        #[serde(default)]
-        created_at: u64,
-        #[serde(default)]
-        updated_at: u64,
-    }
-
-    let old: Vec<LegacyInput> = read_json_at(&legacy_inputs).await.unwrap_or_default();
-    for old_input in old.iter() {
-        // 旧 refs 直接成为配方固定参考图 —— 迁移后行为与旧版一致（edits 端点、prompt 原样）
-        let recipe = Recipe {
-            id: old_input.id.clone(),
-            provider_id: old_input.provider_id.clone(),
-            model_id: old_input.model_id.clone(),
-            prompt_template: old_input.prompt.clone(),
-            title: old_input.title.clone(),
-            group_id: old_input.group_id.clone(),
-            params: old_input.params.clone(),
-            refs: old_input.refs.clone(),
-            mask: old_input.mask.clone(),
-            version: 1,
-            created_at: old_input.created_at,
-            updated_at: old_input.updated_at,
-        };
-        write_json_at_unlocked(
-            &sub_dir(&["recipes", &recipe.id, "recipe.json"]),
-            &recipe,
-        )
-        .await;
-        let input = RecipeInput {
-            id: format!("{}-m0", old_input.id),
-            recipe_id: old_input.id.clone(),
-            title: Some("迁移".into()),
-            variables: Default::default(),
-            images: Default::default(),
-            extra_refs: vec![],
-            mask_override: None,
-            param_overrides: Default::default(),
-            version: 1,
-            created_at: old_input.created_at,
-            updated_at: old_input.updated_at,
-        };
-        write_json_at_unlocked(
-            &sub_dir(&["recipes", &recipe.id, "inputs", &format!("{}.json", input.id)]),
-            &input,
-        )
-        .await;
-    }
-
-    #[derive(serde::Deserialize)]
-    struct LegacyRun {
-        id: String,
-        input_id: String,
-        #[serde(default)]
-        #[allow(dead_code)]
-        recipe_version: Option<u32>,
-        provider_id: String,
-        model_id: String,
-        mode: crate::model::Mode,
-        #[serde(default)]
-        prompt: String,
-        #[serde(default)]
-        params: crate::model::ParamMap,
-        #[serde(default)]
-        ref_count: usize,
-        status: crate::model::RunStatus,
-        #[serde(default)]
-        error: Option<String>,
-        #[serde(default)]
-        images: Vec<AssetRef>,
-        #[serde(default)]
-        usage: Option<crate::model::Usage>,
-        #[serde(default)]
-        created_at: u64,
-        #[serde(default)]
-        duration_ms: Option<u64>,
-    }
-
-    let old_runs: Vec<LegacyRun> = read_json_at(&legacy_runs).await.unwrap_or_default();
-    for r in old_runs {
-        let run = Run {
-            id: r.id.clone(),
-            recipe_id: r.input_id.clone(),
-            input_id: Some(format!("{}-m0", r.input_id)),
-            recipe_version: 1,
-            input_version: 0,
-            provider_id: r.provider_id,
-            model_id: r.model_id,
-            mode: r.mode,
-            request: None,
-            rerun_of: None,
-            status: r.status,
-            error: r.error,
-            images: r.images,
-            usage: r.usage,
-            created_at: r.created_at,
-            duration_ms: r.duration_ms,
-            prompt: r.prompt,
-            params: r.params,
-            ref_count: r.ref_count,
-        };
-        write_json_at_unlocked(
-            &sub_dir(&["runs", &format!("{}.json", run.id)]),
-            &run,
-        )
-        .await;
-    }
-
-    // 旧文件挪进 legacy/ 留档
-    let legacy_dir = sub_dir(&["legacy"]);
-    let _ = tokio::fs::create_dir_all(&legacy_dir).await;
-    let _ = tokio::fs::rename(&legacy_inputs, legacy_dir.join("inputs.json")).await;
-    let _ = tokio::fs::rename(&legacy_runs, legacy_dir.join("runs.json")).await;
-}
-
 // ---------- config ----------
 
 pub async fn load_config() -> Config {
@@ -257,16 +115,16 @@ pub async fn save_config(cfg: &Config) {
     write_json(&["config.json"], cfg).await;
 }
 
-// ---------- groups（配方分组）----------
+// ---------- groups（节点图分组）----------
 
-pub async fn list_groups() -> Vec<InputGroup> {
-    let mut v: Vec<InputGroup> = read_json(&["groups.json"]).await.unwrap_or_default();
+pub async fn list_groups() -> Vec<GraphGroup> {
+    let mut v: Vec<GraphGroup> = read_json(&["groups.json"]).await.unwrap_or_default();
     v.sort_by_key(|g| g.created_at);
     v
 }
 
-pub async fn save_group(group: &InputGroup) {
-    let mut v: Vec<InputGroup> = read_json(&["groups.json"]).await.unwrap_or_default();
+pub async fn save_group(group: &GraphGroup) {
+    let mut v: Vec<GraphGroup> = read_json(&["groups.json"]).await.unwrap_or_default();
     if let Some(slot) = v.iter_mut().find(|x| x.id == group.id) {
         *slot = group.clone();
     } else {
@@ -275,45 +133,45 @@ pub async fn save_group(group: &InputGroup) {
     write_json(&["groups.json"], &v).await;
 }
 
-pub async fn write_groups(groups: &[InputGroup]) {
+pub async fn write_groups(groups: &[GraphGroup]) {
     write_json(&["groups.json"], &groups).await;
 }
 
-/// 删除分组，其中的配方回到未分组
+/// 删除分组，其中的图回到未分组
 pub async fn delete_group(id: &str) {
-    let mut v: Vec<InputGroup> = read_json(&["groups.json"]).await.unwrap_or_default();
+    let mut v: Vec<GraphGroup> = read_json(&["groups.json"]).await.unwrap_or_default();
     v.retain(|x| x.id != id);
     write_json(&["groups.json"], &v).await;
-    for recipe in list_recipes().await {
-        if recipe.group_id.as_deref() == Some(id) {
-            let mut r = recipe;
-            r.group_id = None;
-            write_json(&["recipes", &r.id, "recipe.json"], &r).await;
+    for graph in list_graphs().await {
+        if graph.group_id.as_deref() == Some(id) {
+            let mut g = graph;
+            g.group_id = None;
+            write_json(&["graphs", &g.id, "graph.json"], &g).await;
         }
     }
 }
 
-pub async fn set_recipe_group(recipe_id: &str, group_id: Option<String>) {
-    let Some(mut recipe) = read_json::<Recipe>(&["recipes", recipe_id, "recipe.json"]).await else {
+pub async fn set_graph_group(graph_id: &str, group_id: Option<String>) {
+    let Some(mut graph) = get_graph(graph_id).await else {
         return;
     };
-    recipe.group_id = group_id;
-    write_json(&["recipes", recipe_id, "recipe.json"], &recipe).await;
+    graph.group_id = group_id;
+    save_graph(&graph).await;
 }
 
-// ---------- recipes ----------
+// ---------- graphs ----------
 
-pub async fn list_recipes() -> Vec<Recipe> {
-    let mut out: Vec<Recipe> = vec![];
-    let root = sub_dir(&["recipes"]);
+pub async fn list_graphs() -> Vec<Graph> {
+    let mut out: Vec<Graph> = vec![];
+    let root = sub_dir(&["graphs"]);
     let _ = tokio::fs::create_dir_all(&root).await;
     if let Ok(mut rd) = tokio::fs::read_dir(&root).await {
         while let Ok(Some(entry)) = rd.next_entry().await {
             if entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false) {
-                let path = entry.path().join("recipe.json");
-                if let Some(recipe) = read_json_at::<Recipe>(&path).await {
-                    if !recipe.id.is_empty() {
-                        out.push(recipe);
+                let path = entry.path().join("graph.json");
+                if let Some(graph) = read_json_at::<Graph>(&path).await {
+                    if !graph.id.is_empty() {
+                        out.push(graph);
                     }
                 }
             }
@@ -323,75 +181,16 @@ pub async fn list_recipes() -> Vec<Recipe> {
     out
 }
 
-pub async fn get_recipe(id: &str) -> Option<Recipe> {
-    read_json(&["recipes", id, "recipe.json"]).await
+pub async fn get_graph(id: &str) -> Option<Graph> {
+    read_json(&["graphs", id, "graph.json"]).await
 }
 
-pub async fn save_recipe(recipe: &Recipe) {
-    write_json(&["recipes", &recipe.id, "recipe.json"], recipe).await;
+pub async fn save_graph(graph: &Graph) {
+    write_json(&["graphs", &graph.id, "graph.json"], graph).await;
 }
 
-pub async fn delete_recipe(id: &str) {
-    let _ = tokio::fs::remove_dir_all(sub_dir(&["recipes", id])).await;
-}
-
-// ---------- recipe inputs ----------
-
-pub async fn list_recipe_inputs(recipe_id: &str) -> Vec<RecipeInput> {
-    let mut out: Vec<RecipeInput> = vec![];
-    let root = sub_dir(&["recipes", recipe_id, "inputs"]);
-    if let Ok(mut rd) = tokio::fs::read_dir(&root).await {
-        while let Ok(Some(entry)) = rd.next_entry().await {
-            if entry.file_type().await.map(|t| t.is_file()).unwrap_or(false) {
-                if let Some(input) = read_json_at::<RecipeInput>(&entry.path()).await {
-                    if !input.id.is_empty() {
-                        out.push(input);
-                    }
-                }
-            }
-        }
-    }
-    out.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    out
-}
-
-pub async fn get_recipe_input(recipe_id: &str, input_id: &str) -> Option<RecipeInput> {
-    read_json(&["recipes", recipe_id, "inputs", &format!("{input_id}.json")]).await
-}
-
-pub async fn save_recipe_input(recipe_id: &str, input: &RecipeInput) {
-    write_json(
-        &["recipes", recipe_id, "inputs", &format!("{}.json", input.id)],
-        input,
-    )
-    .await;
-}
-
-pub async fn delete_recipe_input(recipe_id: &str, input_id: &str) {
-    let _ = tokio::fs::remove_file(sub_dir(&[
-        "recipes",
-        recipe_id,
-        "inputs",
-        &format!("{input_id}.json"),
-    ]))
-    .await;
-}
-
-// ---------- README ----------
-
-pub fn readme_path(recipe_id: &str) -> PathBuf {
-    sub_dir(&["recipes", recipe_id, "README.md"])
-}
-
-pub async fn read_readme(recipe_id: &str) -> String {
-    tokio::fs::read_to_string(readme_path(recipe_id))
-        .await
-        .unwrap_or_default()
-}
-
-pub async fn write_readme(recipe_id: &str, content: &str) {
-    let _ = tokio::fs::create_dir_all(sub_dir(&["recipes", recipe_id])).await;
-    let _ = tokio::fs::write(readme_path(recipe_id), content).await;
+pub async fn delete_graph(id: &str) {
+    let _ = tokio::fs::remove_dir_all(sub_dir(&["graphs", id])).await;
 }
 
 // ---------- runs ----------

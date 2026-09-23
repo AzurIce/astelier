@@ -65,6 +65,25 @@ pub fn IconPlus(size: Option<u32>) -> Element {
 }
 
 #[component]
+pub fn IconPlay(size: Option<u32>) -> Element {
+    rsx! {
+        {svg(rsx! { polygon { points: "6 3 20 12 6 21 6 3" } }, size)}
+    }
+}
+
+#[component]
+pub fn IconWorkflow(size: Option<u32>) -> Element {
+    rsx! {
+        {svg(rsx! {
+            rect { x: "3", y: "3", width: "8", height: "8", rx: "2" }
+            rect { x: "13", y: "13", width: "8", height: "8", rx: "2" }
+            path { d: "M11 7h4a2 2 0 0 1 2 2v4" }
+            path { d: "M7 11v4a2 2 0 0 0 2 2h4" }
+        }, size)}
+    }
+}
+
+#[component]
 pub fn IconX(size: Option<u32>) -> Element {
     rsx! {
         {svg(rsx! { path { d: "M18 6 6 18" } path { d: "m6 6 12 12" } }, size)}

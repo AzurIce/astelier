@@ -30,7 +30,6 @@ fn server_main() {
     use dioxus::server::DioxusRouterExt;
 
     dioxus::serve(|| async {
-        crate::store::migrate_legacy().await;
         let router = axum::Router::new()
             .route("/asset/{name}", axum::routing::get(store::serve_asset))
             // 注意顺序：先注册完所有路由（含 server functions），再套
@@ -39,18 +38,4 @@ fn server_main() {
             .layer(axum::extract::DefaultBodyLimit::max(128 * 1024 * 1024));
         Ok(router)
     });
-}
-
-#[cfg(all(test, feature = "server"))]
-mod migrate_tests {
-    #[tokio::test]
-    async fn minimal_runtime_works() {
-        eprintln!("[minimal] runtime ok");
-    }
-    #[tokio::test]
-    async fn migrate_completes() {
-        eprintln!("[migrate] enter");
-        crate::store::migrate_legacy().await;
-        eprintln!("[migrate] done");
-    }
 }

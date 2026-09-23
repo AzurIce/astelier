@@ -17,6 +17,9 @@ dioxus = { version = "=0.7.10", default-features = false, features = [
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# 节点图画布（react-flow 风格；0.1.x 依赖 dioxus ^0.7.10，与上面严格同版）
+dioxus-flow = "0.1.3"
+
 # 与 dx 自带的 wasm-bindgen-cli 0.2.126 严格对齐（dx 链接 wasm 时校验版本）
 wasm-bindgen = "=0.2.126"
 
@@ -28,7 +31,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", 
 axum = { version = "0.8", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart"], optional = true }
 base64 = { version = "0.22", optional = true }
-pulldown-cmark = { version = "0.13", optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -38,7 +40,7 @@ web-sys = { version = "0.3", features = ["Window", "Storage", "Document", "Eleme
 [features]
 default = []
 web = ["dioxus/web", "dep:gloo-timers"]
-server = ["dioxus/server", "dep:tokio", "dep:axum", "dep:reqwest", "dep:base64", "dep:uuid", "dep:pulldown-cmark"]
+server = ["dioxus/server", "dep:tokio", "dep:axum", "dep:reqwest", "dep:base64", "dep:uuid"]
 
 [profile.dev]
 opt-level = 1

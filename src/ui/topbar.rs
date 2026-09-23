@@ -41,21 +41,10 @@ pub fn Topbar(state: AppState) -> Element {
                     disabled: false,
                     drop_up: false,
                     onpick: move |id: String| {
-                        // 切换工作 provider：新输入默认；已选中的输入一并切换绑定
+                        // 切换工作 provider：此后新节点默认用它
                         if let Some(cfg) = config() {
                             let mut next = cfg.clone();
-                            next.active_provider = id.clone();
-                            let first_model = next
-                                .active()
-                                .and_then(|p| p.models.first().cloned())
-                                .unwrap_or_default();
-                            if let Some(recipe) = state.selected_recipe() {
-                                let pid = id.clone();
-                                state.patch_recipe(&recipe.id, move |r| {
-                                    r.provider_id = pid;
-                                    r.model_id = first_model;
-                                });
-                            }
+                            next.active_provider = id;
                             config.set(Some(next));
                         }
                     },

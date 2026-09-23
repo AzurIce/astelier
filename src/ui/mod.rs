@@ -1,8 +1,8 @@
 pub mod feed;
+pub mod graph;
 pub mod icons;
 pub mod lightbox;
 pub mod params;
-pub mod recipe;
 pub mod settings;
 pub mod sidebar;
 pub mod snapshot;

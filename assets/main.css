@@ -2684,6 +2684,13 @@ a.tile-btn {
 
 /* ---- 节点内容（.df-node 的子元素） ---- */
 
+/* dioxus-flow 按 2048 世界单位分块渲染，节点跨格时会被卸载并在新格子重挂，
+   重挂会重放 .df-node 的入场动画（缩小→放大）。拖动中重挂不播动画，
+   避免拖过一个格子边界时节点闪缩一下。 */
+.df-node.df-dragging {
+  animation: none;
+}
+
 .gnv {
   background: var(--panel);
   border: 1px solid var(--border-2);
@@ -2807,23 +2814,33 @@ a.tile-btn {
   border-radius: 8px;
   background: var(--panel-2);
 }
-.gnv-params summary {
+.gnv-params-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
   padding: 6px 9px;
+  border: none;
+  background: none;
+  font: inherit;
   font-size: 11px;
   font-weight: 600;
   color: var(--text-2);
   cursor: pointer;
-  user-select: none;
-  list-style: none;
+  text-align: left;
 }
-.gnv-params summary::before {
-  content: "▸ ";
+.gnv-params-head:hover {
+  color: var(--text);
 }
-.gnv-params[open] summary::before {
-  content: "▾ ";
+.gnv-params-caret {
+  display: inline-flex;
+  transition: transform 120ms ease;
 }
-.gnv-params[open] summary {
-  border-bottom: 1px dashed var(--border);
+.gnv-params-caret.open {
+  transform: rotate(90deg);
+}
+.gnv-params-body {
+  border-top: 1px dashed var(--border);
 }
 .gnv-params .param-group {
   padding: 8px;

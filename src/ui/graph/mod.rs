@@ -132,6 +132,10 @@ pub fn GraphPage(state: AppState, graph: Graph) -> Element {
     let flow = use_flow_handle::<NodeData>();
     let mut connect_from = use_signal(|| None::<HandleKey>);
     let mut seq = use_signal(|| 0u64);
+    // 生图节点参数折叠区的展开状态（按节点 id）。
+    // dioxus-flow 按 2048 世界单位分块渲染，节点跨格会被卸载重挂，
+    // 组件内局部状态会丢，因此提升到这里。
+    let mut params_open: Signal<std::collections::HashSet<String>> = use_signal(Default::default);
 
     let cfg_at_create = state.config();
 
@@ -407,12 +411,24 @@ pub fn GraphPage(state: AppState, graph: Graph) -> Element {
                                 let gid = gid_view_of(&graph);
                                 let nid_upd = ctx.node.id.clone();
                                 let nid_run = ctx.node.id.clone();
+                                let nid_po = ctx.node.id.clone();
                                 let persist_upd = persist_node_view.clone();
+                                let is_params_open = params_open.cloned().contains(&nid_upd);
                                 rsx! {
                                     nodes::GenNodeView {
                                         state,
                                         ctx: ctx.clone(),
                                         graph_id: gid.clone(),
+                                        params_open: is_params_open,
+                                        on_params_open: move |v: bool| {
+                                            let mut set = params_open.cloned();
+                                            if v {
+                                                set.insert(nid_po.clone());
+                                            } else {
+                                                set.remove(&nid_po);
+                                            }
+                                            params_open.set(set);
+                                        },
                                         on_update: move |data: GenNodeData| {
                                             nodes.with_mut(|v| {
                                                 if let Some(n) = v.iter_mut().find(|n| n.id == nid_upd) {

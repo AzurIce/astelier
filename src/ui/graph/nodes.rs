@@ -9,11 +9,15 @@ use dioxus::prelude::*;
 use dioxus_flow::prelude::*;
 
 /// 生图节点：模型选择 + Prompt + 参数（折叠）+ 运行按钮 + 最近批次状态。
+/// `params_open` / `on_params_open` 由 GraphPage 持有 —— dioxus-flow 会把
+/// 跨越格子边界的节点卸载重挂（性能分块），组件内局部状态会丢，故外提。
 #[component]
 pub fn GenNodeView(
     state: AppState,
     ctx: NodeViewCtx<NodeData>,
     graph_id: String,
+    params_open: bool,
+    on_params_open: EventHandler<bool>,
     on_update: EventHandler<GenNodeData>,
     on_run: EventHandler<()>,
 ) -> Element {
@@ -137,18 +141,34 @@ pub fn GenNodeView(
                 }
                 if let Some(p) = &profile {
                     if has_params {
-                        details { class: "gnv-params",
-                            summary { "参数" }
-                            crate::ui::params::ParamsRow {
-                                profile: p.clone(),
-                                params: gen.params.clone(),
-                                defs: param_defs,
-                                hide_groups: vec!["safety".into()],
-                                onset: move |(k, v): (String, ParamValue)| {
-                                    let mut g = gen_params.clone();
-                                    g.params.insert(k, v);
-                                    on_update(g);
+                        div { class: if params_open { "gnv-params open" } else { "gnv-params" },
+                            button {
+                                class: "gnv-params-head",
+                                title: "展开 / 收起参数",
+                                onpointerdown: move |e| e.stop_propagation(),
+                                onclick: move |e| {
+                                    e.stop_propagation();
+                                    on_params_open(!params_open);
                                 },
+                                span { class: if params_open { "gnv-params-caret open" } else { "gnv-params-caret" },
+                                    crate::ui::icons::IconChevronRight { size: 11 }
+                                }
+                                "参数"
+                            }
+                            if params_open {
+                                div { class: "gnv-params-body",
+                                    crate::ui::params::ParamsRow {
+                                        profile: p.clone(),
+                                        params: gen.params.clone(),
+                                        defs: param_defs,
+                                        hide_groups: vec!["safety".into()],
+                                        onset: move |(k, v): (String, ParamValue)| {
+                                            let mut g = gen_params.clone();
+                                            g.params.insert(k, v);
+                                            on_update(g);
+                                        },
+                                    }
+                                }
                             }
                         }
                     }

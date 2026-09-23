@@ -2918,3 +2918,10 @@ a.tile-btn {
   display: inline-flex;
   align-items: center;
 }
+
+/* dx 开发工具的「must rebuild」提示层在依赖变更后会残留；保险起见
+   永不让它拦截指针（release 构建无此元素，规则无副作用） */
+#__dx-toast,
+#__dx-toast * {
+  pointer-events: none !important;
+}

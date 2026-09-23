@@ -453,6 +453,8 @@ pub struct ResolvedRequest {
 }
 
 /// 请求级校验：模型已选、图片总数上限、参数取值（按 profile 元数据）。
+/// 调用方在服务端（start_node_run）；wasm 客户端仅保留能力。
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub fn validate_request(
     profile: &ModelProfile,
     model_id: &str,

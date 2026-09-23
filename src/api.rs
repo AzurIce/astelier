@@ -133,6 +133,10 @@ pub async fn create_input(recipe_id: String) -> Result<RecipeInput, ServerFnErro
         title: None,
         variables: Default::default(),
         images: Default::default(),
+        extra_refs: vec![],
+        mask_override: None,
+        param_overrides: Default::default(),
+        version: 1,
         created_at: now,
         updated_at: now,
     };
@@ -140,11 +144,55 @@ pub async fn create_input(recipe_id: String) -> Result<RecipeInput, ServerFnErro
     Ok(input)
 }
 
+/// 保存输入：id 为空时自动创建（v1）；已存在则内容性字段
+/// （变量/槽位图/额外图/mask/参数覆盖）变化时版本 +1
 #[server]
-pub async fn update_input(input: RecipeInput) -> Result<RecipeInput, ServerFnError> {
-    let mut input = input;
+pub async fn update_input(mut input: RecipeInput) -> Result<RecipeInput, ServerFnError> {
+    let stored = if input.id.is_empty() {
+        input.id = uuid::Uuid::new_v4().simple().to_string();
+        input.created_at = now_ms();
+        input.version = 1;
+        None
+    } else {
+        crate::store::get_recipe_input(&input.recipe_id, &input.id).await
+    };
     input.updated_at = now_ms();
+    if let Some(old) = stored {
+        input.created_at = old.created_at;
+        input.version = if old.same_content(&input) {
+            old.version
+        } else {
+            old.version + 1
+        };
+    }
     crate::store::save_recipe_input(&input.recipe_id, &input).await;
+    Ok(input)
+}
+
+/// 从批次快照复制出一份新输入，便于基于历史微调而不污染原输入。
+#[server]
+pub async fn new_input_from_run(run_id: String) -> Result<RecipeInput, ServerFnError> {
+    let run = crate::store::get_run(&run_id)
+        .await
+        .ok_or_else(|| ServerFnError::new("批次不存在"))?;
+    let request = run
+        .request
+        .ok_or_else(|| ServerFnError::new("旧版批次没有输入快照，无法复制"))?;
+    let now = now_ms();
+    let input = RecipeInput {
+        id: uuid::Uuid::new_v4().simple().to_string(),
+        recipe_id: run.recipe_id.clone(),
+        title: Some("来自批次".into()),
+        variables: request.input.variables,
+        images: request.input.images,
+        extra_refs: request.input.extra_refs,
+        mask_override: request.input.mask_override,
+        param_overrides: request.input.param_overrides,
+        version: 1,
+        created_at: now,
+        updated_at: now,
+    };
+    crate::store::save_recipe_input(&run.recipe_id, &input).await;
     Ok(input)
 }
 
@@ -240,105 +288,26 @@ pub async fn list_runs(limit: usize) -> Result<Vec<Run>, ServerFnError> {
     Ok(crate::store::list_runs(limit).await)
 }
 
-/// 用配方 + 一份输入发起生成。输入会被落库（新建或更新），
-/// 模板渲染、校验、执行全部在服务端完成；立即返回 Running 状态的批次。
-#[server]
-pub async fn start_run(recipe_id: String, mut input: RecipeInput) -> Result<Run, ServerFnError> {
-    let recipe = crate::store::get_recipe(&recipe_id)
-        .await
-        .ok_or_else(|| ServerFnError::new("配方不存在"))?;
-    let cfg = crate::store::load_config().await;
-    let provider = cfg
-        .providers
-        .iter()
-        .find(|p| p.id == recipe.provider_id)
-        .cloned()
-        .ok_or_else(|| ServerFnError::new("Provider 不存在"))?;
-    let profile = crate::profiles::merged(
-        &recipe.model_id,
-        provider.overrides.get(&recipe.model_id),
-    );
-
-    recipe
-        .validate_params(&profile)
-        .map_err(ServerFnError::new)?;
-
-    // 落库输入（新建或更新）
-    if input.id.is_empty() {
-        input.id = uuid::Uuid::new_v4().simple().to_string();
-        input.created_at = now_ms();
-    }
-    input.recipe_id = recipe_id.clone();
-    input.updated_at = now_ms();
-    crate::store::save_recipe_input(&recipe_id, &input).await;
-
-    // 渲染模板
-    let rendered = crate::model::render_recipe(
-        &recipe.prompt_template,
-        &input.variables,
-        &input.images,
-        recipe.refs.len(),
-    );
-    if !rendered.is_complete() {
-        let mut problems = vec![];
-        if !rendered.missing_vars.is_empty() {
-            problems.push(format!("未填变量：{}", rendered.missing_vars.join("、")));
-        }
-        if !rendered.missing_imgs.is_empty() {
-            problems.push(format!("未绑定图片槽：{}", rendered.missing_imgs.join("、")));
-        }
-        return Err(ServerFnError::new(problems.join("；")));
-    }
-    if rendered.prompt.trim().is_empty() {
-        return Err(ServerFnError::new("Prompt 模板为空"));
-    }
-
-    // 合并图片：固定参考图在前，槽位图按模板出现顺序在后
-    let images: Vec<AssetRef> = recipe
-        .refs
-        .iter()
-        .chain(rendered.slot_images.iter())
-        .cloned()
-        .collect();
-    if images.len() > profile.max_refs as usize {
-        return Err(ServerFnError::new(format!(
-            "图片总数超过上限 {} 张",
-            profile.max_refs
-        )));
-    }
-    let mode = if images.is_empty() { Mode::Gen } else { Mode::Edit };
-
-    let run = Run {
-        id: uuid::Uuid::new_v4().simple().to_string(),
-        recipe_id: recipe.id.clone(),
-        input_id: Some(input.id.clone()),
-        recipe_version: recipe.version,
-        provider_id: provider.id.clone(),
-        model_id: recipe.model_id.clone(),
-        mode,
-        prompt: rendered.prompt.clone(),
-        params: recipe.params.clone(),
-        ref_count: images.len(),
-        status: RunStatus::Running,
-        error: None,
-        images: vec![],
-        usage: None,
-        created_at: now_ms(),
-        duration_ms: None,
-    };
+/// 落盘批次并异步执行最终请求；立即返回 Running 状态的批次。
+#[cfg(feature = "server")]
+async fn persist_and_execute(
+    provider: Provider,
+    profile: ModelProfile,
+    resolved: ResolvedRequest,
+    run: Run,
+) -> Run {
     crate::store::save_run(&run).await;
-
     let mut run_task = run.clone();
     tokio::spawn(async move {
         let t0 = std::time::Instant::now();
         match crate::adapter::execute(
             &provider,
             crate::adapter::ExecRequest {
-                prompt: &rendered.prompt,
-                params: &recipe.params,
-                images: &images,
-                mask: recipe.mask.as_ref(),
-                model_id: &recipe.model_id,
+                prompt: &resolved.prompt,
+                params: &resolved.params,
+                images: &resolved.images,
+                mask: resolved.mask.as_ref(),
+                model_id: &run_task.model_id,
                 profile: &profile,
             },
         )
@@ -357,17 +326,139 @@ pub async fn start_run(recipe_id: String, mut input: RecipeInput) -> Result<Run,
         run_task.duration_ms = Some(t0.elapsed().as_millis() as u64);
         crate::store::save_run(&run_task).await;
     });
-
-    Ok(run)
+    run
 }
 
+/// 用配方 + 一份输入发起生成。输入会被落库（新建或更新），
+/// 合并、校验在服务端完成；创建时完整快照当时的模板/输入/最终请求，
+/// 此后配方与输入的修改不影响该批次。
+#[server]
+pub async fn start_run(recipe_id: String, mut input: RecipeInput) -> Result<Run, ServerFnError> {
+    let recipe = crate::store::get_recipe(&recipe_id)
+        .await
+        .ok_or_else(|| ServerFnError::new("配方不存在"))?;
+    let cfg = crate::store::load_config().await;
+    let provider = cfg
+        .providers
+        .iter()
+        .find(|p| p.id == recipe.provider_id)
+        .cloned()
+        .ok_or_else(|| ServerFnError::new("Provider 不存在"))?;
+    let profile = crate::profiles::merged(
+        &recipe.model_id,
+        provider.overrides.get(&recipe.model_id),
+    );
+
+    // 落库输入（新建或更新，内容变化时版本 +1）
+    let stored = if input.id.is_empty() {
+        input.id = uuid::Uuid::new_v4().simple().to_string();
+        input.created_at = now_ms();
+        input.version = 1;
+        None
+    } else {
+        crate::store::get_recipe_input(&recipe_id, &input.id).await
+    };
+    input.recipe_id = recipe_id.clone();
+    input.updated_at = now_ms();
+    if let Some(old) = &stored {
+        input.created_at = old.created_at;
+        input.version = if old.same_content(&input) {
+            old.version
+        } else {
+            old.version + 1
+        };
+    }
+    crate::store::save_recipe_input(&recipe_id, &input).await;
+
+    // 模板 + 输入 → 最终请求；按元数据校验
+    let resolved = crate::model::resolve_request(&recipe, &input).map_err(ServerFnError::new)?;
+    crate::model::validate_request(&profile, &recipe.model_id, &resolved.params, resolved.images.len())
+        .map_err(ServerFnError::new)?;
+
+    let run = Run {
+        id: uuid::Uuid::new_v4().simple().to_string(),
+        recipe_id: recipe.id.clone(),
+        input_id: Some(input.id.clone()),
+        recipe_version: recipe.version,
+        input_version: input.version,
+        provider_id: provider.id.clone(),
+        model_id: recipe.model_id.clone(),
+        mode: resolved.mode,
+        request: Some(crate::model::RunRequest {
+            template: crate::model::TemplateSnapshot::capture(&recipe),
+            input: crate::model::InputSnapshot::capture(&input),
+            resolved: resolved.clone(),
+        }),
+        rerun_of: None,
+        status: RunStatus::Running,
+        error: None,
+        images: vec![],
+        usage: None,
+        created_at: now_ms(),
+        duration_ms: None,
+        prompt: String::new(),
+        params: Default::default(),
+        ref_count: 0,
+    };
+    Ok(persist_and_execute(provider, profile, resolved, run).await)
+}
+
+/// 快照重放：按批次快照的最终请求原样再执行一次（模型/参数/图片/mask 全部取自快照），
+/// 与配方、输入的当前状态完全无关。
+#[cfg(feature = "server")]
+async fn replay_request(
+    request: crate::model::RunRequest,
+    recipe_id: String,
+    input_id: Option<String>,
+    rerun_of: Option<String>,
+) -> Result<Run, ServerFnError> {
+    let cfg = crate::store::load_config().await;
+    let provider = cfg
+        .providers
+        .iter()
+        .find(|p| p.id == request.template.provider_id)
+        .cloned()
+        .ok_or_else(|| ServerFnError::new("Provider 不存在（快照里的供应商已被删除）"))?;
+    let profile = crate::profiles::merged(
+        &request.template.model_id,
+        provider.overrides.get(&request.template.model_id),
+    );
+    let resolved = request.resolved.clone();
+    let run = Run {
+        id: uuid::Uuid::new_v4().simple().to_string(),
+        recipe_id,
+        input_id,
+        recipe_version: request.template.version,
+        input_version: request.input.version,
+        provider_id: provider.id.clone(),
+        model_id: request.template.model_id.clone(),
+        mode: resolved.mode,
+        request: Some(request),
+        rerun_of,
+        status: RunStatus::Running,
+        error: None,
+        images: vec![],
+        usage: None,
+        created_at: now_ms(),
+        duration_ms: None,
+        prompt: String::new(),
+        params: Default::default(),
+        ref_count: 0,
+    };
+    Ok(persist_and_execute(provider, profile, resolved, run).await)
+}
+
+/// 原样重跑：有快照的批次直接重放快照；旧版批次（无快照）回退为
+/// 「当前配方 + 当前输入」重跑。
 #[server]
 pub async fn rerun_run(run_id: String) -> Result<Run, ServerFnError> {
     let old = crate::store::get_run(&run_id)
         .await
         .ok_or_else(|| ServerFnError::new("批次不存在"))?;
-    // 原样重跑：以批次快照关联的输入再执行一次
-    // （若配方已修改，重跑使用的仍是输入的当前值；输入会先被渲染校验）
+    if let Some(request) = old.request.clone() {
+        return replay_request(request, old.recipe_id, old.input_id, Some(old.id)).await;
+    }
+    // 旧版批次回退路径
     let input_id = old
         .input_id
         .clone()

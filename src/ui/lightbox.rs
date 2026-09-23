@@ -84,8 +84,8 @@ pub fn Lightbox(state: AppState, run_id: String, index: usize) -> Element {
                 div { class: "lightbox-stage",
                     img { src: "{asset.url()}" }
                 }
-                if !run.prompt.is_empty() {
-                    footer { class: "lightbox-prompt", "{run.prompt}" }
+                if !run.display_prompt().is_empty() {
+                    footer { class: "lightbox-prompt", "{run.display_prompt()}" }
                 }
             }
         }

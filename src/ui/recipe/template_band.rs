@@ -1,85 +1,34 @@
-//! 配方页：顶部编辑区（可折叠）+ 此配方的 Run 列表 + 底部快捷运行条。
-//!
-//! 选中层级：配方 → 编辑配方；输入 → 快捷框载入该输入，中栏过滤其 Run。
+//! 模板编辑区（可折叠）：prompt 模板 + 参数 + 固定参考图 + mask。
+//! 显式保存，内容变化时版本 +1；历史内容通过批次快照回溯。
 
 use crate::api::*;
 use crate::app::AppState;
-use crate::model::{AssetRef, ParamValue, Recipe, RecipeInput, Run};
+use crate::model::{ParamValue, Recipe};
 use crate::ui::params::ParamsRow;
-use crate::ui::widgets::Dropdown;
-use crate::util::now_ms;
+use crate::ui::widgets::{Dropdown, RefsStrip};
 use dioxus::prelude::*;
-use std::collections::BTreeMap;
 
 #[component]
-pub fn RecipePage(state: AppState, recipe: Recipe) -> Element {
-    let editor_open = use_signal(|| true);
-    let runs_all = state.runs();
-
-    // 中栏过滤：选中输入 → 只看它的 Run；只选配方 → 看配方全部 Run
-    let input_filter = state.selected_input_id();
-    let runs: Vec<Run> = runs_all
-        .iter()
-        .filter(|r| {
-            r.recipe_id == recipe.id
-                && (input_filter.is_empty() || r.input_id.as_deref() == Some(input_filter.as_str()))
-        })
-        .cloned()
-        .collect();
-
-    // 选中的输入（快捷框载入其值）
-    let selected_input = state.selected_input();
-
-    rsx! {
-        div { class: "stage recipe-page",
-            EditorBand { state, recipe: recipe.clone(), editor_open }
-
-            div { class: "runs-band",
-                div { class: "runs-band-head",
-                    span { class: "section-label",
-                        if input_filter.is_empty() { "此配方的批次" } else { "此输入的批次" }
-                    }
-                    span { class: "runs-count", "{runs.len()}" }
-                    if !input_filter.is_empty() {
-                        button {
-                            class: "ghost-btn small",
-                            onclick: move |_| state.selected_input.set(String::new()),
-                            "显示配方全部批次"
-                        }
-                    }
-                }
-                if runs.is_empty() {
-                    div { class: "empty-state",
-                        div { class: "empty-glyph", crate::ui::icons::IconSparkles { size: 28 } }
-                        h3 { "还没有批次" }
-                        p { "在下方快捷运行条里填好内容，或先在上方编辑配方。" }
-                    }
-                } else {
-                    div { class: "runs-list",
-                        for run in runs.iter() {
-                            crate::ui::feed::RunCard { key: "{run.id}", state, run: run.clone(), now: now_ms() }
-                        }
-                    }
-                }
-            }
-
-            RunBar { state, recipe, selected_input }
-        }
-    }
-}
-
-// ================= 编辑区 =================
-
-#[component]
-fn EditorBand(state: AppState, recipe: Recipe, editor_open: Signal<bool>) -> Element {
+pub fn TemplateBand(state: AppState, recipe: Recipe) -> Element {
     let mut show_advanced = state.show_advanced;
     let mut show_readme_preview = use_signal(|| false);
     let mut readme_draft = use_signal(String::new);
     let mut readme_loaded = use_signal(|| false);
     let mut readme_dirty = use_signal(|| false);
+    // 已有内容的配方默认收起；空白新配方自动展开
+    let mut editor_open = use_signal(|| recipe.prompt_template.trim().is_empty());
 
     // 内容性编辑的工作副本：显式保存，避免每次击键都版本 +1
     let mut draft = use_signal(|| recipe.clone());
+
+    // 「恢复模板为此快照」→ 载入草稿并标脏，用户确认保存后才成为新版本
+    let mut restore = state.restore_template;
+    use_effect(move || {
+        let Some(snapshot) = restore.cloned() else { return };
+        restore.set(None);
+        draft.set(snapshot);
+        editor_open.set(true);
+    });
 
     let saved = recipe.clone();
     let content_dirty = draft.cloned().prompt_template != saved.prompt_template
@@ -116,7 +65,7 @@ fn EditorBand(state: AppState, recipe: Recipe, editor_open: Signal<bool>) -> Ele
     };
 
     rsx! {
-        div { class: "editor-band",
+        div { class: "editor-band template-band",
             div { class: "editor-head",
                 button {
                     class: "ghost-btn",
@@ -126,7 +75,7 @@ fn EditorBand(state: AppState, recipe: Recipe, editor_open: Signal<bool>) -> Ele
                     } else {
                         crate::ui::icons::IconChevronRight { size: 13 }
                     }
-                    "编辑配方"
+                    "模板"
                 }
                 if content_dirty {
                     span { class: "dirty-chip", "未保存修改 · 保存后 v{recipe.version} → v{recipe.version + 1}" }
@@ -259,7 +208,16 @@ fn EditorBand(state: AppState, recipe: Recipe, editor_open: Signal<bool>) -> Ele
                             }
                             label { class: "field",
                                 span { class: "field-label", "固定参考图（跟配方走）" }
-                                RefsStrip { state, draft }
+                                RefsStrip {
+                                    state,
+                                    refs: draft.cloned().refs,
+                                    on_added: move |asset: crate::model::AssetRef| {
+                                        draft.with_mut(|d| d.refs.push(asset));
+                                    },
+                                    on_removed: move |id: String| {
+                                        draft.with_mut(|d| d.refs.retain(|x| x.id != id));
+                                    },
+                                }
                             }
                             label { class: "field",
                                 span { class: "field-label", "Mask（可选）" }
@@ -274,6 +232,7 @@ fn EditorBand(state: AppState, recipe: Recipe, editor_open: Signal<bool>) -> Ele
                                 class: "btn primary",
                                 onclick: move |_| {
                                     let d = draft.cloned();
+                                    let state = state;
                                     spawn(async move {
                                         match update_recipe(d).await {
                                             Ok(saved) => {
@@ -311,261 +270,6 @@ fn EditorBand(state: AppState, recipe: Recipe, editor_open: Signal<bool>) -> Ele
     }
 }
 
-// ================= 快捷运行条 =================
-
-#[component]
-fn RunBar(state: AppState, recipe: Recipe, selected_input: Option<RecipeInput>) -> Element {
-    let (mut variables, mut slot_images, mut input_id) = run_bar_state();
-
-    // 选中输入变化 → 载入其值
-    use_effect(move || {
-        let iid = state.selected_input_id();
-        if let Some(input) = state.selected_input() {
-            input_id.set(iid);
-            variables.set(input.variables.clone());
-            slot_images.set(input.images.clone());
-        } else if iid.is_empty() {
-            input_id.set(String::new());
-            variables.set(Default::default());
-            slot_images.set(Default::default());
-        }
-    });
-
-    let (vars, img_slots) = crate::model::template_variables(&recipe.prompt_template);
-
-    let recipe_gen = recipe.clone();
-    let generate = move |_| {
-        let rendered = crate::model::render_recipe(
-            &recipe_gen.prompt_template,
-            &variables.cloned(),
-            &slot_images.cloned(),
-            recipe_gen.refs.len(),
-        );
-        if !rendered.is_complete() {
-            let mut problems = vec![];
-            if !rendered.missing_vars.is_empty() {
-                problems.push(format!("未填变量：{}", rendered.missing_vars.join("、")));
-            }
-            if !rendered.missing_imgs.is_empty() {
-                problems.push(format!("未绑定图片槽：{}", rendered.missing_imgs.join("、")));
-            }
-            state.toast(problems.join("；"), "error");
-            return;
-        }
-        if let Some(profile) = state.profile_of(&recipe_gen.model_id) {
-            let draft_for_validate = recipe_gen.clone();
-            if let Err(msg) = draft_for_validate.validate_params(&profile) {
-                state.toast(msg, "error");
-                return;
-            }
-        }
-        let values = variables.cloned();
-        let images = slot_images.cloned();
-        let rid = recipe_gen.id.clone();
-        let iid = input_id.cloned();
-        let mut state = state;
-        spawn(async move {
-            let input = RecipeInput {
-                id: iid.clone(),
-                recipe_id: rid.clone(),
-                title: None,
-                variables: values,
-                images,
-                created_at: 0,
-                updated_at: 0,
-            };
-            if !iid.is_empty() {
-                let _ = update_input(input.clone()).await;
-            }
-            match start_run(rid, input).await {
-                Ok(run) => {
-                    if let Some(new_iid) = &run.input_id {
-                        input_id.set(new_iid.clone());
-                        if let Ok(list) = list_inputs(run.recipe_id.clone()).await {
-                            state.recipe_inputs.set(list);
-                        }
-                    }
-                    state.runs.with_mut(|v| v.insert(0, run));
-                }
-                Err(e) => state.toast(format!("无法开始生成：{e}"), "error"),
-            }
-        });
-    };
-
-    let var_fields: Vec<(String, String)> = vars
-        .iter()
-        .map(|name| {
-            let val = variables
-                .cloned()
-                .get(name)
-                .and_then(|v| v.clone().into())
-                .unwrap_or_default();
-            (name.clone(), val)
-        })
-        .collect();
-
-    rsx! {
-        div { class: "run-bar",
-            div { class: "run-bar-main",
-                if vars.is_empty() && img_slots.is_empty() {
-                    span { class: "hint", "模板里还没有槽位 — 在配方模板中写 {{文字槽}} 或 {{img:图片槽}} 后，这里会出现对应的输入框。" }
-                }
-                for (name, val_now) in var_fields.iter().cloned() {
-                    div { class: "slot-field",
-                        span { class: "param-label slot-name", "{{{name}}}" }
-                        input {
-                            class: "text-input slot-input",
-                            r#type: "text",
-                            value: "{val_now}",
-                            placeholder: "{name} 的值",
-                            oninput: move |e| {
-                                let v = e.value();
-                                variables.with_mut(|m| {
-                                    m.insert(name.clone(), v);
-                                });
-                            },
-                        }
-                    }
-                }
-                for slot in img_slots.iter().cloned() {
-                    {
-                        let slot_bind = slot.clone();
-                        let slot_clear = slot.clone();
-                        rsx! {
-                            SlotImageChip {
-                                state,
-                                slot: slot.clone(),
-                                bound: slot_images.cloned().get(&slot).cloned(),
-                                onbind: move |asset: AssetRef| {
-                                    slot_images.with_mut(|m| {
-                                        m.insert(slot_bind.clone(), asset);
-                                    });
-                                },
-                                onclear: move |_| {
-                                    slot_images.with_mut(|m| {
-                                        m.remove(&slot_clear);
-                                    });
-                                },
-                            }
-                        }
-                    }
-                }
-                div { class: "rendered-preview",
-                    crate::ui::icons::IconSparkles { size: 11 }
-                    {crate::model::render_recipe(
-                        &recipe.prompt_template,
-                        &variables.cloned(),
-                        &slot_images.cloned(),
-                        recipe.refs.len(),
-                    ).prompt}
-                }
-            }
-            div { class: "run-bar-foot",
-                if input_id.cloned().is_empty() {
-                    span { class: "hint", "新输入 · 生成时自动保存" }
-                } else {
-                    span { class: "hint", "正在编辑已保存的输入 · 更新自动保存" }
-                }
-                div { class: "run-bar-actions",
-                    button {
-                        class: "ghost-btn small",
-                        title: "清空为新的输入",
-                        onclick: move |_| {
-                            input_id.set(String::new());
-                            variables.set(Default::default());
-                            slot_images.set(Default::default());
-                        },
-                        "新空白"
-                    }
-                    button {
-                        class: "btn primary",
-                        onclick: generate,
-                        disabled: recipe.prompt_template.trim().is_empty(),
-                        crate::ui::icons::IconSparkles { size: 14 }
-                        "生成"
-                        kbd { "⌘↩" }
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn run_bar_state() -> (
-    Signal<BTreeMap<String, String>>,
-    Signal<BTreeMap<String, AssetRef>>,
-    Signal<String>,
-) {
-    (
-        use_signal(BTreeMap::new),
-        use_signal(BTreeMap::new),
-        use_signal(String::new),
-    )
-}
-
-/// 图片槽 chip：绑定 / 预览 / 清除 / 上传
-#[component]
-fn SlotImageChip(
-    state: AppState,
-    slot: String,
-    bound: Option<AssetRef>,
-    onbind: EventHandler<AssetRef>,
-    onclear: EventHandler<()>,
-) -> Element {
-    rsx! {
-        div {
-            class: if bound.is_some() { "slot-image bound" } else { "slot-image" },
-            div { class: "slot-image-head",
-                span { class: "param-label slot-name", "{{img:{slot}}}" }
-                if bound.is_some() {
-                    button {
-                        class: "icon-btn",
-                        title: "移除",
-                        onclick: move |e| {
-                            e.stop_propagation();
-                            onclear(());
-                        },
-                        crate::ui::icons::IconX { size: 10 }
-                    }
-                }
-            }
-            if let Some(asset) = &bound {
-                img {
-                    class: "slot-thumb",
-                    src: "{asset.url()}",
-                    onclick: move |e| {
-                        e.stop_propagation();
-                    },
-                }
-            } else {
-                label { class: "slot-upload",
-                    crate::ui::icons::IconImage { size: 15 }
-                    input {
-                        r#type: "file",
-                        accept: "image/*",
-                        style: "display:none",
-                        onchange: move |e| {
-                            let files = e.files();
-                            spawn(async move {
-                                if let Some(file) = files.into_iter().next() {
-                                    let name = file.name();
-                                    match file.read_bytes().await {
-                                        Ok(bytes) => match upload_asset(bytes.to_vec(), name).await {
-                                            Ok(asset) => onbind.call(asset),
-                                            Err(err) => state.toast(format!("上传失败：{err}"), "error"),
-                                        },
-                                        Err(e) => state.toast(format!("读取文件失败：{e}"), "error"),
-                                    }
-                                }
-                            });
-                        },
-                    }
-                }
-            }
-        }
-    }
-}
-
 /// Markdown 预览（服务端渲染）
 #[component]
 fn ReadmePreview(content: String) -> Element {
@@ -586,7 +290,7 @@ fn ReadmePreview(content: String) -> Element {
     }
 }
 
-// ================= 模型选择 / 参考图 / Mask =================
+// ================= 模型选择 / Mask =================
 
 #[component]
 fn ModelSelect(state: AppState, mut draft: Signal<Recipe>) -> Element {
@@ -613,61 +317,6 @@ fn ModelSelect(state: AppState, mut draft: Signal<Recipe>) -> Element {
             onpick: move |m: String| {
                 draft.with_mut(|r| r.model_id = m);
             },
-        }
-    }
-}
-
-fn upload_refs_and_update(state: AppState, mut draft: Signal<Recipe>, e: Event<FormData>) {
-    let files = e.files();
-    spawn(async move {
-        for file in files {
-            let filename = file.name();
-            match file.read_bytes().await {
-                Ok(bytes) => match upload_asset(bytes.to_vec(), filename).await {
-                    Ok(asset) => {
-                        draft.with_mut(|r| r.refs.push(asset));
-                    }
-                    Err(err) => state.toast(format!("上传失败：{err}"), "error"),
-                },
-                Err(e) => state.toast(format!("读取文件失败：{e}"), "error"),
-            }
-        }
-    });
-}
-
-#[component]
-fn RefsStrip(state: AppState, mut draft: Signal<Recipe>) -> Element {
-    let refs = draft.cloned().refs;
-    rsx! {
-        div { class: "ref-strip",
-            div { class: "ref-thumbs",
-                for r in refs.iter().cloned() {
-                    div { key: "{r.id}", class: "ref-thumb",
-                        img { src: "{r.url()}", loading: "lazy" }
-                        button {
-                            class: "ref-thumb-remove",
-                            title: "移除",
-                            onclick: move |_| {
-                                let rid = r.id.clone();
-                                draft.with_mut(|x| x.refs.retain(|x| x.id != rid));
-                            },
-                            crate::ui::icons::IconX { size: 10 }
-                        }
-                    }
-                }
-                label { class: "ref-add",
-                    title: "上传固定参考图",
-                    crate::ui::icons::IconImage { size: 15 }
-                    span { "参考图" }
-                    input {
-                        r#type: "file",
-                        accept: "image/*",
-                        multiple: true,
-                        style: "display:none",
-                        onchange: move |e| upload_refs_and_update(state, draft, e),
-                    }
-                }
-            }
         }
     }
 }

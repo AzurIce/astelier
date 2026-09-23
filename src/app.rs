@@ -25,6 +25,10 @@ pub struct AppState {
     pub show_advanced: Signal<bool>,
     /// (run_id, image index)
     pub lightbox: Signal<Option<(String, usize)>>,
+    /// 打开快照弹窗的批次 id
+    pub snapshot_run: Signal<Option<String>>,
+    /// 待载入模板编辑区草稿的快照（来自「恢复模板为此快照」，保存后才成为新版本）
+    pub restore_template: Signal<Option<Recipe>>,
     pub toasts: Signal<Vec<Toast>>,
 }
 
@@ -62,6 +66,9 @@ impl AppState {
     }
     pub fn lightbox(&self) -> Option<(String, usize)> {
         self.lightbox.cloned()
+    }
+    pub fn snapshot_run_id(&self) -> Option<String> {
+        self.snapshot_run.cloned()
     }
     pub fn toasts(&self) -> Vec<Toast> {
         self.toasts.cloned()
@@ -164,6 +171,8 @@ pub fn App() -> Element {
         show_settings: use_signal(|| false),
         show_advanced: use_signal(|| false),
         lightbox: use_signal(|| None),
+        snapshot_run: use_signal(|| None),
+        restore_template: use_signal(|| None),
         toasts: use_signal(Vec::new),
     };
     let mut config = state.config;
@@ -249,7 +258,7 @@ pub fn App() -> Element {
                 crate::ui::sidebar::Sidebar { state }
 
                 if let Some(recipe) = state.selected_recipe() {
-                    crate::ui::recipe_page::RecipePage { state, recipe }
+                    crate::ui::recipe::RecipePage { key: "{recipe.id}", state, recipe }
                 } else if config().is_some() {
                     div {
                         class: "stage",
@@ -271,6 +280,9 @@ pub fn App() -> Element {
             }
             if let Some((run_id, idx)) = state.lightbox() {
                 crate::ui::lightbox::Lightbox { state, run_id, index: idx }
+            }
+            if let Some(run_id) = state.snapshot_run_id() {
+                crate::ui::snapshot::SnapshotModal { state, run_id }
             }
 
             Toasts { toasts: state.toasts }

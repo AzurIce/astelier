@@ -7,3 +7,6 @@
 
 # dx 预编译二进制（tools/bin/dx，82MB，不入库）
 tools/
+
+# ZCode 会话产物
+.zcode/

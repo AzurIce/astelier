@@ -39,7 +39,7 @@ pub fn RunCard(state: AppState, run: Run, now: u64) -> Element {
     let runs_sig = state.runs;
     let status = run.status;
     let n_expected = run
-        .params
+        .effective_params()
         .get("n")
         .and_then(|v| match v {
             crate::model::ParamValue::Number(n) => Some(*n as usize),
@@ -52,14 +52,24 @@ pub fn RunCard(state: AppState, run: Run, now: u64) -> Element {
         .map(|ms| format!("{:.1}", ms as f64 / 1000.0));
     let rid_rerun = run.id.clone();
     let rid_del = run.id.clone();
+    let rid_fork = run.id.clone();
+    let rid_snapshot = run.id.clone();
     let prompt_preview: String = {
-        let t = run.prompt.replace('\n', " ");
+        let t = run.display_prompt().replace('\n', " ");
         if t.chars().count() > 120 {
             format!("{}…", t.chars().take(120).collect::<String>())
         } else {
             t
         }
     };
+    let img_count = run.image_count();
+    let has_snapshot = run.request.is_some();
+    // 配方当前版本 ≠ 批次版本 → 提示模板已演进
+    let current_recipe_version = state
+        .recipes()
+        .into_iter()
+        .find(|r| r.id == run.recipe_id)
+        .map(|r| r.version);
 
     rsx! {
         article {
@@ -86,9 +96,26 @@ pub fn RunCard(state: AppState, run: Run, now: u64) -> Element {
                     }
                     span { class: "mono run-model", "{run.model_id}" }
                     span { class: "badge run-mode", "{run.mode.label()}" }
-                    span { class: "badge version-chip", "v{run.recipe_version}" }
-                    if run.ref_count > 0 {
-                        span { class: "run-refs", "{run.ref_count} 图" }
+                    if let Some(cv) = current_recipe_version {
+                        if cv != run.recipe_version {
+                            span {
+                                class: "dot-stale",
+                                title: "配方已更新至 v{cv}，此批次基于 v{run.recipe_version} 的快照",
+                            }
+                        }
+                    }
+                    span { class: "badge version-chip", "模板v{run.recipe_version}" }
+                    if run.input_version > 0 {
+                        span { class: "badge version-chip", "输入v{run.input_version}" }
+                    }
+                    if run.rerun_of.is_some() {
+                        span { class: "badge rerun-chip", title: "对原批次的快照重放", "重放" }
+                    }
+                    if !has_snapshot {
+                        span { class: "badge legacy-chip", title: "旧版批次，仅保存了渲染结果", "旧版" }
+                    }
+                    if img_count > 0 {
+                        span { class: "run-refs", "{img_count} 图" }
                     }
                     span { class: "run-time", "{relative_time(run.created_at, now)}" }
                     if let Some(ds) = &dur_s {
@@ -101,7 +128,7 @@ pub fn RunCard(state: AppState, run: Run, now: u64) -> Element {
                 div { class: "run-head-actions",
                     button {
                         class: "icon-btn",
-                        title: "原样重跑（使用输入的当前值）",
+                        title: if has_snapshot { "原样重跑（按批次快照）" } else { "重跑（旧版批次将按当前配方/输入）" },
                         onclick: move |_| {
                             let rid = rid_rerun.clone();
                             spawn(async move {
@@ -111,6 +138,39 @@ pub fn RunCard(state: AppState, run: Run, now: u64) -> Element {
                             });
                         },
                         crate::ui::icons::IconRefresh { size: 14 }
+                    }
+                    button {
+                        class: "icon-btn",
+                        disabled: !has_snapshot,
+                        title: if has_snapshot { "查看批次快照（当时的模板 / 输入 / 最终请求）" } else { "旧版批次没有快照" },
+                        onclick: move |_| {
+                            state.snapshot_run.set(Some(rid_snapshot.clone()));
+                        },
+                        crate::ui::icons::IconEye { size: 14 }
+                    }
+                    button {
+                        class: "icon-btn",
+                        title: if has_snapshot { "复制为新输入" } else { "旧版批次无法复制输入" },
+                        disabled: !has_snapshot,
+                        onclick: move |_| {
+                            let rid = rid_fork.clone();
+                            let mut state = state;
+                            spawn(async move {
+                                match new_input_from_run(rid).await {
+                                    Ok(input) => {
+                                        let rid_recipe = input.recipe_id.clone();
+                                        let rid_input = input.id.clone();
+                                        if let Ok(list) = list_inputs(rid_recipe.clone()).await {
+                                            state.recipe_inputs.set(list);
+                                        }
+                                        state.select_input(&rid_recipe, &rid_input);
+                                        state.toast("已复制为新输入", "ok");
+                                    }
+                                    Err(e) => state.toast(format!("复制失败：{e}"), "error"),
+                                }
+                            });
+                        },
+                        crate::ui::icons::IconCopy { size: 14 }
                     }
                     button {
                         class: "icon-btn",

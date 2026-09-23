@@ -8,7 +8,7 @@
 //! ├── recipes/{rid}/
 //! │   ├── recipe.json        配方定义
 //! │   └── inputs/{iid}.json  配方下的输入（变量值 + 槽位图片）
-//! └── runs/{run_id}.json     批次快照
+//! └── runs/{run_id}.json     批次档案：状态 + 执行时刻的模板/输入/最终请求完整快照
 //! ```
 //!
 //! 单用户本地工具，JSON 落盘足够；写入用 tmp+rename 原子替换。
@@ -130,6 +130,10 @@ pub async fn migrate_legacy() {
             title: Some("迁移".into()),
             variables: Default::default(),
             images: Default::default(),
+            extra_refs: vec![],
+            mask_override: None,
+            param_overrides: Default::default(),
+            version: 1,
             created_at: old_input.created_at,
             updated_at: old_input.updated_at,
         };
@@ -176,18 +180,21 @@ pub async fn migrate_legacy() {
             recipe_id: r.input_id.clone(),
             input_id: Some(format!("{}-m0", r.input_id)),
             recipe_version: 1,
+            input_version: 0,
             provider_id: r.provider_id,
             model_id: r.model_id,
             mode: r.mode,
-            prompt: r.prompt,
-            params: r.params,
-            ref_count: r.ref_count,
+            request: None,
+            rerun_of: None,
             status: r.status,
             error: r.error,
             images: r.images,
             usage: r.usage,
             created_at: r.created_at,
             duration_ms: r.duration_ms,
+            prompt: r.prompt,
+            params: r.params,
+            ref_count: r.ref_count,
         };
         write_json_at_unlocked(
             &sub_dir(&["runs", &format!("{}.json", run.id)]),

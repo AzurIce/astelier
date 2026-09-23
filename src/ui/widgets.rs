@@ -1,6 +1,64 @@
-//! 通用 UI 小组件：Modal / Dropdown / Segmented / Stepper / Toast。
+//! 通用 UI 小组件：Modal / Dropdown / Segmented / Stepper / Toast / RefsStrip。
 
+use crate::app::AppState;
+use crate::model::AssetRef;
 use dioxus::prelude::*;
+
+// ---------- RefsStrip ----------
+
+/// 资产缩略图条 + 上传/移除。上传立即落盘成资产，归属由 on_added 回调决定
+/// （配方固定图 / 输入额外参考图共用）。
+#[component]
+pub fn RefsStrip(
+    state: AppState,
+    refs: Vec<AssetRef>,
+    on_added: EventHandler<AssetRef>,
+    on_removed: EventHandler<String>,
+) -> Element {
+    rsx! {
+        div { class: "ref-strip",
+            div { class: "ref-thumbs",
+                for r in refs.iter().cloned() {
+                    div { key: "{r.id}", class: "ref-thumb",
+                        img { src: "{r.url()}", loading: "lazy" }
+                        button {
+                            class: "ref-thumb-remove",
+                            title: "移除",
+                            onclick: move |_| on_removed(r.id.clone()),
+                            crate::ui::icons::IconX { size: 10 }
+                        }
+                    }
+                }
+                label { class: "ref-add",
+                    title: "上传参考图",
+                    crate::ui::icons::IconImage { size: 15 }
+                    span { "参考图" }
+                    input {
+                        r#type: "file",
+                        accept: "image/*",
+                        multiple: true,
+                        style: "display:none",
+                        onchange: move |e| {
+                            let files = e.files();
+                            spawn(async move {
+                                for file in files {
+                                    let filename = file.name();
+                                    match file.read_bytes().await {
+                                        Ok(bytes) => match crate::api::upload_asset(bytes.to_vec(), filename).await {
+                                            Ok(asset) => on_added(asset),
+                                            Err(err) => state.toast(format!("上传失败：{err}"), "error"),
+                                        },
+                                        Err(e) => state.toast(format!("读取文件失败：{e}"), "error"),
+                                    }
+                                }
+                            });
+                        },
+                    }
+                }
+            }
+        }
+    }
+}
 
 // ---------- Modal ----------
 

@@ -2869,6 +2869,30 @@ a.tile-btn {
 .gnv-params-body {
   border-top: 1px dashed var(--border);
 }
+/* 节点内参数区较窄（约 210px）：组标签独占一行、参数行可换行、
+   分段控件收窄且允许换行 —— 否则画质/背景/输出格式会横向溢出节点 */
+.gnv-params .param-group {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.gnv-params .param-group-items {
+  gap: 6px 10px;
+}
+.gnv-params .param {
+  height: auto;
+  min-width: 0;
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.gnv-params .segmented {
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+.gnv-params .segment {
+  padding: 4px 8px;
+  font-size: 11px;
+}
 .gnv-params .param-group {
   padding: 8px;
 }

@@ -54,6 +54,9 @@ export function createEditor(container: HTMLElement) {
 					}
 					return Presets.classic.Node
 				},
+				// 端口圆点由各节点组件自绘（.an-socket，按类型着色）；
+				// 不替换的话 classic 默认 Socket（24px 橄榄绿）会叠在自绘点上
+				socket: () => null,
 			},
 		}),
 	)

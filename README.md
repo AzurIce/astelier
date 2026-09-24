@@ -1,10 +1,11 @@
 # Atelier · 生成式艺术工作台
 
-**rust server + React/tldraw 前端** 的生成式图像创作工具。画布基于
-[tldraw image-pipeline](https://tldraw.dev/starter-kits/image-pipeline)
-模板（节点式图片流水线：类型化端口、DAG 执行引擎在浏览器端），后端 axum
-提供 REST API 并托管前端产物。前身是 dioxus fullstack 实现（配方/输入时代
-的完整说明见 git 历史）与更早的静态实验 [poke-image-studio](poke-image-studio/)。
+**rust server + Svelte/Rete.js 前端** 的生成式图像创作工具。画布基于
+[Rete.js](https://retejs.org)（MIT，全插件免商用限制）+ Svelte 5 自建节点系统
+（Model / Prompt / Image / Generate / Preview，端口类型检查、拓扑执行在浏览器端），
+后端 axum 提供 REST API 并托管前端产物。前身依次是 dioxus fullstack（配方/输入
+时代）与 React + tldraw image-pipeline（因 tldraw 5.x 许可改为生产付费而弃用），
+完整说明见 git 历史与更早的静态实验 [poke-image-studio](poke-image-studio/)。
 
 核心思路不变：**以模型元数据（`ModelProfile` params schema）驱动参数与请求
 转换**，API 调用全部在服务端（无 CORS、密钥不出本机、结果可持久化）；每次
@@ -15,8 +16,11 @@
 ## 架构
 
 ```
-web/（bun + Vite + React 19 + tldraw 5）
-  节点图前端：Generate / LoadImage / Preview… 节点，端口类型检查、DAG 执行
+web/（bun + Vite + Svelte 5 + Rete.js 2）
+  src/editor.ts     Area/Svelte/Connection/ContextMenu 插件组装 + 连线类型约束
+  src/nodes/        节点类（ClassicPreset 派生）+ Svelte 节点组件
+  src/exec.ts       全图拓扑求值：Model/Prompt/Image → Generate → Preview
+  src/persist.ts    画布 localStorage 持久化（后续接 /api/graphs）
         │ fetch /api/*（dev 时 vite proxy → 127.0.0.1:8230）
         ▼
 src/（cargo，axum）
@@ -26,6 +30,9 @@ src/（cargo，axum）
   store.rs      data/ 落盘（JSON + 资产文件，tmp+rename 原子写）
   main.rs       路由 + 托管 web/dist（SPA fallback 到 index.html）
 ```
+
+注：Rete.js 仅 `rete-structures` / `rete-scopes-plugin` 两个包为 CC-BY-NC-SA
+（禁商用），本项目不使用这两个包，其余全部 MIT。
 
 数据目录（`ATELIER_DATA_DIR` 可覆盖，多实例隔离用）：
 
@@ -65,8 +72,10 @@ just check      # cargo check
 
 ## 路线
 
-- [ ] 前端接回：模型选择（Model 节点 ← /api/providers/*/profiles）、批次 Feed、设置页
-- [ ] 图持久化：tldraw 画布 ↔ /api/graphs（目前画布存浏览器 IndexedDB）
+- [ ] Generate 参数区接 profiles schema（steps/cfg/seed 之外的模型参数动态渲染）
+- [ ] 图持久化：localStorage → /api/graphs（服务端已有 CRUD）
+- [ ] 批次 Feed（/api/runs 历史、重放、重跑）与设置页
+- [ ] 节点补充：Negative Prompt、多图 ref（走 /api/runs）、Upscale 等
 - [ ] mask 节点（画刷/反相/撤销）
 - [ ] 更多 adapter：seeddream / nano banana（结构化差异转换）
 - [ ] ComfyUI provider（workflow 级）

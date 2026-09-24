@@ -23,8 +23,11 @@ const DATA_DIR: &str = "data";
 
 static STORE_LOCK: Mutex<()> = Mutex::const_new(());
 
+/// 数据根目录。可用 ATELIER_DATA_DIR 覆盖（多实例隔离 / 测试用），
+/// 默认 data/。注意多个实例共用同一目录时互相对彼此的图、批次可见。
 fn dir() -> PathBuf {
-    Path::new(DATA_DIR).to_path_buf()
+    let root = std::env::var("ATELIER_DATA_DIR").unwrap_or_else(|_| DATA_DIR.to_string());
+    Path::new(&root).to_path_buf()
 }
 
 fn sub_dir(parts: &[&str]) -> PathBuf {

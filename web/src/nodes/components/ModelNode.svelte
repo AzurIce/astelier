@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Ref } from 'rete-svelte-plugin/5'
 	import type { AreaExtra } from '../types'
-	import { rt, bumpModel } from '../../runtime'
+	import { rt } from '../../runtime'
 	import { scheduleSave } from '../../persist'
 	import type { ModelNode } from '../classes'
 
@@ -14,7 +14,6 @@
 	function touch() {
 		rt.area?.update('node', data.id)
 		scheduleSave()
-		bumpModel()
 	}
 </script>
 

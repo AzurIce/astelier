@@ -18,7 +18,7 @@ import {
 } from './nodes/classes'
 import { type Schemes, type AreaExtra } from './nodes/types'
 import { connKeys } from './nodes/conn'
-import { rt, bumpModel } from './runtime'
+import { rt } from './runtime'
 import { scheduleSave } from './persist'
 
 export function createEditor(container: HTMLElement) {
@@ -98,9 +98,6 @@ export function createEditor(container: HTMLElement) {
 	])
 	editor.addPipe((ctx) => {
 		if (structural.has(ctx.type)) scheduleSave()
-		if (ctx.type === 'connectioncreated' || ctx.type === 'connectionremoved') {
-			bumpModel()
-		}
 		return ctx
 	})
 	area.addPipe((ctx) => {

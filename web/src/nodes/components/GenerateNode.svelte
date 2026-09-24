@@ -1,45 +1,14 @@
 <script lang="ts">
-	import { onMount } from 'svelte'
 	import { Ref } from 'rete-svelte-plugin/5'
 	import type { AreaExtra } from '../types'
-	import { rt, modelVersion } from '../../runtime'
+	import { rt } from '../../runtime'
 	import { scheduleSave } from '../../persist'
-	import { connectedModelNode } from '../conn'
-	import { fetchProfiles, type ModelProfile, type ParamDef } from '../../profiles'
+	import { OPENAI_IMAGE_PARAMS } from '../../apiParams'
+	import type { ParamDef } from '../../profiles'
 	import type { GenerateNode } from '../classes'
 
 	export let data: GenerateNode
 	export let emit: (p: AreaExtra) => void
-
-	let ready = false
-	let profiles: ModelProfile[] = []
-	let loadedFor = ''
-	let loadError: string | null = null
-
-	async function syncProfiles() {
-		const src = connectedModelNode(data.id)
-		const pid = src?.provider ?? ''
-		if (pid === loadedFor) return
-		loadedFor = pid
-		profiles = []
-		if (!pid) return
-		try {
-			profiles = await fetchProfiles(pid)
-			loadError = null
-		} catch (e) {
-			loadError = e instanceof Error ? e.message : String(e)
-		}
-	}
-
-	// 触发时机：挂载 + Model 选择/连线变化（modelVersion 信号）
-	$: if (ready) syncProfilesWhenChanged($modelVersion)
-	function syncProfilesWhenChanged(_version: number) {
-		syncProfiles()
-	}
-	onMount(() => {
-		ready = true
-		syncProfiles()
-	})
 
 	function touch() {
 		rt.area?.update('node', data.id)
@@ -59,8 +28,8 @@
 		touch()
 	}
 
-	$: mainParams = profiles.flatMap((pr) => pr.params).filter((p) => !p.advanced)
-	$: advancedParams = profiles.flatMap((pr) => pr.params).filter((p) => p.advanced)
+	$: mainParams = OPENAI_IMAGE_PARAMS.filter((p) => !p.advanced)
+	$: advancedParams = OPENAI_IMAGE_PARAMS.filter((p) => p.advanced)
 </script>
 
 <div class="an-node" class:selected={data.selected}>
@@ -125,12 +94,6 @@
 	</div>
 
 	<div class="an-body">
-		{#if !profiles.length && !loadError}
-			<div class="an-dim">连接 Model 节点以加载参数</div>
-		{:else if loadError}
-			<div class="an-error">{loadError}</div>
-		{/if}
-
 		{#each mainParams as p (p.key)}
 			{@render ParamRow(p)}
 		{/each}
@@ -178,7 +141,7 @@
 {#snippet ParamRow(p: ParamDef)}
 	<div class="an-row">
 		<span class="an-label" title={p.key}>{p.label}</span>
-		{#if p.kind === 'select' || p.kind === 'size'}
+		{#if p.kind === 'select'}
 			<select
 				value={data.params[p.key] ?? ''}
 				on:pointerdown|stopPropagation
@@ -189,6 +152,16 @@
 					<option value={o}>{o}</option>
 				{/each}
 			</select>
+		{:else if p.kind === 'size'}
+			<!-- 协议开集合：预设建议 + 自由输入（gpt-image-2+ 任意 16 整除尺寸） -->
+			<input
+				type="text"
+				list="an-size-presets"
+				placeholder="默认"
+				value={data.params[p.key] ?? ''}
+				on:pointerdown|stopPropagation
+				on:change={(e) => setParam(p, e.currentTarget.value.trim())}
+			/>
 		{:else}
 			<input
 				type={p.kind === 'number' ? 'number' : 'text'}
@@ -201,3 +174,9 @@
 		{/if}
 	</div>
 {/snippet}
+
+<datalist id="an-size-presets">
+	{#each OPENAI_IMAGE_PARAMS.find((p) => p.key === 'size')?.options ?? [] as o (o)}
+		<option value={o}></option>
+	{/each}
+</datalist>

@@ -18,7 +18,9 @@ pub struct ExecRequest<'a> {
     pub profile: &'a ModelProfile,
 }
 
-/// 把统一参数映射为协议请求体字段（Unset 跳过；未知键按 api 种类处理）
+/// 把统一参数映射为协议请求体字段（Unset 跳过）。
+/// 档案内键按 api_key 映射；未识别键原样透传 —— 协议是开集合，
+/// 能力差异以 API / 网关的实际响应为准，UI 层不做收窄。
 fn params_to_body(profile: &ModelProfile, params: &ParamMap) -> serde_json::Value {
     let mut body = serde_json::Map::new();
     for (key, value) in params {
@@ -27,14 +29,7 @@ fn params_to_body(profile: &ModelProfile, params: &ParamMap) -> serde_json::Valu
         }
         let api_key = match profile.find_param(key) {
             Some(def) => def.api_key().to_string(),
-            // 无档案定义的键：仅通用协议透传，避免把不认识的字段发给正式 API
-            None => {
-                if profile.api == crate::model::ApiKind::Generic {
-                    key.clone()
-                } else {
-                    continue;
-                }
-            }
+            None => key.clone(),
         };
         if let Some(v) = value.to_request_json() {
             body.insert(api_key, v);

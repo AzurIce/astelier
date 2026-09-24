@@ -11,6 +11,7 @@ use dioxus_flow::prelude::*;
 /// 生图节点：模型选择 + Prompt + 参数（折叠）+ 运行按钮 + 最近批次状态。
 /// `params_open` / `on_params_open` 由 GraphPage 持有 —— dioxus-flow 会把
 /// 跨越格子边界的节点卸载重挂（性能分块），组件内局部状态会丢，故外提。
+/// `entering`：刚创建的节点播一次入场动画（限时 class，跨格重挂不重放）。
 #[component]
 pub fn GenNodeView(
     state: AppState,
@@ -18,6 +19,7 @@ pub fn GenNodeView(
     graph_id: String,
     params_open: bool,
     on_params_open: EventHandler<bool>,
+    entering: bool,
     on_update: EventHandler<GenNodeData>,
     on_run: EventHandler<()>,
 ) -> Element {
@@ -84,7 +86,7 @@ pub fn GenNodeView(
     let gen_params = gen.clone();
 
     rsx! {
-        div { class: "gnv gnv-gen",
+        div { class: if entering { "gnv gnv-gen gnv-enter" } else { "gnv gnv-gen" },
             Handle { kind: HandleKind::Target, position: Side::Left }
             Handle { kind: HandleKind::Source, position: Side::Right }
             div { class: "gnv-head",
@@ -213,6 +215,7 @@ pub fn DisplayNodeView(
     ctx: NodeViewCtx<NodeData>,
     graph_id: String,
     upstream_gens: Vec<String>,
+    entering: bool,
 ) -> Element {
     let _ = &ctx;
     let runs_all = state.runs();
@@ -234,7 +237,7 @@ pub fn DisplayNodeView(
     let has_images = latest.iter().any(|r| !r.images.is_empty());
 
     rsx! {
-        div { class: "gnv gnv-display",
+        div { class: if entering { "gnv gnv-display gnv-enter" } else { "gnv gnv-display" },
             Handle { kind: HandleKind::Target, position: Side::Left }
             div { class: "gnv-head",
                 span { class: "gnv-kind",

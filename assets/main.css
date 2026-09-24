@@ -2662,6 +2662,16 @@ a.tile-btn {
   min-height: 0;
 }
 
+/* 缩放后文字发虚的改善：库给 .df-viewport 设了 will-change: transform，
+   整个画布被提升为合成层，位图按当时的缩放级别一次性光栅化，此后
+   transform 缩放只是拉伸旧位图 —— 缩小再放大就发糊，直到点击等操作
+   触发失效才按新级别重光栅。去掉提升后，缩放每帧走主线程重绘，
+   文字始终清晰（xyflow 同款做法）。我们的图规模小、分块裁剪仍在，
+   由此损失的合成器平移性能可以接受。 */
+.graph-canvas .df-viewport {
+  will-change: auto;
+}
+
 /* dioxus-flow 主题接入应用变量（light/dark 由 data-theme / media 决定） */
 .graph-canvas .dioxus-flow {
   --df-bg: var(--bg);
@@ -2684,11 +2694,28 @@ a.tile-btn {
 
 /* ---- 节点内容（.df-node 的子元素） ---- */
 
-/* dioxus-flow 按 2048 世界单位分块渲染，节点跨格时会被卸载并在新格子重挂，
-   重挂会重放 .df-node 的入场动画（缩小→放大）。拖动中重挂不播动画，
-   避免拖过一个格子边界时节点闪缩一下。 */
-.df-node.df-dragging {
+/* 库给 .df-node 挂了入场动画（df-node-enter）。该动画在两类情况下会重放：
+   跨分块边界的卸载重挂，以及 animation-name 从 none 切回 df-node-enter 的
+   瞬间（class 翻转本身就会重启动画 —— 「松手即重播」就是这么来的）。
+   因此常置为无动画（名字永不变，永不重放）；新节点的入场反馈改由 .gnv
+   上的 .gnv-enter 提供：限时 class，260ms 后移除，之后的重挂不会重放。 */
+.graph-canvas .df-node {
   animation: none;
+}
+
+@keyframes gnv-enter {
+  from {
+    opacity: 0;
+    scale: 0.9;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+
+.gnv.gnv-enter {
+  animation: gnv-enter 200ms ease-out;
 }
 
 .gnv {

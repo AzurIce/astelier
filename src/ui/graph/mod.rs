@@ -136,6 +136,10 @@ pub fn GraphPage(state: AppState, graph: Graph) -> Element {
     // dioxus-flow 按 2048 世界单位分块渲染，节点跨格会被卸载重挂，
     // 组件内局部状态会丢，因此提升到这里。
     let mut params_open: Signal<std::collections::HashSet<String>> = use_signal(Default::default);
+    // 刚创建、正在播入场动画的节点（限时标记，260ms 后移除）。
+    // 不能用 CSS class 翻转压制库动画：animation-name 从 none 切回本身
+    // 就会重启动画（表现为松手即重播）。
+    let mut entering: Signal<std::collections::HashSet<String>> = use_signal(Default::default);
 
     let cfg_at_create = state.config();
 
@@ -237,7 +241,7 @@ pub fn GraphPage(state: AppState, graph: Graph) -> Element {
                                 .unwrap_or_default();
                             let pos = free_spot((GEN_NODE_WIDTH, 120.0));
                             let node = Node::with_data(
-                                id,
+                                id.clone(),
                                 NodeKind::Gen.label(),
                                 (pos.x, pos.y),
                                 NodeData::Gen(GenNodeData {
@@ -256,6 +260,12 @@ pub fn GraphPage(state: AppState, graph: Graph) -> Element {
                                 }
                                 v.push(node);
                             });
+                            entering.write().insert(id.clone());
+                            let mut entering_sig = entering;
+                            spawn(async move {
+                                crate::util::delay(260).await;
+                                entering_sig.write().remove(&id);
+                            });
                             persist_add_gen();
                         },
                         crate::ui::icons::IconSparkles { size: 13 }
@@ -269,7 +279,7 @@ pub fn GraphPage(state: AppState, graph: Graph) -> Element {
                             let id = format!("disp-{}-{n}", crate::util::now_ms());
                             let pos = free_spot((DISPLAY_NODE_WIDTH, 140.0));
                             let node = Node::with_data(
-                                id,
+                                id.clone(),
                                 NodeKind::Display.label(),
                                 (pos.x, pos.y),
                                 NodeData::Display(DisplayNodeData::default()),
@@ -282,6 +292,12 @@ pub fn GraphPage(state: AppState, graph: Graph) -> Element {
                                     n.selected = false;
                                 }
                                 v.push(node);
+                            });
+                            entering.write().insert(id.clone());
+                            let mut entering_sig = entering;
+                            spawn(async move {
+                                crate::util::delay(260).await;
+                                entering_sig.write().remove(&id);
                             });
                             persist_add_disp();
                         },
@@ -379,12 +395,18 @@ pub fn GraphPage(state: AppState, graph: Graph) -> Element {
                         .sides(Side::Left, Side::Right);
                         let mut node = node;
                         node.selected = true;
-                        edges.write().push(Edge::new(key.node.clone(), id));
+                        edges.write().push(Edge::new(key.node.clone(), id.clone()));
                         nodes.with_mut(|v| {
                             for x in v.iter_mut() {
                                 x.selected = false;
                             }
                             v.push(node);
+                        });
+                        entering.write().insert(id.clone());
+                        let mut entering_sig = entering;
+                        spawn(async move {
+                            crate::util::delay(260).await;
+                            entering_sig.write().remove(&id);
                         });
                         persist_connect_end();
                     },
@@ -414,6 +436,7 @@ pub fn GraphPage(state: AppState, graph: Graph) -> Element {
                                 let nid_po = ctx.node.id.clone();
                                 let persist_upd = persist_node_view.clone();
                                 let is_params_open = params_open.cloned().contains(&nid_upd);
+                                let is_entering = entering.cloned().contains(&nid_upd);
                                 rsx! {
                                     nodes::GenNodeView {
                                         state,
@@ -429,6 +452,7 @@ pub fn GraphPage(state: AppState, graph: Graph) -> Element {
                                             }
                                             params_open.set(set);
                                         },
+                                        entering: is_entering,
                                         on_update: move |data: GenNodeData| {
                                             nodes.with_mut(|v| {
                                                 if let Some(n) = v.iter_mut().find(|n| n.id == nid_upd) {
@@ -445,12 +469,14 @@ pub fn GraphPage(state: AppState, graph: Graph) -> Element {
                             }
                             NodeData::Display(_) => {
                                 let gid = gid_view_of(&graph);
+                                let is_entering = entering.cloned().contains(&ctx.node.id);
                                 rsx! {
                                     nodes::DisplayNodeView {
                                         state,
                                         ctx: ctx.clone(),
                                         graph_id: gid,
                                         upstream_gens: gens,
+                                        entering: is_entering,
                                     }
                                 }
                             }

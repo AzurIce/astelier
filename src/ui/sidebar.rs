@@ -111,6 +111,13 @@ pub fn Sidebar(state: AppState) -> Element {
                                 e.prevent_default();
                                 if let Some(id) = drag_id.cloned() {
                                     let id_spawn = id.clone();
+                                    // 先更新本地（侧边栏按本地状态渲染，只写
+                                    // 服务端的话 UI 永远不动），再落盘
+                                    graphs.with_mut(|v| {
+                                        if let Some(g) = v.iter_mut().find(|g| g.id == id) {
+                                            g.group_id = None;
+                                        }
+                                    });
                                     spawn(async move {
                                         let _ = set_graph_group(id_spawn, None).await;
                                     });
@@ -301,6 +308,15 @@ fn GroupBlock(
                     e.prevent_default();
                     if let Some(id) = drag_id.cloned() {
                         let gid_drop2 = gid_drop.clone();
+                        // 先更新本地（侧边栏按本地状态渲染，只写服务端的话
+                        // UI 永远不动），再落盘
+                        let mut state = state;
+                        let id2 = id.clone();
+                        state.graphs.with_mut(|v| {
+                            if let Some(g) = v.iter_mut().find(|g| g.id == id2) {
+                                g.group_id = Some(gid_drop2.clone());
+                            }
+                        });
                         spawn(async move {
                             let _ = set_graph_group(id, Some(gid_drop2)).await;
                         });

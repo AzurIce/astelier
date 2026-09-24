@@ -8,6 +8,7 @@ import PromptNodeComp from './nodes/components/PromptNode.svelte'
 import LoadImageNodeComp from './nodes/components/LoadImageNode.svelte'
 import GenerateNodeComp from './nodes/components/GenerateNode.svelte'
 import PreviewNodeComp from './nodes/components/PreviewNode.svelte'
+import EmptySocket from './nodes/components/EmptySocket.svelte'
 import {
 	GenerateNode,
 	LoadImageNode,
@@ -54,9 +55,10 @@ export function createEditor(container: HTMLElement) {
 					}
 					return Presets.classic.Node
 				},
-				// 端口圆点由各节点组件自绘（.an-socket，按类型着色）；
-				// 不替换的话 classic 默认 Socket（24px 橄榄绿）会叠在自绘点上
-				socket: () => null,
+				// 端口圆点由各节点组件自绘（.an-socket，按类型着色）。这里必须给
+				// 一个空组件而不是 null：renderer 只在有组件挂载时才发 rendered
+				// 信号，socket 位置注册（连线端点定位）依赖该信号
+				socket: () => EmptySocket,
 			},
 		}),
 	)

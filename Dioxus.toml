@@ -1,5 +1,0 @@
-[application]
-name = "atelier"
-
-[web.app]
-title = "Atelier · 生成式艺术工作台"

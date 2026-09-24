@@ -1,5 +1,5 @@
 {
-  description = "atelier — generative art studio (dioxus fullstack)";
+  description = "atelier — generative art studio (rust server + react/tldraw web)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -34,9 +34,6 @@
             "clippy"
             "rustfmt"
           ];
-          targets = [
-            "wasm32-unknown-unknown"
-          ];
         };
 
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
@@ -44,10 +41,7 @@
       {
         devShells.default = craneLib.devShell {
           packages = with pkgs; [
-            dioxus-cli
-            binaryen
-            lld
-            (pkgs.callPackage ./wasm-bindgen-cli.nix { })
+            bun
           ];
         };
       }

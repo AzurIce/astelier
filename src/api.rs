@@ -1,47 +1,124 @@
-//! server functions —— 客户端调用、服务端实现（dioxus fullstack）。
+//! REST API（/api/*）—— React 前端（web/）与服务端之间的全部接口。
 //!
-//! Run 不依赖模板：`start_node_run` 接收节点图上生图节点装配好的请求，
-//! 归档最终请求后执行；配方时代的 `start_run` 已随重构移除，旧批次仍可读可重放。
+//! 约定：
+//! - JSON in/out；错误统一 `{ "error": "..." }` + 恰当的状态码；
+//! - 生图一律先落 Run 档案再异步执行（`persist_and_execute`），
+//!   `/api/runs` 轮询状态；`/api/generate` 是给节点图前端的同步封装
+//!   （内部同样走 Run，等它完成再返回）。
 
 use crate::model::*;
-use dioxus::prelude::*;
-use serde::{Deserialize, Serialize};
-#[cfg(feature = "server")]
 use crate::util::now_ms;
+use axum::extract::{Path, Query};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, patch, post, put};
+use axum::{Json, Router};
+use base64::Engine as _;
+use serde::Deserialize;
+use serde_json::json;
+use std::collections::BTreeMap;
+
+// ---------- 错误 ----------
+
+pub struct ApiError(pub StatusCode, pub String);
+
+impl From<String> for ApiError {
+    fn from(msg: String) -> Self {
+        ApiError(StatusCode::BAD_REQUEST, msg)
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> Response {
+        (self.0, Json(json!({ "error": self.1 }))).into_response()
+    }
+}
+
+type ApiResult<T> = Result<T, ApiError>;
+
+fn bad(msg: impl Into<String>) -> ApiError {
+    ApiError(StatusCode::BAD_REQUEST, msg.into())
+}
+
+// ---------- 路由 ----------
+
+pub fn router() -> Router {
+    Router::new()
+        // 配置
+        .route("/config", get(get_config).put(save_config))
+        .route(
+            "/providers/{provider_id}/profiles",
+            get(resolve_profiles),
+        )
+        .route(
+            "/providers/{provider_id}/models/{model_id}/override",
+            put(set_model_override),
+        )
+        // 节点图
+        .route("/graphs", get(list_graphs).post(create_graph))
+        .route(
+            "/graphs/{id}",
+            get(get_graph).put(update_graph).delete(delete_graph),
+        )
+        .route("/graphs/{id}/group", put(set_graph_group))
+        // 分组
+        .route("/groups", get(list_groups).post(create_group))
+        .route("/groups/{id}", patch(rename_group).delete(delete_group))
+        // 资产
+        .route("/assets", post(upload_asset))
+        // 批次
+        .route("/runs", get(list_runs).post(start_run))
+        .route(
+            "/runs/{id}",
+            get(get_run).delete(delete_run),
+        )
+        .route("/runs/{id}/rerun", post(rerun_run))
+        // 节点图前端（tldraw image-pipeline）的同步端点
+        .route("/generate", post(generate))
+        // image-pipeline 模板还有这几个端点；尚未接入，先显式 501
+        .route("/upscale", post(unimplemented))
+        .route("/ip-adapter", post(unimplemented))
+        .route("/style-transfer", post(unimplemented))
+        .route("/generate-text", post(unimplemented))
+}
+
+async fn unimplemented() -> ApiResult<Json<serde_json::Value>> {
+    Err(ApiError(
+        StatusCode::NOT_IMPLEMENTED,
+        "该节点类型尚未接入本服务端".into(),
+    ))
+}
 
 // ---------- 配置 ----------
 
-#[server]
-pub async fn get_config() -> Result<Config, ServerFnError> {
-    Ok(crate::store::load_config().await)
+async fn get_config() -> Json<Config> {
+    Json(crate::store::load_config().await)
 }
 
-#[server]
-pub async fn save_config(cfg: Config) -> Result<(), ServerFnError> {
+async fn save_config(Json(cfg): Json<Config>) -> ApiResult<()> {
     crate::store::save_config(&cfg).await;
     Ok(())
 }
 
-/// 当前 provider 的全部模型档案（内置 + override 合并）
-#[server]
-pub async fn resolve_profiles(provider_id: String) -> Result<Vec<ModelProfile>, ServerFnError> {
+/// provider 的全部模型档案（内置 + override 合并）
+async fn resolve_profiles(Path(provider_id): Path<String>) -> Json<Vec<ModelProfile>> {
     let cfg = crate::store::load_config().await;
     let Some(provider) = cfg.providers.iter().find(|p| p.id == provider_id) else {
-        return Ok(vec![]);
+        return Json(vec![]);
     };
-    Ok(provider
-        .models
-        .iter()
-        .map(|m| crate::profiles::merged(m, provider.overrides.get(m)))
-        .collect())
+    Json(
+        provider
+            .models
+            .iter()
+            .map(|m| crate::profiles::merged(m, provider.overrides.get(m)))
+            .collect(),
+    )
 }
 
-#[server]
-pub async fn set_model_override(
-    provider_id: String,
-    model_id: String,
-    override_json: Option<serde_json::Value>,
-) -> Result<(), ServerFnError> {
+async fn set_model_override(
+    Path((provider_id, model_id)): Path<(String, String)>,
+    Json(override_json): Json<Option<serde_json::Value>>,
+) -> ApiResult<()> {
     let mut cfg = crate::store::load_config().await;
     if let Some(p) = cfg.providers.iter_mut().find(|p| p.id == provider_id) {
         match override_json {
@@ -59,32 +136,34 @@ pub async fn set_model_override(
 
 // ---------- 节点图 ----------
 
-#[server]
-pub async fn list_graphs() -> Result<Vec<Graph>, ServerFnError> {
-    Ok(crate::store::list_graphs().await)
+async fn list_graphs() -> Json<Vec<Graph>> {
+    Json(crate::store::list_graphs().await)
 }
 
-/// 新建节点图：种入「生图 → 显示」最小闭环，开箱即可跑第一个 run。
-#[server]
-pub async fn create_graph() -> Result<Graph, ServerFnError> {
+async fn get_graph(Path(id): Path<String>) -> ApiResult<Json<Graph>> {
+    crate::store::get_graph(&id)
+        .await
+        .map(Json)
+        .ok_or_else(|| bad("图不存在"))
+}
+
+/// 新建节点图：种入「生图 → 显示」最小闭环。
+async fn create_graph() -> ApiResult<Json<Graph>> {
     let now = now_ms();
     let cfg = crate::store::load_config().await;
     let (provider_id, model_id) = cfg
         .active()
-        .map(|p| {
-            (
-                p.id.clone(),
-                p.models.first().cloned().unwrap_or_default(),
-            )
-        })
+        .map(|p| (p.id.clone(), p.models.first().cloned().unwrap_or_default()))
         .unwrap_or_default();
+    let gen_id = format!("gen-{}", uuid::Uuid::new_v4().simple());
+    let disp_id = format!("disp-{}", uuid::Uuid::new_v4().simple());
     let graph = Graph {
         id: uuid::Uuid::new_v4().simple().to_string(),
         title: "未命名图".into(),
         group_id: None,
         nodes: vec![
             GraphNode {
-                id: format!("gen-{}", uuid::Uuid::new_v4().simple()),
+                id: gen_id.clone(),
                 x: 80.0,
                 y: 160.0,
                 data: NodeData::Gen(GenNodeData {
@@ -95,93 +174,107 @@ pub async fn create_graph() -> Result<Graph, ServerFnError> {
                 }),
             },
             GraphNode {
-                id: format!("disp-{}", uuid::Uuid::new_v4().simple()),
+                id: disp_id.clone(),
                 x: 480.0,
                 y: 160.0,
                 data: NodeData::Display(DisplayNodeData::default()),
             },
         ],
-        edges: vec![],
+        edges: vec![GraphEdge {
+            id: format!("e-{}", uuid::Uuid::new_v4().simple()),
+            source: gen_id,
+            target: disp_id,
+            source_handle: None,
+            target_handle: None,
+        }],
         created_at: now,
         updated_at: now,
     };
-    let mut graph = graph;
-    let gen_id = graph.nodes[0].id.clone();
-    let disp_id = graph.nodes[1].id.clone();
-    graph.edges.push(GraphEdge {
-        id: format!("e-{}", uuid::Uuid::new_v4().simple()),
-        source: gen_id,
-        target: disp_id,
-        source_handle: None,
-        target_handle: None,
-    });
     crate::store::save_graph(&graph).await;
-    Ok(graph)
+    Ok(Json(graph))
 }
 
-/// 整图保存（节点/连线/标题/分组）。客户端以图为单位落盘。
-#[server]
-pub async fn update_graph(mut graph: Graph) -> Result<Graph, ServerFnError> {
+async fn update_graph(Path(id): Path<String>, Json(mut graph): Json<Graph>) -> ApiResult<Json<Graph>> {
+    if graph.id != id {
+        return Err(bad("路径与体内的图 id 不一致"));
+    }
     graph.updated_at = now_ms();
     crate::store::save_graph(&graph).await;
-    Ok(graph)
+    Ok(Json(graph))
 }
 
-#[server]
-pub async fn delete_graph(id: String) -> Result<(), ServerFnError> {
+async fn delete_graph(Path(id): Path<String>) -> ApiResult<()> {
     crate::store::delete_graph(&id).await;
     Ok(())
 }
 
-#[server]
-pub async fn set_graph_group(
-    graph_id: String,
+#[derive(Deserialize)]
+struct GroupBody {
     group_id: Option<String>,
-) -> Result<(), ServerFnError> {
-    crate::store::set_graph_group(&graph_id, group_id).await;
+}
+
+async fn set_graph_group(Path(id): Path<String>, Json(body): Json<GroupBody>) -> ApiResult<()> {
+    crate::store::set_graph_group(&id, body.group_id).await;
     Ok(())
 }
 
 // ---------- 分组 ----------
 
-#[server]
-pub async fn list_groups() -> Result<Vec<GraphGroup>, ServerFnError> {
-    Ok(crate::store::list_groups().await)
+async fn list_groups() -> Json<Vec<GraphGroup>> {
+    Json(crate::store::list_groups().await)
 }
 
-#[server]
-pub async fn create_group(name: String) -> Result<GraphGroup, ServerFnError> {
+#[derive(Deserialize)]
+struct NameBody {
+    name: String,
+}
+
+async fn create_group(Json(body): Json<NameBody>) -> Json<GraphGroup> {
     let group = GraphGroup {
         id: uuid::Uuid::new_v4().simple().to_string(),
-        name: if name.trim().is_empty() { "新建分组".into() } else { name },
+        name: if body.name.trim().is_empty() {
+            "新建分组".into()
+        } else {
+            body.name
+        },
         created_at: now_ms(),
     };
     crate::store::save_group(&group).await;
-    Ok(group)
+    Json(group)
 }
 
-#[server]
-pub async fn rename_group(id: String, name: String) -> Result<(), ServerFnError> {
-    let mut groups: Vec<GraphGroup> = crate::store::list_groups().await;
+async fn rename_group(Path(id): Path<String>, Json(body): Json<NameBody>) -> ApiResult<()> {
+    let mut groups = crate::store::list_groups().await;
     if let Some(g) = groups.iter_mut().find(|g| g.id == id) {
-        g.name = name;
+        g.name = body.name;
     }
     crate::store::write_groups(&groups).await;
     Ok(())
 }
 
-#[server]
-pub async fn delete_group(id: String) -> Result<(), ServerFnError> {
+async fn delete_group(Path(id): Path<String>) -> ApiResult<()> {
     crate::store::delete_group(&id).await;
     Ok(())
 }
 
 // ---------- 资产 ----------
 
-#[server]
-pub async fn upload_asset(bytes: Vec<u8>, filename: String) -> Result<AssetRef, ServerFnError> {
+#[derive(Deserialize)]
+struct UploadQuery {
+    filename: String,
+}
+
+/// POST /api/assets?filename=foo.png —— 原始字节体。
+async fn upload_asset(
+    Query(q): Query<UploadQuery>,
+    body: axum::body::Bytes,
+) -> ApiResult<Json<AssetRef>> {
+    upload_asset_inner(q.filename, &body).await.map(Json)
+}
+
+async fn upload_asset_inner(filename: String, bytes: &[u8]) -> ApiResult<AssetRef> {
     if bytes.is_empty() {
-        return Err(ServerFnError::new("空文件"));
+        return Err(bad("空文件"));
     }
     let ext = filename.rsplit('.').next().unwrap_or("png").to_lowercase();
     let ext = match ext.as_str() {
@@ -190,20 +283,14 @@ pub async fn upload_asset(bytes: Vec<u8>, filename: String) -> Result<AssetRef, 
         }
         _ => "png".to_string(),
     };
-    crate::store::save_asset(&bytes, &ext)
+    crate::store::save_asset(bytes, &ext)
         .await
-        .map_err(ServerFnError::new)
+        .map_err(bad)
 }
 
-// ---------- 运行 ----------
+// ---------- 执行（Run 档案 + 异步执行）----------
 
-#[server]
-pub async fn list_runs(limit: usize) -> Result<Vec<Run>, ServerFnError> {
-    Ok(crate::store::list_runs(limit).await)
-}
-
-/// 落盘批次并异步执行最终请求；立即返回 Running 状态的批次。
-#[cfg(feature = "server")]
+/// 落盘批次并异步执行最终请求。
 async fn persist_and_execute(
     provider: Provider,
     profile: ModelProfile,
@@ -243,122 +330,27 @@ async fn persist_and_execute(
     run
 }
 
-/// 生图节点装配好的请求。Run 不依赖模板 —— 这就是发给 API 的全部内容。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct NodeRunRequest {
-    pub provider_id: String,
-    pub model_id: String,
-    pub prompt: String,
-    #[serde(default)]
-    pub params: ParamMap,
-    #[serde(default)]
-    pub images: Vec<AssetRef>,
-    #[serde(default)]
-    pub mask: Option<AssetRef>,
-}
-
-/// 从节点图上的生图节点发起生成：归档最终请求（此后图的修改不影响该批次），
-/// 立即返回 Running 的批次。
-#[server]
-pub async fn start_node_run(
-    graph_id: String,
-    node_id: String,
-    req: NodeRunRequest,
-) -> Result<Run, ServerFnError> {
-    let cfg = crate::store::load_config().await;
-    let provider = cfg
-        .providers
-        .iter()
-        .find(|p| p.id == req.provider_id)
-        .cloned()
-        .ok_or_else(|| ServerFnError::new("Provider 不存在"))?;
-    let profile = crate::profiles::merged(&req.model_id, provider.overrides.get(&req.model_id));
-
-    let mode = if req.images.is_empty() {
-        Mode::Gen
-    } else {
-        Mode::Edit
-    };
-    let resolved = ResolvedRequest {
-        prompt: req.prompt,
-        params: req.params,
-        images: req.images,
-        mask: req.mask,
-        mode,
-    };
-    if resolved.prompt.trim().is_empty() {
-        return Err(ServerFnError::new("Prompt 为空"));
-    }
-    crate::model::validate_request(
-        &profile,
-        &req.model_id,
-        &resolved.params,
-        resolved.images.len(),
-    )
-    .map_err(ServerFnError::new)?;
-
-    let run = Run {
+fn new_run(
+    provider_id: String,
+    model_id: String,
+    resolved: ResolvedRequest,
+    graph_id: Option<String>,
+    node_id: Option<String>,
+    rerun_of: Option<String>,
+) -> Run {
+    Run {
         id: uuid::Uuid::new_v4().simple().to_string(),
         recipe_id: String::new(),
         input_id: None,
         recipe_version: 0,
         input_version: 0,
-        provider_id: provider.id.clone(),
-        model_id: req.model_id.clone(),
-        mode: resolved.mode,
-        request: None,
-        graph_id: Some(graph_id),
-        node_id: Some(node_id),
-        resolved: Some(resolved.clone()),
-        rerun_of: None,
-        status: RunStatus::Running,
-        error: None,
-        images: vec![],
-        usage: None,
-        created_at: now_ms(),
-        duration_ms: None,
-        prompt: String::new(),
-        params: Default::default(),
-        ref_count: 0,
-    };
-    Ok(persist_and_execute(provider, profile, resolved, run).await)
-}
-
-/// 通用重放：以归档的最终请求原样执行（模型/参数/图片/mask 全部取自归档）。
-#[cfg(feature = "server")]
-#[allow(clippy::too_many_arguments)]
-async fn replay_resolved(
-    resolved: ResolvedRequest,
-    provider_id: String,
-    model_id: String,
-    graph_id: Option<String>,
-    node_id: Option<String>,
-    recipe_id: String,
-    recipe_version: u32,
-    input_id: Option<String>,
-    rerun_of: Option<String>,
-) -> Result<Run, ServerFnError> {
-    let cfg = crate::store::load_config().await;
-    let provider = cfg
-        .providers
-        .iter()
-        .find(|p| p.id == provider_id)
-        .cloned()
-        .ok_or_else(|| ServerFnError::new("Provider 不存在（批次归档里的供应商已被删除）"))?;
-    let profile = crate::profiles::merged(&model_id, provider.overrides.get(&model_id));
-    let run = Run {
-        id: uuid::Uuid::new_v4().simple().to_string(),
-        recipe_id,
-        input_id,
-        recipe_version,
-        input_version: 0,
-        provider_id: provider.id.clone(),
+        provider_id,
         model_id,
         mode: resolved.mode,
         request: None,
         graph_id,
         node_id,
-        resolved: Some(resolved.clone()),
+        resolved: Some(resolved),
         rerun_of,
         status: RunStatus::Running,
         error: None,
@@ -369,62 +361,264 @@ async fn replay_resolved(
         prompt: String::new(),
         params: Default::default(),
         ref_count: 0,
+    }
+}
+
+/// 生图请求 = 发给 API 的全部内容（不带 Run 簿记字段）。
+#[derive(Deserialize, Debug)]
+pub struct RunBody {
+    pub provider_id: String,
+    pub model_id: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub params: ParamMap,
+    #[serde(default)]
+    pub images: Vec<AssetRef>,
+    #[serde(default)]
+    pub mask: Option<AssetRef>,
+    #[serde(default)]
+    pub graph_id: Option<String>,
+    #[serde(default)]
+    pub node_id: Option<String>,
+}
+
+/// 组装校验 + 起跑一条 Run（内部供 /api/runs、/api/runs/{id}/rerun 与
+/// /api/generate 共用）。
+async fn launch_run(body: RunBody, rerun_of: Option<String>) -> ApiResult<Run> {
+    let cfg = crate::store::load_config().await;
+    let provider = cfg
+        .providers
+        .iter()
+        .find(|p| p.id == body.provider_id)
+        .cloned()
+        .ok_or_else(|| bad("Provider 不存在"))?;
+    let profile = crate::profiles::merged(&body.model_id, provider.overrides.get(&body.model_id));
+
+    let mode = if body.images.is_empty() { Mode::Gen } else { Mode::Edit };
+    let resolved = ResolvedRequest {
+        prompt: body.prompt,
+        params: body.params,
+        images: body.images,
+        mask: body.mask,
+        mode,
     };
+    if resolved.prompt.trim().is_empty() {
+        return Err(bad("Prompt 为空"));
+    }
+    crate::model::validate_request(&profile, &body.model_id, &resolved.params, resolved.images.len())
+        .map_err(bad)?;
+
+    let run = new_run(
+        provider.id.clone(),
+        body.model_id,
+        resolved.clone(),
+        body.graph_id,
+        body.node_id,
+        rerun_of,
+    );
     Ok(persist_and_execute(provider, profile, resolved, run).await)
 }
 
-/// 原样重跑：按批次归档的最终请求重放；配方时代批次重放其快照里的请求。
-#[server]
-pub async fn rerun_run(run_id: String) -> Result<Run, ServerFnError> {
-    let old = crate::store::get_run(&run_id)
+async fn start_run(Json(body): Json<RunBody>) -> ApiResult<Json<Run>> {
+    launch_run(body, None).await.map(Json)
+}
+
+#[derive(Deserialize)]
+struct ListRunsQuery {
+    #[serde(default = "default_run_limit")]
+    limit: usize,
+}
+
+fn default_run_limit() -> usize {
+    50
+}
+
+async fn list_runs(Query(q): Query<ListRunsQuery>) -> Json<Vec<Run>> {
+    Json(crate::store::list_runs(q.limit).await)
+}
+
+async fn get_run(Path(id): Path<String>) -> ApiResult<Json<Run>> {
+    crate::store::get_run(&id).await.map(Json).ok_or_else(|| bad("批次不存在"))
+}
+
+/// 原样重放：按批次归档的最终请求再执行一次。
+async fn rerun_run(Path(id): Path<String>) -> ApiResult<Json<Run>> {
+    let old = crate::store::get_run(&id)
         .await
-        .ok_or_else(|| ServerFnError::new("批次不存在"))?;
-    if let Some(request) = old.request.clone() {
-        let resolved = request.resolved.clone();
-        let provider_id = request.template.provider_id.clone();
-        let model_id = request.template.model_id.clone();
-        let recipe_id = old.recipe_id.clone();
-        let input_id = old.input_id.clone();
-        let rerun_of = Some(old.id.clone());
-        return replay_resolved(
-            resolved,
-            provider_id,
-            model_id,
+        .ok_or_else(|| bad("批次不存在"))?;
+    // 新批次一律有 resolved；旧配方批次回放其快照里的请求
+    let (resolved, provider_id, model_id, graph_id, node_id) = if let Some(r) = old.resolved {
+        (r, old.provider_id, old.model_id, old.graph_id, old.node_id)
+    } else if let Some(request) = old.request {
+        (
+            request.resolved,
+            request.template.provider_id,
+            request.template.model_id,
             None,
             None,
-            recipe_id,
-            request.template.version,
-            input_id,
-            rerun_of,
         )
-        .await;
-    }
-    if let Some(resolved) = old.resolved.clone() {
-        let provider_id = old.provider_id.clone();
-        let model_id = old.model_id.clone();
-        let graph_id = old.graph_id.clone();
-        let node_id = old.node_id.clone();
-        let rerun_of = Some(old.id.clone());
-        return replay_resolved(
-            resolved,
+    } else {
+        return Err(bad("该批次创建于快照机制之前，没有可重放的请求归档"));
+    };
+    let run = launch_run(
+        RunBody {
             provider_id,
             model_id,
+            prompt: resolved.prompt.clone(),
+            params: resolved.params.clone(),
+            images: resolved.images.clone(),
+            mask: resolved.mask.clone(),
             graph_id,
             node_id,
-            String::new(),
-            0,
-            None,
-            rerun_of,
-        )
-        .await;
+        },
+        Some(old.id),
+    )
+    .await?;
+    Ok(Json(run))
+}
+
+async fn delete_run(Path(id): Path<String>) -> ApiResult<()> {
+    crate::store::delete_run(&id).await;
+    Ok(())
+}
+
+// ---------- /api/generate：tldraw 节点图前端的同步封装 ----------
+
+/// image-pipeline 前端 Generate 节点的请求体（camelCase，与模板一致）。
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct GenerateParams {
+    model: String,
+    prompt: String,
+    negative_prompt: Option<String>,
+    steps: Option<f64>,
+    cfg_scale: Option<f64>,
+    seed: Option<f64>,
+    reference_image_url: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GenerateResult {
+    image_url: String,
+    seed: f64,
+}
+
+/// 前端图片值（LoadImage 的 data URL / 本服务生成的 /asset/ 相对路径）→ AssetRef。
+async fn url_to_asset(url: &str) -> ApiResult<AssetRef> {
+    if let Some(name) = url.strip_prefix("/asset/") {
+        let (id, ext) = name
+            .rsplit_once('.')
+            .ok_or_else(|| bad("资产 URL 格式不对"))?;
+        if !id.chars().all(|c| c.is_ascii_alphanumeric()) || ext.len() > 5 {
+            return Err(bad("资产 URL 格式不对"));
+        }
+        return Ok(AssetRef {
+            id: id.into(),
+            ext: ext.into(),
+            w: None,
+            h: None,
+        });
     }
-    Err(ServerFnError::new(
-        "该批次创建于快照机制之前，没有可重放的请求归档",
+    if let Some(rest) = url.strip_prefix("data:") {
+        let (meta, b64) = rest.split_once(',').ok_or_else(|| bad("data URL 格式不对"))?;
+        let ext = meta
+            .strip_prefix("image/")
+            .and_then(|s| s.split(';').next())
+            .map(|s| if s == "jpeg" { "jpg" } else { s })
+            .unwrap_or("png")
+            .to_string();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .map_err(|e| bad(format!("data URL 解码失败：{e}")))?;
+        return crate::store::save_asset(&bytes, &ext).await.map_err(bad);
+    }
+    Err(bad(
+        "仅支持本服务资产（/asset/…）与 data: 图片；外部 URL 请先用图片节点上传",
     ))
 }
 
-#[server]
-pub async fn delete_run(run_id: String) -> Result<(), ServerFnError> {
-    crate::store::delete_run(&run_id).await;
-    Ok(())
+/// model 字符串解析：`provider:model`（前缀命中已配置 provider 时拆开），
+/// 否则整体视作 model_id、走当前激活的 provider。
+async fn resolve_model(cfg: &Config, model: &str) -> ApiResult<(String, String)> {
+    if let Some((pid, mid)) = model.split_once(':') {
+        if cfg.providers.iter().any(|p| p.id == pid) {
+            return Ok((pid.to_string(), mid.to_string()));
+        }
+    }
+    let active = cfg.active().ok_or_else(|| bad("没有可用的 Provider，请先在设置里配置"))?;
+    Ok((active.id.clone(), model.to_string()))
+}
+
+/// 同步生成：内部照样走 Run（可追溯、可重放），轮询直到完成。
+/// 上游生图常需几十秒，client 超时请留足（前端 fetch 默认即可）。
+async fn generate(Json(p): Json<GenerateParams>) -> ApiResult<Json<GenerateResult>> {
+    let cfg = crate::store::load_config().await;
+    let (provider_id, model_id) = resolve_model(&cfg, &p.model).await?;
+
+    // 负面提示：OpenAI Images 协议无独立字段，拼进 prompt 尾部
+    let prompt = match p.negative_prompt.as_deref().map(str::trim) {
+        Some(n) if !n.is_empty() => format!("{}\n\n(avoid: {})", p.prompt, n),
+        _ => p.prompt,
+    };
+
+    let mut params: ParamMap = BTreeMap::new();
+    if let Some(steps) = p.steps {
+        params.insert("steps".into(), ParamValue::Number(steps));
+    }
+    if let Some(cfg_scale) = p.cfg_scale {
+        params.insert("cfg_scale".into(), ParamValue::Number(cfg_scale));
+    }
+    if let Some(seed) = p.seed {
+        params.insert("seed".into(), ParamValue::Number(seed));
+    }
+    let seed = p.seed.unwrap_or(0.0);
+
+    let images = match p.reference_image_url.as_deref() {
+        Some(u) if !u.is_empty() => vec![url_to_asset(u).await?],
+        _ => vec![],
+    };
+
+    let run = launch_run(RunBody {
+        provider_id,
+        model_id,
+        prompt,
+        params,
+        images,
+        mask: None,
+        graph_id: None,
+        node_id: None,
+    }, None)
+    .await?;
+
+    // 轮询批次完成（adapter 自身有 600s 超时，这里等 300s 足够）
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+    loop {
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        let run = crate::store::get_run(&run.id)
+            .await
+            .ok_or_else(|| bad("批次档案丢失"))?;
+        match run.status {
+            RunStatus::Done => {
+                let url = run
+                    .images
+                    .first()
+                    .map(|a| a.url())
+                    .ok_or_else(|| bad("生成完成但没有产出图片"))?;
+                return Ok(Json(GenerateResult { image_url: url, seed }));
+            }
+            RunStatus::Error => {
+                let msg = run.error.unwrap_or_else(|| "生成失败".into());
+                return Err(ApiError(StatusCode::BAD_GATEWAY, msg));
+            }
+            RunStatus::Running => {
+                if std::time::Instant::now() > deadline {
+                    return Err(ApiError(
+                        StatusCode::GATEWAY_TIMEOUT,
+                        "生成超时（300s）".into(),
+                    ));
+                }
+            }
+        }
+    }
 }

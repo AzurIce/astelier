@@ -1,13 +1,17 @@
-//! 统一数据模型 —— 客户端 / 服务端共享。
+//! 统一数据模型。
 //!
 //! 核心思想：
-//! - 模型能力以 `ModelProfile`（含 params schema）元数据描述，UI 表单与
-//!   请求都使用统一的 `ParamKey → ParamValue` 表示；
+//! - 模型能力以 `ModelProfile`（含 params schema）元数据描述，请求使用统一的
+//!   `ParamKey → ParamValue` 表示；
 //! - **Run 不依赖任何模板**：run 就是把一套装配好的请求（`ResolvedRequest`）
 //!   发给 API。节点图上的生图节点是装配请求的发起入口；历史上以
 //!   「配方 + 输入」装配的批次仍以 `RunRequest` 快照形式保留可读可重放。
-//! - `Graph`（节点图）是创作入口：画布上摆放 `Gen`（生图）与 `Display`
-//!   （显示）两类节点，连线表达数据流。
+//! - `Graph`（节点图）是创作入口。
+//!
+//! UI 前端已迁移至 web/（React + tldraw）；这里保留的视图辅助方法
+//! （relative_time / usage_text / params_for / compute_mp_size 等）
+//! 待前端 Feed、参数区接回时决定去留或下沉为 API。
+#![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -453,8 +457,6 @@ pub struct ResolvedRequest {
 }
 
 /// 请求级校验：模型已选、图片总数上限、参数取值（按 profile 元数据）。
-/// 调用方在服务端（start_node_run）；wasm 客户端仅保留能力。
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub fn validate_request(
     profile: &ModelProfile,
     model_id: &str,

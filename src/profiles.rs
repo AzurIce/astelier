@@ -3,6 +3,8 @@
 //! params schema 是参数区的渲染契约：表单控件、能力徽章、请求体收集、
 //! 自定义尺寸校验全部由它驱动。接入新模型（seeddream / nano banana…）
 //! = 增加一份档案或由 provider override 提供元数据，不改代码。
+//! （视图辅助 badges 等：React 前端接回模型选择 UI 前暂无调用方）
+#![allow(dead_code)]
 
 use crate::model::{ApiKind, ModelProfile, ParamDef, ParamKind, RatioPreset, SizeRule};
 

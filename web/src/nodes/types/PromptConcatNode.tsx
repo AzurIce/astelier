@@ -178,6 +178,7 @@ function PromptConcatNodeComponent({ shape, node }: NodeComponentProps<PromptCon
 				<span className="NodeInputRow-label">Sep</span>
 				<select
 					value={node.separator}
+					onPointerDown={(e) => e.stopPropagation()}
 					onChange={(e) =>
 						updateNode<PromptConcatNode>(editor, shape, (n) => ({
 							...n,

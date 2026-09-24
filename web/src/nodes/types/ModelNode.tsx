@@ -99,6 +99,7 @@ function ModelNodeComponent({ shape, node }: NodeComponentProps<ModelNode>) {
 				<span className="NodeInputRow-label">Provider</span>
 				<select
 					value={node.provider}
+					onPointerDown={(e) => e.stopPropagation()}
 					onChange={(e) => {
 						const newProvider = e.target.value
 						const newModels = PROVIDERS[newProvider]?.models
@@ -121,6 +122,7 @@ function ModelNodeComponent({ shape, node }: NodeComponentProps<ModelNode>) {
 				<span className="NodeInputRow-label">Model</span>
 				<select
 					value={node.modelId}
+					onPointerDown={(e) => e.stopPropagation()}
 					onChange={(e) =>
 						updateNode<ModelNode>(editor, shape, (n) => ({
 							...n,

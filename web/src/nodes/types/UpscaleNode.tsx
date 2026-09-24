@@ -144,6 +144,7 @@ function UpscaleNodeComponent({ shape, node }: NodeComponentProps<UpscaleNode>) 
 				<span className="NodeInputRow-label">Scale</span>
 				<select
 					value={node.scale}
+					onPointerDown={(e) => e.stopPropagation()}
 					onChange={(e) =>
 						updateNode<UpscaleNode>(editor, shape, (n) => ({
 							...n,
@@ -162,6 +163,7 @@ function UpscaleNodeComponent({ shape, node }: NodeComponentProps<UpscaleNode>) 
 				<span className="NodeInputRow-label">Method</span>
 				<select
 					value={node.method}
+					onPointerDown={(e) => e.stopPropagation()}
 					onChange={(e) =>
 						updateNode<UpscaleNode>(editor, shape, (n) => ({
 							...n,

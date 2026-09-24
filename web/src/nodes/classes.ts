@@ -38,9 +38,8 @@ export class LoadImageNode extends ClassicPreset.Node {
 
 export class GenerateNode extends ClassicPreset.Node {
 	static type = 'generate' as const
-	steps = 20
-	cfgScale = 7
-	seed = Math.floor(Math.random() * 99999)
+	/** 已设置的参数（统一键 → 值）；缺失键 = 默认（不随请求发送） */
+	params: Record<string, string | number> = {}
 	resultUrl: string | null = null
 	busy = false
 	error: string | null = null
@@ -87,9 +86,7 @@ export function nodeData(node: ClassicPreset.Node): Record<string, unknown> {
 		return { assetUrl: node.assetUrl, fileName: node.fileName }
 	if (node instanceof GenerateNode)
 		return {
-			steps: node.steps,
-			cfgScale: node.cfgScale,
-			seed: node.seed,
+			params: node.params,
 			resultUrl: node.resultUrl,
 		}
 	return {}
@@ -105,9 +102,11 @@ export function applyNodeData(node: ClassicPreset.Node, data: Record<string, unk
 		node.assetUrl = data.assetUrl ? String(data.assetUrl) : null
 		node.fileName = String(data.fileName ?? '')
 	} else if (node instanceof GenerateNode) {
-		node.steps = Number(data.steps ?? 20)
-		node.cfgScale = Number(data.cfgScale ?? 7)
-		node.seed = Number(data.seed ?? 0)
+		const params = data.params
+		node.params =
+			params && typeof params === 'object' && !Array.isArray(params)
+				? (params as Record<string, string | number>)
+				: {}
 		node.resultUrl = data.resultUrl ? String(data.resultUrl) : null
 	}
 }

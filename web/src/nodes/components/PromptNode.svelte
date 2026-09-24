@@ -2,6 +2,7 @@
 	import { Ref } from 'rete-svelte-plugin/5'
 	import type { AreaExtra } from '../types'
 	import { rt } from '../../runtime'
+	import { scheduleSave } from '../../persist'
 	import type { PromptNode } from '../classes'
 
 	export let data: PromptNode
@@ -19,6 +20,7 @@
 			on:input={(e) => {
 				data.text = e.currentTarget.value
 				rt.area?.update('node', data.id)
+				scheduleSave()
 			}}
 		></textarea>
 	</div>

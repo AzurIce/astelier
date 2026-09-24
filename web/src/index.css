@@ -34,7 +34,7 @@ body {
 	flex-direction: column;
 }
 
-/* 画布容器：点状网格背景 */
+/* 画布容器：点状网格背景；拖动画布时禁止文本选中 */
 #rete {
 	flex: 1;
 	min-height: 0;
@@ -42,6 +42,16 @@ body {
 	background-image: radial-gradient(circle, #2c2c34 1px, transparent 1px);
 	background-size: 24px 24px;
 	overflow: hidden;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+/* 输入控件仍可选中复制 */
+#rete input,
+#rete textarea,
+#rete select {
+	user-select: text;
+	-webkit-user-select: text;
 }
 
 /* ---------- 自定义节点 ---------- */

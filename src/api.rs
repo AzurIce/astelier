@@ -485,23 +485,23 @@ async fn delete_run(Path(id): Path<String>) -> ApiResult<()> {
 // ---------- /api/generate：tldraw 节点图前端的同步封装 ----------
 
 /// image-pipeline 前端 Generate 节点的请求体（camelCase，与模板一致）。
+/// params 为统一键 → 标量值；服务端按所连模型档案（api_key 映射、
+/// select/范围校验）过滤后发送，未识别键不透传。
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct GenerateParams {
     model: String,
     prompt: String,
-    negative_prompt: Option<String>,
-    steps: Option<f64>,
-    cfg_scale: Option<f64>,
-    seed: Option<f64>,
-    reference_image_url: Option<String>,
+    #[serde(default)]
+    params: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    image_urls: Vec<String>,
 }
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GenerateResult {
     image_url: String,
-    seed: f64,
 }
 
 /// 前端图片值（LoadImage 的 data URL / 本服务生成的 /asset/ 相对路径）→ AssetRef。
@@ -556,33 +556,32 @@ async fn generate(Json(p): Json<GenerateParams>) -> ApiResult<Json<GenerateResul
     let cfg = crate::store::load_config().await;
     let (provider_id, model_id) = resolve_model(&cfg, &p.model).await?;
 
-    // 负面提示：OpenAI Images 协议无独立字段，拼进 prompt 尾部
-    let prompt = match p.negative_prompt.as_deref().map(str::trim) {
-        Some(n) if !n.is_empty() => format!("{}\n\n(avoid: {})", p.prompt, n),
-        _ => p.prompt,
-    };
-
     let mut params: ParamMap = BTreeMap::new();
-    if let Some(steps) = p.steps {
-        params.insert("steps".into(), ParamValue::Number(steps));
+    for (key, value) in p.params {
+        let v = match value {
+            serde_json::Value::Null => continue,
+            serde_json::Value::String(s) => ParamValue::Text(s),
+            serde_json::Value::Number(n) => match n.as_f64() {
+                Some(f) => ParamValue::Number(f),
+                None => continue,
+            },
+            serde_json::Value::Bool(b) => ParamValue::Text(b.to_string()),
+            _ => continue,
+        };
+        params.insert(key, v);
     }
-    if let Some(cfg_scale) = p.cfg_scale {
-        params.insert("cfg_scale".into(), ParamValue::Number(cfg_scale));
-    }
-    if let Some(seed) = p.seed {
-        params.insert("seed".into(), ParamValue::Number(seed));
-    }
-    let seed = p.seed.unwrap_or(0.0);
 
-    let images = match p.reference_image_url.as_deref() {
-        Some(u) if !u.is_empty() => vec![url_to_asset(u).await?],
-        _ => vec![],
-    };
+    let mut images = Vec::new();
+    for url in &p.image_urls {
+        if !url.is_empty() {
+            images.push(url_to_asset(url).await?);
+        }
+    }
 
     let run = launch_run(RunBody {
         provider_id,
         model_id,
-        prompt,
+        prompt: p.prompt,
         params,
         images,
         mask: None,
@@ -605,7 +604,7 @@ async fn generate(Json(p): Json<GenerateParams>) -> ApiResult<Json<GenerateResul
                     .first()
                     .map(|a| a.url())
                     .ok_or_else(|| bad("生成完成但没有产出图片"))?;
-                return Ok(Json(GenerateResult { image_url: url, seed }));
+                return Ok(Json(GenerateResult { image_url: url }));
             }
             RunStatus::Error => {
                 let msg = run.error.unwrap_or_else(|| "生成失败".into());

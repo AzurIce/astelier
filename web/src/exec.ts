@@ -7,7 +7,7 @@ import {
 	PreviewNode,
 	PromptNode,
 } from './nodes/classes'
-import { connKeys } from './editor'
+import { connKeys } from './nodes/conn'
 import { rt } from './runtime'
 
 type Outputs = Record<string, unknown>
@@ -94,8 +94,9 @@ async function runNode(node: unknown, inputs: Record<string, unknown>): Promise<
 		const refs = (Array.isArray(inputs.image) ? inputs.image : [inputs.image]).filter(
 			(v): v is string => typeof v === 'string',
 		)
-		// /api/generate 目前单参考图；多图走 /api/runs（后续）
-		const referenceImageUrl = refs.length > 0 ? refs[refs.length - 1] : undefined
+		const params = Object.fromEntries(
+			Object.entries(node.params).filter(([, v]) => v !== '' && v != null),
+		)
 
 		node.busy = true
 		node.error = null
@@ -104,10 +105,8 @@ async function runNode(node: unknown, inputs: Record<string, unknown>): Promise<
 			const result = await apiGenerate({
 				model,
 				prompt,
-				steps: node.steps,
-				cfgScale: node.cfgScale,
-				seed: node.seed,
-				referenceImageUrl,
+				params,
+				imageUrls: refs,
 			})
 			node.resultUrl = result.imageUrl
 		} catch (e) {

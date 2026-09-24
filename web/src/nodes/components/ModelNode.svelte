@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { Ref } from 'rete-svelte-plugin/5'
 	import type { AreaExtra } from '../types'
-	import { rt } from '../../runtime'
+	import { rt, bumpModel } from '../../runtime'
+	import { scheduleSave } from '../../persist'
 	import type { ModelNode } from '../classes'
 
 	export let data: ModelNode
@@ -12,6 +13,8 @@
 
 	function touch() {
 		rt.area?.update('node', data.id)
+		scheduleSave()
+		bumpModel()
 	}
 </script>
 
@@ -25,7 +28,8 @@
 				on:pointerdown|stopPropagation
 				on:change={(e) => {
 					data.provider = e.currentTarget.value
-					data.modelId = ''
+					// 换 provider 时 modelId 大概率失效，落到该 provider 第一个模型
+					data.modelId = rt.providers.find((p) => p.id === data.provider)?.models[0] ?? ''
 					touch()
 				}}
 			>

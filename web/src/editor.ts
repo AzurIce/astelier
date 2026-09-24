@@ -17,20 +17,9 @@ import {
 	PromptNode,
 } from './nodes/classes'
 import { type Schemes, type AreaExtra } from './nodes/types'
-import { rt } from './runtime'
+import { connKeys } from './nodes/conn'
+import { rt, bumpModel } from './runtime'
 import { scheduleSave } from './persist'
-
-/** 运行时 Connection 实例（source 为 Node 实例）→ 纯 id/键 */
-export function connKeys(c: Record<string, unknown>) {
-	const nodeId = (v: unknown) =>
-		typeof v === 'string' ? v : String((v as { id?: string })?.id ?? '')
-	return {
-		source: nodeId(c.source),
-		target: nodeId(c.target),
-		output: String(c.sourceOutput ?? c.output ?? ''),
-		input: String(c.targetInput ?? c.input ?? ''),
-	}
-}
 
 export function createEditor(container: HTMLElement) {
 	const editor = new NodeEditor<Schemes>()
@@ -100,7 +89,7 @@ export function createEditor(container: HTMLElement) {
 		return ctx
 	})
 
-	// 持久化：结构变化立即排队，位置变化节流
+	// 持久化：结构变化立即排队，位置变化节流；连线变化同时通知参数区刷新
 	const structural = new Set([
 		'nodecreated',
 		'noderemoved',
@@ -109,6 +98,9 @@ export function createEditor(container: HTMLElement) {
 	])
 	editor.addPipe((ctx) => {
 		if (structural.has(ctx.type)) scheduleSave()
+		if (ctx.type === 'connectioncreated' || ctx.type === 'connectionremoved') {
+			bumpModel()
+		}
 		return ctx
 	})
 	area.addPipe((ctx) => {

@@ -1,15 +1,66 @@
 <script lang="ts">
+	import { onMount } from 'svelte'
 	import { Ref } from 'rete-svelte-plugin/5'
 	import type { AreaExtra } from '../types'
-	import { rt } from '../../runtime'
+	import { rt, modelVersion } from '../../runtime'
+	import { scheduleSave } from '../../persist'
+	import { connectedModelNode } from '../conn'
+	import { fetchProfiles, type ModelProfile, type ParamDef } from '../../profiles'
 	import type { GenerateNode } from '../classes'
 
 	export let data: GenerateNode
 	export let emit: (p: AreaExtra) => void
 
+	let ready = false
+	let profiles: ModelProfile[] = []
+	let loadedFor = ''
+	let loadError: string | null = null
+
+	async function syncProfiles() {
+		const src = connectedModelNode(data.id)
+		const pid = src?.provider ?? ''
+		if (pid === loadedFor) return
+		loadedFor = pid
+		profiles = []
+		if (!pid) return
+		try {
+			profiles = await fetchProfiles(pid)
+			loadError = null
+		} catch (e) {
+			loadError = e instanceof Error ? e.message : String(e)
+		}
+	}
+
+	// 触发时机：挂载 + Model 选择/连线变化（modelVersion 信号）
+	$: if (ready) syncProfilesWhenChanged($modelVersion)
+	function syncProfilesWhenChanged(_version: number) {
+		syncProfiles()
+	}
+	onMount(() => {
+		ready = true
+		syncProfiles()
+	})
+
 	function touch() {
 		rt.area?.update('node', data.id)
+		scheduleSave()
 	}
+
+	function setParam(p: ParamDef, raw: string) {
+		if (raw === '') {
+			delete data.params[p.key]
+		} else if (p.kind === 'number') {
+			const n = Number(raw)
+			if (isNaN(n)) return
+			data.params[p.key] = n
+		} else {
+			data.params[p.key] = raw
+		}
+		touch()
+	}
+
+	$: mainParams = profiles.flatMap((pr) => pr.params).filter((p) => !p.advanced)
+	$: advancedParams = profiles.flatMap((pr) => pr.params).filter((p) => p.advanced)
 </script>
 
 <div class="an-node" class:selected={data.selected}>
@@ -74,54 +125,24 @@
 	</div>
 
 	<div class="an-body">
-		<div class="an-row an-slider-row">
-			<span class="an-label">Steps</span>
-			<input
-				type="range"
-				min="1"
-				max="100"
-				value={data.steps}
-				on:pointerdown|stopPropagation
-				on:input={(e) => {
-					data.steps = Number(e.currentTarget.value)
-					touch()
-				}}
-			/>
-			<span class="an-value">{data.steps}</span>
-		</div>
-		<div class="an-row an-slider-row">
-			<span class="an-label">CFG</span>
-			<input
-				type="range"
-				min="1"
-				max="30"
-				step="0.5"
-				value={data.cfgScale}
-				on:pointerdown|stopPropagation
-				on:input={(e) => {
-					data.cfgScale = Number(e.currentTarget.value)
-					touch()
-				}}
-			/>
-			<span class="an-value">{data.cfgScale}</span>
-		</div>
-		<div class="an-row">
-			<span class="an-label">Seed</span>
-			<input
-				class="an-seed"
-				type="text"
-				inputmode="numeric"
-				value={data.seed}
-				on:pointerdown|stopPropagation
-				on:input={(e) => {
-					const v = parseInt(e.currentTarget.value, 10)
-					if (!isNaN(v)) {
-						data.seed = Math.max(0, v)
-						touch()
-					}
-				}}
-			/>
-		</div>
+		{#if !profiles.length && !loadError}
+			<div class="an-dim">连接 Model 节点以加载参数</div>
+		{:else if loadError}
+			<div class="an-error">{loadError}</div>
+		{/if}
+
+		{#each mainParams as p (p.key)}
+			{@render ParamRow(p)}
+		{/each}
+
+		{#if advancedParams.length}
+			<details class="an-advanced">
+				<summary>更多参数</summary>
+				{#each advancedParams as p (p.key)}
+					{@render ParamRow(p)}
+				{/each}
+			</details>
+		{/if}
 
 		{#if data.busy}
 			<div class="an-status">生成中…</div>
@@ -153,3 +174,30 @@
 		/>
 	</div>
 </div>
+
+{#snippet ParamRow(p: ParamDef)}
+	<div class="an-row">
+		<span class="an-label" title={p.key}>{p.label}</span>
+		{#if p.kind === 'select' || p.kind === 'size'}
+			<select
+				value={data.params[p.key] ?? ''}
+				on:pointerdown|stopPropagation
+				on:change={(e) => setParam(p, e.currentTarget.value)}
+			>
+				<option value="">默认</option>
+				{#each p.options as o (o)}
+					<option value={o}>{o}</option>
+				{/each}
+			</select>
+		{:else}
+			<input
+				type={p.kind === 'number' ? 'number' : 'text'}
+				min={p.min ?? undefined}
+				max={p.max ?? undefined}
+				value={data.params[p.key] ?? ''}
+				on:pointerdown|stopPropagation
+				on:change={(e) => setParam(p, e.currentTarget.value)}
+			/>
+		{/if}
+	</div>
+{/snippet}

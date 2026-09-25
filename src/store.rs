@@ -12,7 +12,7 @@
 //!
 //! 单用户本地工具，JSON 落盘足够；写入用 tmp+rename 原子替换。
 
-use crate::model::{AssetRef, Config, Graph, GraphGroup, Run};
+use crate::model::{AssetRef, Config, Graph, GraphGroup, GraphView, Run};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::de::DeserializeOwned;
@@ -194,6 +194,17 @@ pub async fn save_graph(graph: &Graph) {
 
 pub async fn delete_graph(id: &str) {
     let _ = tokio::fs::remove_dir_all(sub_dir(&["graphs", id])).await;
+}
+
+// ---------- graph view（表现文档：布局/视口/最近产物缓存） ----------
+
+pub async fn get_view(id: &str) -> Option<GraphView> {
+    read_json(&["graphs", id, "view.json"]).await
+}
+
+/// 保存表现文档。与结构文档分离：高频保存不推进图 updated_at。
+pub async fn save_view(id: &str, view: &GraphView) {
+    write_json(&["graphs", id, "view.json"], view).await;
 }
 
 // ---------- runs ----------

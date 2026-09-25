@@ -11,7 +11,7 @@ import EmptySocket from './nodes/components/EmptySocket.svelte'
 import { type Schemes, type AreaExtra } from './nodes/types'
 import { connKeys } from './nodes/conn'
 import { rt } from './runtime'
-import { scheduleSave } from './persist'
+import { scheduleSave, scheduleViewSave } from './graphStore'
 
 export function createEditor(container: HTMLElement) {
 	const editor = new NodeEditor<Schemes>()
@@ -115,12 +115,15 @@ export function createEditor(container: HTMLElement) {
 		'connectioncreated',
 		'connectionremoved',
 	])
+	// 结构变化 → 保存结构文档；位置/视口变化 → 保存表现文档（两者节流）
 	editor.addPipe((ctx) => {
 		if (structural.has(ctx.type)) scheduleSave()
 		return ctx
 	})
 	area.addPipe((ctx) => {
-		if (ctx.type === 'nodetranslated') scheduleSave()
+		if (ctx.type === 'nodetranslated' || ctx.type === 'translated' || ctx.type === 'zoomed') {
+			scheduleViewSave()
+		}
 		return ctx
 	})
 

@@ -77,36 +77,62 @@ export const nodeFactories: Record<string, () => NodeTypes> = {
 	Preview: () => new PreviewNode(),
 }
 
-/** 节点自定义字段的序列化 / 反序列化（画布持久化用） */
-export function nodeData(node: ClassicPreset.Node): Record<string, unknown> {
+export type NodeType = 'model' | 'prompt' | 'image' | 'generate' | 'preview'
+
+/** 节点种类 → 工厂（文档 type 字符串与类一一对应） */
+export const factoriesByType: Record<NodeType, () => NodeTypes> = {
+	model: () => new ModelNode(),
+	prompt: () => new PromptNode(),
+	image: () => new LoadImageNode(),
+	generate: () => new GenerateNode(),
+	preview: () => new PreviewNode(),
+}
+
+export function typeOf(node: NodeTypes): NodeType {
+	if (node instanceof ModelNode) return 'model'
+	if (node instanceof PromptNode) return 'prompt'
+	if (node instanceof LoadImageNode) return 'image'
+	if (node instanceof GenerateNode) return 'generate'
+	return 'preview'
+}
+
+/** 业务参数（影响执行结果的结构信息，存文档；不含 UI/运行时状态） */
+export function nodeParams(node: NodeTypes): Record<string, string | number> {
 	if (node instanceof ModelNode)
 		return { provider: node.provider, modelId: node.modelId }
 	if (node instanceof PromptNode) return { text: node.text }
 	if (node instanceof LoadImageNode)
-		return { assetUrl: node.assetUrl, fileName: node.fileName }
-	if (node instanceof GenerateNode)
-		return {
-			params: node.params,
-			resultUrl: node.resultUrl,
-		}
+		return { assetUrl: node.assetUrl ?? '', fileName: node.fileName }
+	if (node instanceof GenerateNode) return { ...node.params }
 	return {}
 }
 
-export function applyNodeData(node: ClassicPreset.Node, data: Record<string, unknown>) {
+export function applyParams(node: NodeTypes, params: Record<string, unknown>) {
 	if (node instanceof ModelNode) {
-		node.provider = String(data.provider ?? '')
-		node.modelId = String(data.modelId ?? '')
+		node.provider = String(params.provider ?? '')
+		node.modelId = String(params.modelId ?? '')
 	} else if (node instanceof PromptNode) {
-		node.text = String(data.text ?? '')
+		node.text = String(params.text ?? '')
 	} else if (node instanceof LoadImageNode) {
-		node.assetUrl = data.assetUrl ? String(data.assetUrl) : null
-		node.fileName = String(data.fileName ?? '')
+		node.assetUrl = params.assetUrl ? String(params.assetUrl) : null
+		node.fileName = String(params.fileName ?? '')
 	} else if (node instanceof GenerateNode) {
-		const params = data.params
-		node.params =
-			params && typeof params === 'object' && !Array.isArray(params)
-				? (params as Record<string, string | number>)
-				: {}
-		node.resultUrl = data.resultUrl ? String(data.resultUrl) : null
+		node.params = {}
+		for (const [k, v] of Object.entries(params)) {
+			if (v === '' || v == null) continue
+			node.params[k] = typeof v === 'number' ? v : String(v)
+		}
 	}
+}
+
+/** 最近产物缓存（表现信息）：generate 结果 / preview 展示 */
+export function outputOf(node: NodeTypes): string | null {
+	if (node instanceof GenerateNode) return node.resultUrl
+	if (node instanceof PreviewNode) return node.displayUrl
+	return null
+}
+
+export function applyOutput(node: NodeTypes, url: string | null) {
+	if (node instanceof GenerateNode) node.resultUrl = url
+	else if (node instanceof PreviewNode) node.displayUrl = url
 }

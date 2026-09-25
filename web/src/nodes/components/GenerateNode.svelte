@@ -2,7 +2,7 @@
 	import { Ref } from 'rete-svelte-plugin/5'
 	import type { AreaExtra } from '../types'
 	import { rt } from '../../runtime'
-	import { scheduleSave } from '../../persist'
+	import { scheduleSave } from '../../graphStore'
 	import { OPENAI_IMAGE_PARAMS } from '../../apiParams'
 	import type { ParamDef } from '../../profiles'
 	import type { GenerateNode } from '../classes'

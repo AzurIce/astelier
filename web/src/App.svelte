@@ -16,8 +16,7 @@
 		// svelte 插件仅客户端可用，动态导入编辑器模块
 		const { fetchConfig } = await import('./api')
 		const { createEditor } = await import('./editor')
-		const { restoreGraph, scheduleSave } = await import('./persist')
-		const { seedGraph } = await import('./seed')
+		const { ensureGraphAndLoad } = await import('./graphStore')
 
 		try {
 			const cfg = await fetchConfig()
@@ -29,9 +28,11 @@
 
 		createEditor(document.getElementById('rete')!)
 		rt.onCanvasContextMenu = (cx, cy) => ctxMenu.openAt(cx, cy)
-		const restored = await restoreGraph()
-		if (!restored) await seedGraph()
-		scheduleSave()
+		try {
+			await ensureGraphAndLoad()
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e)
+		}
 		ready = true
 	})
 
@@ -52,8 +53,8 @@
 	}
 
 	function clearCanvas() {
-		if (!confirm('清空当前画布？')) return
-		localStorage.removeItem('atelier-graph-v1')
+		if (!confirm('清空当前画布（服务端将新建一张种子图）？')) return
+		localStorage.removeItem('atelier-graph-id')
 		location.reload()
 	}
 </script>

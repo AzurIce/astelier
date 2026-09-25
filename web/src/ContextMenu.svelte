@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount, tick } from 'svelte'
 	import { rt } from './runtime'
-	import { scheduleSave } from './persist'
+	import { scheduleSave } from './graphStore'
 	import { nodeFactories } from './nodes/classes'
 
 	export let open = false
@@ -108,9 +108,13 @@
 		/>
 		<div class="an-ctx-list">
 			{#each items as label, i (label)}
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<!-- 键盘交互由搜索框统一处理：↑↓ 移动高亮、回车选中 -->
 				<div
 					class="an-ctx-item"
 					class:active={i === active}
+					role="menuitem"
+					tabindex="-1"
 					on:mouseenter={() => (active = i)}
 					on:click={() => pick(label)}
 				>

@@ -299,124 +299,48 @@ impl Config {
     }
 }
 
-// ---------- 节点图 ----------
+// ---------- 节点图文档 ----------
 
-/// 图上节点的种类。
+/// 节点种类（稳定枚举；前端 nodeFactories 按同名字符串对应）
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum NodeKind {
-    /// 生图：把装配好的请求发给 API
-    Gen,
-    /// 显示：展示上游生图节点的输出
-    Display,
+pub enum NodeType {
+    Model,
+    Prompt,
+    Image,
+    Generate,
+    Preview,
 }
 
-impl NodeKind {
-    pub fn label(self) -> &'static str {
-        match self {
-            NodeKind::Gen => "生图",
-            NodeKind::Display => "显示",
-        }
-    }
-}
+/// 节点参数：统一键 → 标量（字符串 / 数字）。结构与 UI 控件解耦。
+pub type NodeParams = BTreeMap<String, serde_json::Value>;
 
-/// 生图节点的装配内容：一份可直接发送的请求草案。
-/// prompt / params 目前在节点体内编辑；日后可由上游节点喂入。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
-pub struct GenNodeData {
-    #[serde(default)]
-    pub provider_id: String,
-    #[serde(default)]
-    pub model_id: String,
-    #[serde(default)]
-    pub prompt: String,
-    #[serde(default)]
-    pub params: ParamMap,
-}
-
-/// 显示节点的附加数据（暂无字段，留作扩展位）
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
-pub struct DisplayNodeData {}
-
-/// 节点数据（按种类区分）。新加节点种类 = 加一个变体 + 一个视图。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum NodeData {
-    Gen(GenNodeData),
-    Display(DisplayNodeData),
-}
-
-impl NodeData {
-    pub fn kind(&self) -> NodeKind {
-        match self {
-            NodeData::Gen(_) => NodeKind::Gen,
-            NodeData::Display(_) => NodeKind::Display,
-        }
-    }
-
-    pub fn gen(&self) -> Option<&GenNodeData> {
-        match self {
-            NodeData::Gen(g) => Some(g),
-            NodeData::Display(_) => None,
-        }
-    }
-}
-
-/// 图上的一个节点。位置独立存放（对应 react-flow 画布坐标）。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct GraphNode {
     pub id: String,
-    pub x: f64,
-    pub y: f64,
-    pub data: NodeData,
+    pub r#type: NodeType,
+    #[serde(default)]
+    pub params: NodeParams,
 }
 
-impl GraphNode {
-    pub fn kind(&self) -> NodeKind {
-        self.data.kind()
-    }
-
-    #[allow(dead_code)]
-    pub fn gen(&self) -> Option<&GenNodeData> {
-        match &self.data {
-            NodeData::Gen(g) => Some(g),
-            NodeData::Display(_) => None,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn gen_mut(&mut self) -> Option<&mut GenNodeData> {
-        match &mut self.data {
-            NodeData::Gen(g) => Some(g),
-            NodeData::Display(_) => None,
-        }
-    }
-}
-
-/// 节点间的连线。source/target 为节点 id；handle 留作多端口扩展。
+/// 端口级连线。id 为派生式（source:port->target:port），天然幂等。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct GraphEdge {
-    #[serde(default = "default_edge_id")]
     pub id: String,
     pub source: String,
+    #[serde(rename = "sourcePort")]
+    pub source_port: String,
     pub target: String,
-    #[serde(default)]
-    pub source_handle: Option<String>,
-    #[serde(default)]
-    pub target_handle: Option<String>,
+    #[serde(rename = "targetPort")]
+    pub target_port: String,
 }
 
-fn default_edge_id() -> String {
-    String::new()
-}
-
-/// 节点图：可复用的创作画布。文件夹组织与旧配方一致。
+/// 结构文档：UI 无关的事实源。不含坐标/视口等表现信息（见 GraphView）。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Graph {
     pub id: String,
     #[serde(default)]
     pub title: String,
-    /// 所属分组；None = 未分组
     #[serde(default)]
     pub group_id: Option<String>,
     #[serde(default)]
@@ -427,20 +351,28 @@ pub struct Graph {
     pub updated_at: u64,
 }
 
-impl Graph {
-    pub fn display_title(&self) -> String {
-        let t = self.title.trim();
-        if t.is_empty() {
-            "未命名图".into()
-        } else {
-            truncate_label(t)
-        }
-    }
+/// 表现文档：布局 / 视口 / 最近产物缓存。可丢可重建，保存不推进 updated_at。
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct GraphView {
+    #[serde(default)]
+    pub positions: BTreeMap<String, Position>,
+    #[serde(default)]
+    pub viewport: Option<Viewport>,
+    #[serde(default)]
+    pub outputs: BTreeMap<String, String>,
+}
 
-    #[allow(dead_code)]
-    pub fn node(&self, id: &str) -> Option<&GraphNode> {
-        self.nodes.iter().find(|n| n.id == id)
-    }
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct Position {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct Viewport {
+    pub x: f64,
+    pub y: f64,
+    pub zoom: f64,
 }
 
 // ---------- 请求与校验 ----------
@@ -691,28 +623,29 @@ mod tests {
             nodes: vec![
                 GraphNode {
                     id: "n1".into(),
-                    x: 10.0,
-                    y: 20.0,
-                    data: NodeData::Gen(GenNodeData {
-                        provider_id: "openai".into(),
-                        model_id: "gpt-image-2".into(),
-                        prompt: "一只猫".into(),
-                        params: Default::default(),
-                    }),
+                    r#type: NodeType::Model,
+                    params: serde_json::json!({
+                        "provider": "openai",
+                        "modelId": "gpt-image-2"
+                    })
+                    .as_object()
+                    .unwrap()
+                    .clone()
+                    .into_iter()
+                    .collect(),
                 },
                 GraphNode {
                     id: "n2".into(),
-                    x: 300.0,
-                    y: 20.0,
-                    data: NodeData::Display(DisplayNodeData::default()),
+                    r#type: NodeType::Preview,
+                    params: Default::default(),
                 },
             ],
             edges: vec![GraphEdge {
-                id: "e1".into(),
+                id: "n1:model->n2:image".into(),
                 source: "n1".into(),
+                source_port: "model".into(),
                 target: "n2".into(),
-                source_handle: None,
-                target_handle: None,
+                target_port: "image".into(),
             }],
             created_at: 1,
             updated_at: 2,
@@ -720,20 +653,34 @@ mod tests {
         let bytes = serde_json::to_vec(&g).unwrap();
         let back: Graph = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(back, g);
-        // 节点种类标签可读
+        // camelCase 端口字段 + snake_case 类型标签可读
         let text = String::from_utf8(bytes).unwrap();
-        assert!(text.contains("\"kind\":\"gen\""));
-        assert!(text.contains("\"kind\":\"display\""));
+        assert!(text.contains("\"sourcePort\":\"model\""));
+        assert!(text.contains("\"type\":\"model\""));
     }
 
     #[test]
     fn graph_default_fields_tolerate_old_json() {
-        let g: Graph = serde_json::from_str(
-            r#"{"id":"g1","created_at":1,"updated_at":2}"#,
-        )
-        .unwrap();
+        let g: Graph =
+            serde_json::from_str(r#"{"id":"g1","created_at":1,"updated_at":2}"#).unwrap();
         assert!(g.nodes.is_empty());
-        assert_eq!(g.display_title(), "未命名图");
+    }
+
+    #[test]
+    fn graph_view_roundtrip() {
+        let mut v = GraphView::default();
+        v.positions.insert(
+            "n1".into(),
+            Position { x: 10.0, y: 20.0 },
+        );
+        v.viewport = Some(Viewport { x: -5.0, y: 0.0, zoom: 1.2 });
+        v.outputs.insert("n2".into(), "/asset/x.png".into());
+        let s = serde_json::to_string(&v).unwrap();
+        let back: GraphView = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, v);
+        // 空对象也可读（首次保存前 GET）
+        let empty: GraphView = serde_json::from_str("{}").unwrap();
+        assert!(empty.positions.is_empty());
     }
 
     #[test]

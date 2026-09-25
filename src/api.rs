@@ -60,6 +60,7 @@ pub fn router() -> Router {
             "/graphs/{id}",
             get(get_graph).put(update_graph).delete(delete_graph),
         )
+        .route("/graphs/{id}/view", get(get_graph_view).put(save_graph_view))
         .route("/graphs/{id}/group", put(set_graph_group))
         // 分组
         .route("/groups", get(list_groups).post(create_group))
@@ -147,49 +148,97 @@ async fn get_graph(Path(id): Path<String>) -> ApiResult<Json<Graph>> {
         .ok_or_else(|| bad("图不存在"))
 }
 
-/// 新建节点图：种入「生图 → 显示」最小闭环。
+/// 新建节点图：种入「Model + Prompt → Generate → Preview」最小闭环，
+/// 并写默认布局视图。
 async fn create_graph() -> ApiResult<Json<Graph>> {
+    use crate::model::{GraphNode, NodeType};
     let now = now_ms();
     let cfg = crate::store::load_config().await;
     let (provider_id, model_id) = cfg
         .active()
         .map(|p| (p.id.clone(), p.models.first().cloned().unwrap_or_default()))
         .unwrap_or_default();
-    let gen_id = format!("gen-{}", uuid::Uuid::new_v4().simple());
-    let disp_id = format!("disp-{}", uuid::Uuid::new_v4().simple());
+    let nid = |tag: &str| format!("{tag}-{}", uuid::Uuid::new_v4().simple());
+    let (model_id_node, prompt_id, gen_id, prev_id) =
+        (nid("model"), nid("prompt"), nid("gen"), nid("prev"));
     let graph = Graph {
         id: uuid::Uuid::new_v4().simple().to_string(),
         title: "未命名图".into(),
         group_id: None,
         nodes: vec![
             GraphNode {
-                id: gen_id.clone(),
-                x: 80.0,
-                y: 160.0,
-                data: NodeData::Gen(GenNodeData {
-                    provider_id,
-                    model_id,
-                    prompt: String::new(),
-                    params: Default::default(),
-                }),
+                id: model_id_node.clone(),
+                r#type: NodeType::Model,
+                params: serde_json::json!({
+                    "provider": provider_id,
+                    "modelId": model_id
+                })
+                .as_object()
+                .unwrap()
+                .clone()
+                .into_iter()
+                .collect(),
             },
             GraphNode {
-                id: disp_id.clone(),
-                x: 480.0,
-                y: 160.0,
-                data: NodeData::Display(DisplayNodeData::default()),
+                id: prompt_id.clone(),
+                r#type: NodeType::Prompt,
+                params: serde_json::json!({ "text": "a cat" })
+                    .as_object()
+                    .unwrap()
+                    .clone()
+                    .into_iter()
+                    .collect(),
+            },
+            GraphNode {
+                id: gen_id.clone(),
+                r#type: NodeType::Generate,
+                params: Default::default(),
+            },
+            GraphNode {
+                id: prev_id.clone(),
+                r#type: NodeType::Preview,
+                params: Default::default(),
             },
         ],
-        edges: vec![GraphEdge {
-            id: format!("e-{}", uuid::Uuid::new_v4().simple()),
-            source: gen_id,
-            target: disp_id,
-            source_handle: None,
-            target_handle: None,
-        }],
+        edges: vec![
+            GraphEdge {
+                id: format!("{model_id_node}:model->{gen_id}:model"),
+                source: model_id_node.clone(),
+                source_port: "model".into(),
+                target: gen_id.clone(),
+                target_port: "model".into(),
+            },
+            GraphEdge {
+                id: format!("{prompt_id}:text->{gen_id}:prompt"),
+                source: prompt_id.clone(),
+                source_port: "text".into(),
+                target: gen_id.clone(),
+                target_port: "prompt".into(),
+            },
+            GraphEdge {
+                id: format!("{gen_id}:image->{prev_id}:image"),
+                source: gen_id.clone(),
+                source_port: "image".into(),
+                target: prev_id.clone(),
+                target_port: "image".into(),
+            },
+        ],
         created_at: now,
         updated_at: now,
     };
+    // 默认布局：输入列 / 生成列 / 预览列
+    let view = crate::model::GraphView {
+        positions: [
+            (model_id_node, crate::model::Position { x: 60.0, y: 120.0 }),
+            (prompt_id, crate::model::Position { x: 60.0, y: 380.0 }),
+            (gen_id, crate::model::Position { x: 420.0, y: 200.0 }),
+            (prev_id, crate::model::Position { x: 780.0, y: 200.0 }),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    crate::store::save_view(&graph.id, &view).await;
     crate::store::save_graph(&graph).await;
     Ok(Json(graph))
 }
@@ -205,6 +254,20 @@ async fn update_graph(Path(id): Path<String>, Json(mut graph): Json<Graph>) -> A
 
 async fn delete_graph(Path(id): Path<String>) -> ApiResult<()> {
     crate::store::delete_graph(&id).await;
+    Ok(())
+}
+
+/// 表现文档：GET 缺省返回空（首次保存前）
+async fn get_graph_view(Path(id): Path<String>) -> Json<GraphView> {
+    Json(crate::store::get_view(&id).await.unwrap_or_default())
+}
+
+/// 高频保存（拖动/视口），不推进图 updated_at
+async fn save_graph_view(Path(id): Path<String>, Json(view): Json<GraphView>) -> ApiResult<()> {
+    if crate::store::get_graph(&id).await.is_none() {
+        return Err(bad("图不存在"));
+    }
+    crate::store::save_view(&id, &view).await;
     Ok(())
 }
 

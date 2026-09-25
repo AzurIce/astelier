@@ -49,3 +49,45 @@ export async function uploadAsset(file: File): Promise<string> {
 	if (!res.ok) throw new Error(body?.error ?? `上传失败（${res.status}）`)
 	return `/asset/${body.id}.${body.ext}`
 }
+
+// ---------- 画布文档 ----------
+
+import type { GraphDoc, ViewDoc } from './graphDoc'
+
+export type GraphDocWithId = GraphDoc & { id: string }
+
+export async function createGraph(): Promise<GraphDocWithId> {
+	const res = await fetch('/api/graphs', { method: 'POST' })
+	if (!res.ok) throw new Error(`建图失败（${res.status}）`)
+	return res.json()
+}
+
+export async function fetchGraph(id: string): Promise<GraphDocWithId> {
+	const res = await fetch(`/api/graphs/${encodeURIComponent(id)}`)
+	if (!res.ok) throw new Error(`读取图失败（${res.status}）`)
+	return res.json()
+}
+
+export async function putGraph(id: string, doc: GraphDoc) {
+	const res = await fetch(`/api/graphs/${encodeURIComponent(id)}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ ...doc, id }),
+	})
+	if (!res.ok) throw new Error(`保存图失败（${res.status}）`)
+}
+
+export async function fetchView(id: string): Promise<ViewDoc> {
+	const res = await fetch(`/api/graphs/${encodeURIComponent(id)}/view`)
+	if (!res.ok) throw new Error(`读取视图失败（${res.status}）`)
+	return res.json()
+}
+
+export async function putView(id: string, view: ViewDoc) {
+	const res = await fetch(`/api/graphs/${encodeURIComponent(id)}/view`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(view),
+	})
+	if (!res.ok) throw new Error(`保存视图失败（${res.status}）`)
+}

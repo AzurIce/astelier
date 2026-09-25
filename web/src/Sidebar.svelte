@@ -13,7 +13,7 @@
 		type GraphGroup,
 		type GraphSummary,
 	} from './api'
-	import { activeGraphId, openGraph } from './graphStore'
+	import { activeGraphId, openGraph, setActiveGraphId } from './graphStore'
 
 	interface Row {
 		kind: 'dir' | 'graph'
@@ -137,10 +137,13 @@
 		renaming = null
 		if (!name.trim()) return
 		try {
-			if (kind === 'dir') await renameGroup(id, name.trim())
-			else {
-				// 图标题：暂用 PUT group 端点之外的路径 —— 标题随结构保存走服务端补丁
-				await renameGraph(id, name.trim())
+			if (kind === 'dir') {
+				await renameGroup(id, name.trim())
+			} else {
+				// 重命名会迁移图目录（目录名=图名），返回新 id；
+				// 改的是当前打开的图时同步本地活动记录
+				const { id: newId } = await renameGraph(id, name.trim())
+				if (id === activeId) setActiveGraphId(newId)
 			}
 			await refresh()
 		} catch (e) {
@@ -148,13 +151,15 @@
 		}
 	}
 
-	async function renameGraph(id: string, title: string) {
+	async function renameGraph(id: string, title: string): Promise<{ id: string }> {
 		const res = await fetch(`/api/graphs/${encodeURIComponent(id)}/title`, {
 			method: 'PUT',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ title }),
 		})
-		if (!res.ok) throw new Error(`重命名失败（${res.status}）`)
+		const body = await res.json().catch(() => null)
+		if (!res.ok) throw new Error(body?.error ?? `重命名失败（${res.status}）`)
+		return body as { id: string }
 	}
 
 	// ---------- 删除 ----------

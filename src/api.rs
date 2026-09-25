@@ -176,9 +176,12 @@ async fn create_graph(body: Option<Json<CreateGraphBody>>) -> ApiResult<Json<Gra
     let nid = |tag: &str| format!("{tag}-{}", uuid::Uuid::new_v4().simple());
     let (model_id_node, prompt_id, gen_id, prev_id) =
         (nid("model"), nid("prompt"), nid("gen"), nid("prev"));
+    let title = body.title.unwrap_or_else(|| "未命名图".into());
+    // 图目录名 = 图名（净化 + 去重），前端展示与 data/ 目录一致
+    let graph_id = crate::store::unique_graph_dir(&crate::store::sanitize_dir_name(&title));
     let graph = Graph {
-        id: uuid::Uuid::new_v4().simple().to_string(),
-        title: body.title.unwrap_or_else(|| "未命名图".into()),
+        id: graph_id.clone(),
+        title,
         group_id: body.group_id,
         nodes: vec![
             GraphNode {
@@ -303,13 +306,33 @@ async fn set_graph_group(Path(id): Path<String>, Json(body): Json<GroupBody>) ->
     Ok(())
 }
 
-async fn rename_graph(Path(id): Path<String>, Json(body): Json<NameBody>) -> ApiResult<()> {
+/// 图重命名 = 目录改名：目录名与图名保持一致；id 随之更新，
+/// runs 档案里的引用同步迁移。返回新 id。
+async fn rename_graph(
+    Path(id): Path<String>,
+    Json(body): Json<NameBody>,
+) -> ApiResult<Json<serde_json::Value>> {
+    use crate::store::{retarget_runs_graph, sanitize_dir_name, sub_dir, unique_graph_dir};
     let Some(mut graph) = crate::store::get_graph(&id).await else {
         return Err(bad("图不存在"));
     };
+    let clean = sanitize_dir_name(&body.name);
+    let new_id = if clean == id {
+        id.clone() // 名字没变（或净化后与现名相同），仅更新 title
+    } else {
+        unique_graph_dir(&clean)
+    };
+
+    if new_id != id {
+        tokio::fs::rename(sub_dir(&["graphs", &id]), sub_dir(&["graphs", &new_id]))
+            .await
+            .map_err(|e| bad(format!("目录改名失败：{e}")))?;
+        retarget_runs_graph(&id, &new_id).await;
+    }
+    graph.id = new_id.clone();
     graph.title = body.name;
     crate::store::save_graph(&graph).await;
-    Ok(())
+    Ok(Json(serde_json::json!({ "id": new_id })))
 }
 
 // ---------- 分组 ----------

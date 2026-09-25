@@ -45,6 +45,12 @@ export function activeGraphId(): string {
 	return graphId
 }
 
+/** 图目录改名后 id 会变：同步本地的活动图记录 */
+export function setActiveGraphId(id: string) {
+	graphId = id
+	localStorage.setItem(KEY, id)
+}
+
 /** 立即落盘未保存的挂起变更（切图前调用） */
 export async function flushNow(): Promise<void> {
 	if (structTimer) {

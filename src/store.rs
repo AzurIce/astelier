@@ -30,7 +30,7 @@ fn dir() -> PathBuf {
     Path::new(&root).to_path_buf()
 }
 
-fn sub_dir(parts: &[&str]) -> PathBuf {
+pub fn sub_dir(parts: &[&str]) -> PathBuf {
     let mut p = dir();
     for part in parts {
         p.push(part);
@@ -213,6 +213,49 @@ pub async fn save_graph(graph: &Graph) {
 
 pub async fn delete_graph(id: &str) {
     let _ = tokio::fs::remove_dir_all(sub_dir(&["graphs", id])).await;
+}
+
+// ---------- 目录命名（图目录名 = 图名，人类可读） ----------
+
+/// 图目录名净化：替换文件系统非法字符、折叠空白、限长；空则回退默认名
+pub fn sanitize_dir_name(title: &str) -> String {
+    let cleaned: String = title
+        .trim()
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+            _ => c,
+        })
+        .collect();
+    let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut s: String = collapsed.chars().take(64).collect();
+    s = s.trim().trim_matches('.').to_string();
+    if s.is_empty() {
+        "未命名图".into()
+    } else {
+        s
+    }
+}
+
+/// 目录名去重：已存在则追加 -2 / -3…
+pub fn unique_graph_dir(base: &str) -> String {
+    let root = sub_dir(&["graphs"]);
+    for cand in std::iter::once(base.to_string()).chain((2..).map(|i| format!("{base}-{i}"))) {
+        if !root.join(&cand).exists() {
+            return cand;
+        }
+    }
+    unreachable!()
+}
+
+/// 图目录改名后，把 runs 档案里对旧图 id 的引用改指新 id
+pub async fn retarget_runs_graph(old_id: &str, new_id: &str) {
+    for mut run in list_runs(usize::MAX).await {
+        if run.graph_id.as_deref() == Some(old_id) {
+            run.graph_id = Some(new_id.to_string());
+            save_run(&run).await;
+        }
+    }
 }
 
 // ---------- graph view（表现文档：布局/视口/最近产物缓存） ----------

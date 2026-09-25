@@ -107,8 +107,41 @@ body {
 	text-align: right;
 	color: var(--an-dim);
 }
-.an-slider-row input[type='range'] {
+.an-slider-row input[type='range'],
+.an-row input[type='range'] {
 	flex: 1;
+	min-width: 0;
+}
+
+/* 按钮选择组（segmented） */
+.an-seg {
+	display: flex;
+	flex: 1;
+	gap: 2px;
+	min-width: 0;
+}
+.an-seg button {
+	flex: 1;
+	min-width: 0;
+	padding: 3px 0;
+	font: inherit;
+	font-size: 10px;
+	background: #26262d;
+	color: var(--an-dim);
+	border: 1px solid var(--an-border);
+	border-radius: 4px;
+	cursor: pointer;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.an-seg button:hover {
+	color: var(--an-text);
+}
+.an-seg button.active {
+	background: #2b3b56;
+	border-color: var(--an-sock-model);
+	color: #fff;
 }
 
 .an-node select,

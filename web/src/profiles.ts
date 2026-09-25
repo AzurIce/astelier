@@ -5,6 +5,8 @@ export interface ParamDef {
 	key: string
 	label: string
 	kind: 'select' | 'number' | 'text' | 'size'
+	/** select 类的控件形态：默认下拉；slider=离散档位滑块；segmented=按钮组 */
+	control?: 'slider' | 'segmented'
 	options: string[]
 	min: number | null
 	max: number | null

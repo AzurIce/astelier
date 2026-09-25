@@ -141,7 +141,34 @@
 {#snippet ParamRow(p: ParamDef)}
 	<div class="an-row">
 		<span class="an-label" title={p.key}>{p.label}</span>
-		{#if p.kind === 'select'}
+		{#if p.kind === 'select' && p.control === 'slider'}
+			{@const opts = ['', ...p.options]}
+			{@const idx = Math.max(0, opts.indexOf(String(data.params[p.key] ?? '')))}
+			<input
+				type="range"
+				min="0"
+				max={opts.length - 1}
+				step="1"
+				value={idx}
+				title={String(data.params[p.key] ?? '默认')}
+				on:pointerdown|stopPropagation
+				on:input={(e) => setParam(p, opts[Number(e.currentTarget.value)])}
+			/>
+			<span class="an-value">{data.params[p.key] ?? '默认'}</span>
+		{:else if p.kind === 'select' && p.control === 'segmented'}
+			<div class="an-seg">
+				{#each ['', ...p.options] as o, i (i)}
+					<button
+						type="button"
+						class:active={(data.params[p.key] ?? '') === o}
+						on:pointerdown|stopPropagation
+						on:click={() => setParam(p, o)}
+					>
+						{o === '' ? '默认' : o}
+					</button>
+				{/each}
+			</div>
+		{:else if p.kind === 'select'}
 			<select
 				value={data.params[p.key] ?? ''}
 				on:pointerdown|stopPropagation

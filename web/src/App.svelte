@@ -1,12 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte'
+	import { currentTheme, toggleTheme, type Theme } from './theme'
 
 	let ready = false
 	let running = false
 	let status = ''
 	let error: string | null = null
+	let theme: Theme = 'dark'
 
 	onMount(async () => {
+		theme = currentTheme()
 		// svelte 插件仅客户端可用，动态导入编辑器模块
 		const { fetchConfig } = await import('./api')
 		const { rt } = await import('./runtime')
@@ -55,12 +58,15 @@
 <div class="topbar">
 	<div class="brand">Atelier</div>
 	<button class="run" disabled={!ready || running} on:click={run}>
-		{running ? 'Running…' : '▶ Run'}
+		{running ? 'Running…' : 'Run'}
 	</button>
-		{#if status}<span class="status">{status}</span>{/if}
-		{#if error}<span class="error" title={error}>{error}</span>{/if}
-		<div class="spacer"></div>
+	{#if status}<span class="status">{status}</span>{/if}
+	{#if error}<span class="error" title={error}>{error}</span>{/if}
+	<div class="spacer"></div>
 	<button class="ghost" on:click={clearCanvas}>清空</button>
+	<button class="ghost icon" title="切换 light / dark" on:click={() => (theme = toggleTheme())}>
+		{theme === 'dark' ? '☀' : '☾'}
+	</button>
 	<span class="hint">右键画布添加节点</span>
 </div>
 <div id="rete"></div>
@@ -76,14 +82,20 @@
 		background: var(--an-panel);
 	}
 	.brand {
-		font-weight: 700;
-		letter-spacing: 0.5px;
+		font-weight: 650;
+		font-size: 13px;
+		letter-spacing: 0.4px;
 	}
 	.spacer {
 		flex: 1;
 	}
 	.hint {
 		font-size: 12px;
-		opacity: 0.5;
+		color: var(--an-dim);
+	}
+	.ghost.icon {
+		width: 30px;
+		padding: 4px 0;
+		text-align: center;
 	}
 </style>

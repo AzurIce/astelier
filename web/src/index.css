@@ -1,14 +1,72 @@
-:root {
-	--an-border: #2a2a30;
-	--an-panel: #17171b;
-	--an-bg: #101014;
-	--an-card: #1e1e24;
-	--an-text: #e6e6ea;
-	--an-dim: #9a9aa3;
-	--an-sock-model: #4f8ef7;
-	--an-sock-text: #e2b93b;
-	--an-sock-image: #3ec97e;
+/* ============================================================
+   Atelier 设计令牌 —— 简约风，light / dark 双主题
+   组件样式一律引用令牌；主题差异只体现在 :root 值上。
+   ============================================================ */
+
+:root,
+:root[data-theme='dark'] {
 	color-scheme: dark;
+
+	/* 表面 */
+	--an-bg: #0f0f12; /* 画布底 */
+	--an-panel: #141418; /* 顶栏/浮层 */
+	--an-card: #1b1b20; /* 节点卡片 */
+	--an-border: #26262c;
+	--an-hover: #232329;
+	--an-input: #212127;
+	--an-track: #2c2c34;
+	--an-dot: #232329;
+
+	/* 文本 */
+	--an-text: #e7e7ea;
+	--an-dim: #8f9099;
+
+	/* 强调 */
+	--an-accent: #5b8def;
+	--an-accent-weak: rgba(91, 141, 239, 0.16);
+	--an-conn: #6b93d9;
+
+	/* 端口类型色 */
+	--an-sock-model: #5b8def;
+	--an-sock-text: #d9b13c;
+	--an-sock-image: #46b881;
+
+	/* 状态 */
+	--an-danger: #e5484d;
+	--an-warn: #d9b13c;
+
+	--an-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+	--an-menu-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+
+:root[data-theme='light'] {
+	color-scheme: light;
+
+	--an-bg: #f4f5f7;
+	--an-panel: #ffffff;
+	--an-card: #ffffff;
+	--an-border: #e4e6ea;
+	--an-hover: #eef0f3;
+	--an-input: #f6f7f9;
+	--an-track: #dcdfe4;
+	--an-dot: #d8dade;
+
+	--an-text: #1d1f23;
+	--an-dim: #71757d;
+
+	--an-accent: #3d74e0;
+	--an-accent-weak: rgba(61, 116, 224, 0.12);
+	--an-conn: #8aa8dd;
+
+	--an-sock-model: #3d74e0;
+	--an-sock-text: #b3862d;
+	--an-sock-image: #35a06b;
+
+	--an-danger: #d33d3d;
+	--an-warn: #a97a0d;
+
+	--an-shadow: 0 2px 10px rgba(20, 24, 40, 0.06);
+	--an-menu-shadow: 0 8px 28px rgba(20, 24, 40, 0.14);
 }
 
 * {
@@ -26,7 +84,11 @@ body {
 	font-family: ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
 	font-size: 13px;
 	color: var(--an-text);
-	background: var(--an-bg);
+	background: var(--an-panel);
+}
+
+::selection {
+	background: var(--an-accent-weak);
 }
 
 #app {
@@ -34,19 +96,20 @@ body {
 	flex-direction: column;
 }
 
-/* 画布容器：点状网格背景；拖动画布时禁止文本选中 */
+/* ---------- 画布 ---------- */
+
 #rete {
 	flex: 1;
 	min-height: 0;
 	position: relative;
-	background-image: radial-gradient(circle, #2c2c34 1px, transparent 1px);
+	background-color: var(--an-bg);
+	background-image: radial-gradient(circle, var(--an-dot) 1px, transparent 1px);
 	background-size: 24px 24px;
 	overflow: hidden;
 	user-select: none;
 	-webkit-user-select: none;
 }
 
-/* 输入控件仍可选中复制 */
 #rete input,
 #rete textarea,
 #rete select {
@@ -54,7 +117,53 @@ body {
 	-webkit-user-select: text;
 }
 
-/* ---------- 自定义节点 ---------- */
+/* 连接线（覆盖 classic preset 的 scoped steelblue） */
+#rete svg path {
+	stroke: var(--an-conn);
+	stroke-width: 2.5px;
+}
+
+/* ---------- 右键菜单（rete-context-menu，scoped 样式用 #rete 提权覆盖） ---------- */
+
+#rete .rete-context-menu {
+	background: var(--an-panel);
+	border: 1px solid var(--an-border);
+	border-radius: 10px;
+	box-shadow: var(--an-menu-shadow);
+	font-family: inherit;
+	font-size: 12px;
+	color: var(--an-text);
+	padding: 4px;
+	min-width: 160px;
+	overflow: visible;
+}
+#rete .rete-context-menu .search {
+	background: var(--an-input);
+	border: 1px solid var(--an-border);
+	border-radius: 6px;
+	color: var(--an-text);
+	font: inherit;
+	padding: 5px 8px;
+	margin: 2px 2px 6px;
+	width: calc(100% - 4px);
+	outline: none;
+}
+#rete .rete-context-menu .search:focus {
+	border-color: var(--an-accent);
+}
+#rete .rete-context-menu .block {
+	padding: 6px 10px;
+	border-radius: 6px;
+	color: var(--an-text);
+	cursor: pointer;
+	background: transparent;
+}
+#rete .rete-context-menu .block:hover {
+	background: var(--an-hover);
+}
+
+/* ---------- 节点卡片 ---------- */
+
 .an-node {
 	min-width: 210px;
 	max-width: 300px;
@@ -62,11 +171,12 @@ body {
 	border: 1px solid var(--an-border);
 	border-radius: 10px;
 	overflow: hidden;
-	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+	box-shadow: var(--an-shadow);
 	font-size: 12px;
 }
 .an-node.selected {
-	border-color: var(--an-sock-model);
+	border-color: var(--an-accent);
+	box-shadow: 0 0 0 2px var(--an-accent-weak);
 }
 
 .an-title {
@@ -74,15 +184,7 @@ body {
 	font-weight: 600;
 	font-size: 12px;
 	border-bottom: 1px solid var(--an-border);
-}
-.an-t-model {
-	color: var(--an-sock-model);
-}
-.an-t-text {
-	color: var(--an-sock-text);
-}
-.an-t-image {
-	color: var(--an-sock-image);
+	color: var(--an-text);
 }
 
 .an-body {
@@ -91,6 +193,8 @@ body {
 	flex-direction: column;
 	gap: 6px;
 }
+
+/* ---------- 行与控件 ---------- */
 
 .an-row {
 	display: flex;
@@ -108,8 +212,83 @@ body {
 	text-align: right;
 	color: var(--an-dim);
 }
+.an-slider-row input[type='range'],
+.an-row input[type='range'] {
+	flex: 1;
+	min-width: 0;
+}
 
-/* 带刻度的离散滑块：细轨道 + 圆形拇指 + 可点刻度线 */
+.an-node select,
+.an-node textarea,
+.an-node input[type='text'],
+.an-node input[type='number'] {
+	width: 100%;
+	background: var(--an-input);
+	color: var(--an-text);
+	border: 1px solid var(--an-border);
+	border-radius: 6px;
+	padding: 4px 6px;
+	font: inherit;
+	outline: none;
+}
+.an-node select {
+	flex: 1;
+	width: auto;
+	min-width: 0;
+}
+.an-node textarea {
+	resize: vertical;
+	min-height: 60px;
+}
+.an-node select:focus,
+.an-node textarea:focus,
+.an-node input[type='text']:focus,
+.an-node input[type='number']:focus {
+	border-color: var(--an-accent);
+}
+
+.an-seed {
+	flex: 1;
+	min-width: 0;
+}
+
+/* ---------- 端口 ---------- */
+
+.an-in,
+.an-out {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 8px;
+}
+.an-out {
+	justify-content: flex-end;
+	border-top: 1px solid var(--an-border);
+}
+.an-port-label {
+	color: var(--an-dim);
+	font-size: 11px;
+}
+
+.an-socket {
+	width: 12px;
+	height: 12px;
+	flex: none;
+	border-radius: 50%;
+	background: var(--an-dim);
+}
+.an-sock-model {
+	background: var(--an-sock-model);
+}
+.an-sock-text {
+	background: var(--an-sock-text);
+}
+.an-sock-image {
+	background: var(--an-sock-image);
+}
+
+/* ---------- 带刻度的离散滑块 ---------- */
+
 .an-slider {
 	flex: 1;
 	min-width: 0;
@@ -127,7 +306,7 @@ body {
 .an-slider input[type='range']::-webkit-slider-runnable-track {
 	height: 4px;
 	border-radius: 2px;
-	background: #2c2c34;
+	background: var(--an-track);
 }
 .an-slider input[type='range']::-webkit-slider-thumb {
 	-webkit-appearance: none;
@@ -135,21 +314,21 @@ body {
 	height: 12px;
 	margin-top: -4px;
 	border-radius: 50%;
-	background: var(--an-sock-model);
-	box-shadow: 0 0 0 2px rgba(79, 142, 247, 0.25);
+	background: var(--an-accent);
+	box-shadow: 0 0 0 2px var(--an-accent-weak);
 }
 .an-slider input[type='range']::-moz-range-track {
 	height: 4px;
 	border-radius: 2px;
-	background: #2c2c34;
+	background: var(--an-track);
 }
 .an-slider input[type='range']::-moz-range-thumb {
 	width: 12px;
 	height: 12px;
 	border: none;
 	border-radius: 50%;
-	background: var(--an-sock-model);
-	box-shadow: 0 0 0 2px rgba(79, 142, 247, 0.25);
+	background: var(--an-accent);
+	box-shadow: 0 0 0 2px var(--an-accent-weak);
 }
 .an-ticks {
 	position: absolute;
@@ -189,16 +368,12 @@ body {
 }
 .an-tick.active::after {
 	height: 8px;
-	background: var(--an-sock-model);
+	background: var(--an-accent);
 	opacity: 1;
 }
-.an-slider-row input[type='range'],
-.an-row input[type='range'] {
-	flex: 1;
-	min-width: 0;
-}
 
-/* 按钮选择组（segmented） */
+/* ---------- 按钮选择组 ---------- */
+
 .an-seg {
 	display: flex;
 	flex: 1;
@@ -211,86 +386,37 @@ body {
 	padding: 3px 0;
 	font: inherit;
 	font-size: 10px;
-	background: #26262d;
+	background: transparent;
 	color: var(--an-dim);
 	border: 1px solid var(--an-border);
-	border-radius: 4px;
 	cursor: pointer;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+.an-seg button:first-child {
+	border-radius: 6px 0 0 6px;
+}
+.an-seg button:last-child {
+	border-radius: 0 6px 6px 0;
+}
+.an-seg button + button {
+	margin-left: -1px; /* 相邻边框合并 */
+}
 .an-seg button:hover {
 	color: var(--an-text);
+	background: var(--an-hover);
 }
 .an-seg button.active {
-	background: #2b3b56;
-	border-color: var(--an-sock-model);
-	color: #fff;
-}
-
-.an-node select,
-.an-node textarea,
-.an-node input[type='text'] {
-	width: 100%;
-	background: #26262d;
+	background: var(--an-accent-weak);
+	border-color: var(--an-accent);
 	color: var(--an-text);
-	border: 1px solid var(--an-border);
-	border-radius: 6px;
-	padding: 4px 6px;
-	font: inherit;
-}
-.an-node select {
-	flex: 1;
-	width: auto;
-	min-width: 0;
-}
-.an-node textarea {
-	resize: vertical;
-	min-height: 60px;
+	position: relative;
+	z-index: 1;
 }
 
-.an-seed {
-	flex: 1;
-	min-width: 0;
-}
+/* ---------- 预览 / 状态 ---------- */
 
-/* 端口行 */
-.an-in,
-.an-out {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	padding: 4px 8px;
-}
-.an-out {
-	justify-content: flex-end;
-	border-top: 1px solid var(--an-border);
-}
-.an-port-label {
-	color: var(--an-dim);
-	font-size: 11px;
-}
-
-/* socket（Ref 渲染的占位 div 由插件定位，这里只上形状与颜色） */
-.an-socket {
-	width: 12px;
-	height: 12px;
-	flex: none;
-	border-radius: 50%;
-	background: var(--an-dim);
-}
-.an-sock-model {
-	background: var(--an-sock-model);
-}
-.an-sock-text {
-	background: var(--an-sock-text);
-}
-.an-sock-image {
-	background: var(--an-sock-image);
-}
-
-/* 图片预览 / 状态 */
 .an-preview {
 	max-width: 100%;
 	border-radius: 6px;
@@ -302,7 +428,7 @@ body {
 	padding: 18px 0;
 }
 .an-error {
-	color: #ff7a7a;
+	color: var(--an-danger);
 	font-size: 11px;
 	word-break: break-all;
 	overflow: hidden;
@@ -312,7 +438,10 @@ body {
 	-webkit-box-orient: vertical;
 }
 .an-status {
-	color: var(--an-sock-text);
+	color: var(--an-warn);
+}
+.an-dim {
+	color: var(--an-dim);
 }
 .an-file {
 	display: block;
@@ -331,15 +460,20 @@ body {
 	display: none;
 }
 
-/* 顶栏控件 */
+/* ---------- 顶栏控件 ---------- */
+
 button.run {
-	background: var(--an-sock-image);
-	color: #08210f;
+	background: var(--an-accent);
+	color: #fff;
 	border: none;
-	border-radius: 6px;
+	border-radius: 8px;
 	padding: 5px 16px;
-	font-weight: 700;
+	font: inherit;
+	font-weight: 600;
 	cursor: pointer;
+}
+button.run:hover:not(:disabled) {
+	filter: brightness(1.06);
 }
 button.run:disabled {
 	opacity: 0.4;
@@ -349,18 +483,20 @@ button.ghost {
 	background: transparent;
 	color: var(--an-dim);
 	border: 1px solid var(--an-border);
-	border-radius: 6px;
+	border-radius: 8px;
 	padding: 4px 10px;
+	font: inherit;
 	cursor: pointer;
 }
 button.ghost:hover {
 	color: var(--an-text);
+	border-color: var(--an-dim);
 }
 .status {
 	color: var(--an-dim);
 }
 .error {
-	color: #ff7a7a;
+	color: var(--an-danger);
 	max-width: 40vw;
 	overflow: hidden;
 	text-overflow: ellipsis;

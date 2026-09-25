@@ -4,6 +4,16 @@
 		<meta charset="UTF-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Atelier</title>
+		<script>
+			// 主题防闪烁：渲染前定下 data-theme（显式选择 > 系统偏好）
+			;(function () {
+				var t = localStorage.getItem('atelier-theme')
+				if (t !== 'light' && t !== 'dark') {
+					t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+				}
+				document.documentElement.dataset.theme = t
+			})()
+		</script>
 	</head>
 	<body>
 		<div id="app"></div>

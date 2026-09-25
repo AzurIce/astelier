@@ -123,9 +123,14 @@ body {
 	stroke-width: 2.5px;
 }
 
-/* ---------- 右键菜单（rete-context-menu，scoped 样式用 #rete 提权覆盖） ---------- */
+/* ---------- 右键菜单（rete-context-menu：scoped 默认是深蓝底白字条目，
+   这里连同 margin/width/border 全量重置为令牌化的简约样式） ---------- */
 
 #rete .rete-context-menu {
+	margin: 0;
+	width: auto;
+	min-width: 168px;
+	padding: 4px;
 	background: var(--an-panel);
 	border: 1px solid var(--an-border);
 	border-radius: 10px;
@@ -133,8 +138,6 @@ body {
 	font-family: inherit;
 	font-size: 12px;
 	color: var(--an-text);
-	padding: 4px;
-	min-width: 160px;
 	overflow: visible;
 }
 #rete .rete-context-menu .search {
@@ -145,7 +148,7 @@ body {
 	font: inherit;
 	padding: 5px 8px;
 	margin: 2px 2px 6px;
-	width: calc(100% - 4px);
+	width: 100%;
 	outline: none;
 }
 #rete .rete-context-menu .search:focus {
@@ -153,13 +156,33 @@ body {
 }
 #rete .rete-context-menu .block {
 	padding: 6px 10px;
+	border: none;
 	border-radius: 6px;
+	box-shadow: none;
 	color: var(--an-text);
 	cursor: pointer;
 	background: transparent;
+	width: auto;
+	position: static;
 }
-#rete .rete-context-menu .block:hover {
+#rete .rete-context-menu .block:hover,
+#rete .rete-context-menu .block:hover:first-child,
+#rete .rete-context-menu .block:hover:last-child {
 	background: var(--an-hover);
+	color: var(--an-text);
+}
+#rete .rete-context-menu .block:first-child {
+	border-radius: 6px 6px 0 0;
+}
+#rete .rete-context-menu .block:last-child {
+	border-radius: 0 0 6px 6px;
+}
+#rete .rete-context-menu .subitems {
+	background: var(--an-panel);
+	border: 1px solid var(--an-border);
+	border-radius: 10px;
+	box-shadow: var(--an-menu-shadow);
+	padding: 4px;
 }
 
 /* ---------- 节点卡片 ---------- */

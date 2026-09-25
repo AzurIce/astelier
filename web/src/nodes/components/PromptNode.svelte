@@ -9,7 +9,7 @@
 	export let emit: (p: AreaExtra) => void
 </script>
 
-<div class="an-node" class:selected={data.selected}>
+<div class="an-node" class:selected={data.selected} data-node-id={data.id}>
 	<div class="an-title an-t-text">Prompt</div>
 	<div class="an-body">
 		<textarea

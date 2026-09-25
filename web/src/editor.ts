@@ -17,6 +17,10 @@ export function createEditor(container: HTMLElement) {
 	const editor = new NodeEditor<Schemes>()
 	const area = new AreaPlugin<Schemes, AreaExtra>(container)
 
+	// 点阵网格画在随平移/缩放变换的 content 层上（容器背景不会动）；
+	// 该层无尺寸，铺 100000² 的绝对定位层覆盖可视域
+	area.area.content.holder.classList.add('an-grid')
+
 	const render = new SveltePlugin<Schemes, AreaExtra>()
 	render.addPreset(
 		Presets.classic.setup({
@@ -50,15 +54,44 @@ export function createEditor(container: HTMLElement) {
 	area.use(connection)
 	area.use(render)
 
-	// 右键：菜单 UI 由 App 挂的 ContextMenu 组件承担（自研，行为完整：
-	// 自动聚焦/过滤/方向键/回车），这里只负责拦截事件并转发坐标
+	// 右键：空白处打开添加菜单；节点上则选中该节点（配合 Delete/Backspace 删除）
+	const selector = AreaExtensions.selector()
+	const selectable = AreaExtensions.selectableNodes(area, selector, {
+		accumulating: { active: () => false },
+	})
+
 	container.addEventListener('contextmenu', (e) => {
 		e.preventDefault()
+		const nodeId = (e.target as HTMLElement | null)
+			?.closest<HTMLElement>('[data-node-id]')
+			?.dataset.nodeId
+		if (nodeId) {
+			void selectable.select(nodeId, false)
+			return
+		}
 		rt.onCanvasContextMenu?.(e.clientX, e.clientY)
 	})
 
-	AreaExtensions.selectableNodes(area, AreaExtensions.selector(), {
-		accumulating: { active: () => false },
+	// 删除选中节点：Delete / Backspace（输入框聚焦时忽略）。
+	// removeNode 不会级联清理连线，须先删相邻连线
+	document.addEventListener('keydown', (e) => {
+		if (e.key !== 'Delete' && e.key !== 'Backspace') return
+		const tag = (document.activeElement as HTMLElement | null)?.tagName
+		if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+		const selected = editor.getNodes().filter((n) => n.selected)
+		if (selected.length === 0) return
+		e.preventDefault()
+		void (async () => {
+			for (const node of selected) {
+				for (const conn of editor.getConnections()) {
+					const k = connKeys(conn as unknown as Record<string, unknown>)
+					if (k.source === node.id || k.target === node.id) {
+						await editor.removeConnection(conn.id)
+					}
+				}
+				await editor.removeNode(node.id)
+			}
+		})()
 	})
 
 	// 连线类型约束：两端 socket 实例相同才允许

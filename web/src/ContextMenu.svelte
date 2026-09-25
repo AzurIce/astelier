@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { tick } from 'svelte'
+	import { onDestroy, onMount, tick } from 'svelte'
 	import { rt } from './runtime'
 	import { scheduleSave } from './persist'
 	import { nodeFactories } from './nodes/classes'
@@ -66,16 +66,30 @@
 		}
 	}
 
+	// 必须用捕获阶段监听：rete 画布的指针处理会拦截冒泡，
+	// 点画布空白处的 pointerdown 不会自然冒泡到 window
 	function onWindowPointerdown(e: PointerEvent) {
 		if (!open) return
-		const target = e.target as HTMLElement | null
-		if (!target?.closest('.an-ctx')) close()
+		if ((e.target as HTMLElement | null)?.closest?.('.an-ctx')) return
+		open = false
 	}
+
+	function onWindowContextmenu() {
+		if (open) open = false
+	}
+
+	onMount(() => {
+		window.addEventListener('pointerdown', onWindowPointerdown, true)
+		window.addEventListener('contextmenu', onWindowContextmenu, true)
+	})
+	onDestroy(() => {
+		window.removeEventListener('pointerdown', onWindowPointerdown, true)
+		window.removeEventListener('contextmenu', onWindowContextmenu, true)
+	})
 </script>
 
-<svelte:window on:pointerdown={onWindowPointerdown} />
-
 {#if open}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="an-ctx"
 		style:left="{x}px"

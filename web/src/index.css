@@ -103,11 +103,21 @@ body {
 	min-height: 0;
 	position: relative;
 	background-color: var(--an-bg);
-	background-image: radial-gradient(circle, var(--an-dot) 1px, transparent 1px);
-	background-size: 24px 24px;
 	overflow: hidden;
 	user-select: none;
 	-webkit-user-select: none;
+}
+
+/* 点阵网格层：挂在 rete 的 content holder（随平移/缩放变换）上。
+   持有层本身无尺寸，用超大绝对定位层覆盖可视域，坐标原点保持 (0,0) */
+.an-grid {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 100000px;
+	height: 100000px;
+	background-image: radial-gradient(circle, var(--an-dot) 1px, transparent 1px);
+	background-size: 24px 24px;
 }
 
 #rete input,

@@ -51,6 +51,10 @@ export function createEditor(container: HTMLElement) {
 			},
 		}),
 	)
+	// 右键菜单的 render 信号由独立预设渲染，缺了它菜单永远不显示。
+	// 其信号类型不在 SvelteArea2D 内且未被包根导出，与 scope 方差问题
+	// 同理（见下）按运行时兼容处理
+	render.addPreset(Presets.contextMenu.setup() as never)
 
 	const connection = new ConnectionPlugin<Schemes, AreaExtra>()
 	connection.addPreset(ConnectionPresets.classic.setup())

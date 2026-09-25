@@ -4,6 +4,9 @@
 	import Sidebar from './Sidebar.svelte'
 	import { currentTheme, toggleTheme, type Theme } from './theme'
 	import { rt } from './runtime'
+	import { fetchConfig } from './api'
+	import { createEditor } from './editor'
+	import { ensureGraphAndLoad } from './graphStore'
 
 	let ready = false
 	let running = false
@@ -14,10 +17,6 @@
 
 	onMount(async () => {
 		theme = currentTheme()
-		// svelte 插件仅客户端可用，动态导入编辑器模块
-		const { fetchConfig } = await import('./api')
-		const { createEditor } = await import('./editor')
-		const { ensureGraphAndLoad } = await import('./graphStore')
 
 		try {
 			const cfg = await fetchConfig()

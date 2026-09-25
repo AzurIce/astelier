@@ -89,13 +89,17 @@
 </script>
 
 {#if open}
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="an-ctx"
+		role="menu"
+		tabindex="-1"
 		style:left="{x}px"
 		style:top="{y}px"
-		on:pointerdown|stopPropagation
-		on:contextmenu|preventDefault|stopPropagation
+		onpointerdown={(e) => e.stopPropagation()}
+		oncontextmenu={(e) => {
+			e.preventDefault()
+			e.stopPropagation()
+		}}
 	>
 		<input
 			class="an-ctx-search"
@@ -103,20 +107,20 @@
 			bind:value={query}
 			placeholder="搜索节点…"
 			spellcheck="false"
-			on:keydown={onKeydown}
-			on:input={() => (active = 0)}
+			onkeydown={onKeydown}
+			oninput={() => (active = 0)}
 		/>
 		<div class="an-ctx-list">
 			{#each items as label, i (label)}
-				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<!-- 键盘交互由搜索框统一处理：↑↓ 移动高亮、回车选中 -->
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<div
 					class="an-ctx-item"
 					class:active={i === active}
 					role="menuitem"
 					tabindex="-1"
-					on:mouseenter={() => (active = i)}
-					on:click={() => pick(label)}
+					onmouseenter={() => (active = i)}
+					onclick={() => pick(label)}
 				>
 					{label}
 				</div>

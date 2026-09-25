@@ -242,22 +242,22 @@
 	}
 </script>
 
-<svelte:window on:pointerdown={closeMenu} on:keydown={(e) => e.key === 'Escape' && closeMenu()} />
+<svelte:window onpointerdown={closeMenu} onkeydown={(e) => e.key === 'Escape' && closeMenu()} />
 
-<aside class="sidebar" on:contextmenu={(e) => onContext(e, null)} role="navigation">
+<aside class="sidebar" role="navigation" oncontextmenu={(e) => onContext(e, null)}>
 	<div class="side-head">
 		<span>图库</span>
 		<button
 			class="mini"
 			title="新建图（根目录）"
-			on:click={() => startCreate('graph', null)}
-			on:pointerdown|stopPropagation
+			onclick={() => startCreate('graph', null)}
+			onpointerdown={(e) => e.stopPropagation()}
 		>+图</button>
 		<button
 			class="mini"
 			title="新建文件夹（根目录）"
-			on:click={() => startCreate('dir', null)}
-			on:pointerdown|stopPropagation
+			onclick={() => startCreate('dir', null)}
+			onpointerdown={(e) => e.stopPropagation()}
 		>+夹</button>
 	</div>
 
@@ -265,7 +265,7 @@
 		<div class="err">{loadError}</div>
 	{/if}
 
-	<div class="tree" on:dragover={(e) => onDragover(e, 'root')} on:drop={(e) => onDrop(e, null)}>
+	<div class="tree" role="tree" tabindex="-1" ondragover={(e) => onDragover(e, 'root')} ondrop={(e) => onDrop(e, null)}>
 		{#each tree as row (row.kind + row.id)}
 			{@render RowEl(row, 0)}
 		{/each}
@@ -278,20 +278,35 @@
 	</div>
 
 	{#if menu}
-		<div class="ctx" style:left="{menu.x}px" style:top="{menu.y}px" on:pointerdown|stopPropagation>
+		<div
+			class="ctx"
+			role="menu"
+			tabindex="-1"
+			style:left="{menu.x}px"
+			style:top="{menu.y}px"
+			onpointerdown={(e) => e.stopPropagation()}
+		>
 			{#if menu.target?.kind === 'dir'}
 				{@const row = menu.target}
-				<div class="ctx-item" on:click={() => menuAct(() => startCreate('graph', row.id), row)}>新建图</div>
-				<div class="ctx-item" on:click={() => menuAct(() => startCreate('dir', row.id), row)}>新建文件夹</div>
-				<div class="ctx-item" on:click={() => menuAct(() => startRename(row), row)}>重命名</div>
-				<div class="ctx-item danger" on:click={() => menuAct(() => remove(row), row)}>删除</div>
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<div class="ctx-item" role="menuitem" tabindex="-1" onclick={() => menuAct(() => startCreate('graph', row.id), row)}>新建图</div>
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<div class="ctx-item" role="menuitem" tabindex="-1" onclick={() => menuAct(() => startCreate('dir', row.id), row)}>新建文件夹</div>
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<div class="ctx-item" role="menuitem" tabindex="-1" onclick={() => menuAct(() => startRename(row), row)}>重命名</div>
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<div class="ctx-item danger" role="menuitem" tabindex="-1" onclick={() => menuAct(() => remove(row), row)}>删除</div>
 			{:else if menu.target?.kind === 'graph'}
 				{@const row = menu.target}
-				<div class="ctx-item" on:click={() => menuAct(() => startRename(row), row)}>重命名</div>
-				<div class="ctx-item danger" on:click={() => menuAct(() => remove(row), row)}>删除</div>
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<div class="ctx-item" role="menuitem" tabindex="-1" onclick={() => menuAct(() => startRename(row), row)}>重命名</div>
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<div class="ctx-item danger" role="menuitem" tabindex="-1" onclick={() => menuAct(() => remove(row), row)}>删除</div>
 			{:else}
-				<div class="ctx-item" on:click={() => menuAct(() => startCreate('graph', null), null)}>新建图</div>
-				<div class="ctx-item" on:click={() => menuAct(() => startCreate('dir', null), null)}>新建文件夹</div>
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<div class="ctx-item" role="menuitem" tabindex="-1" onclick={() => menuAct(() => startCreate('graph', null), null)}>新建图</div>
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<div class="ctx-item" role="menuitem" tabindex="-1" onclick={() => menuAct(() => startCreate('dir', null), null)}>新建文件夹</div>
 			{/if}
 		</div>
 	{/if}
@@ -301,21 +316,40 @@
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div
 		class="row"
+		aria-selected={row.kind === 'graph' && row.id === activeId}
 		class:active={row.kind === 'graph' && row.id === activeId}
 		class:droppable={dropTarget === row.id && row.kind === 'dir'}
 		style:padding-left="{8 + depth * 14}px"
+		role="treeitem"
+		tabindex="-1"
 		draggable="true"
-		on:dragstart={(e) => onDragstart(e, row)}
-		on:dragover|preventDefault={(e) => row.kind === 'dir' && onDragover(e, row.id)}
-		on:dragleave={() => row.kind === 'dir' && dropTarget === row.id && (dropTarget = null)}
-		on:drop|stopPropagation={(e) => row.kind === 'dir' && onDrop(e, row.id)}
-		on:contextmenu={(e) => onContext(e, row)}
+		ondragstart={(e) => onDragstart(e, row)}
+		ondragover={(e) => {
+			if (row.kind === 'dir') onDragover(e, row.id)
+		}}
+		ondragleave={() => {
+			if (row.kind === 'dir' && dropTarget === row.id) dropTarget = null
+		}}
+		ondrop={(e) => {
+			if (row.kind === 'dir') onDrop(e, row.id)
+		}}
+		oncontextmenu={(e) => onContext(e, row)}
+		onclick={() => {
+			// 重命名输入框的点击会冒泡到行上，此时不做行展开/打开
+			if (renaming?.id === row.id) return
+			if (row.kind === 'dir') expanded = { ...expanded, [row.id]: expanded[row.id] === false }
+			else open(row)
+		}}
+		ondblclick={() => startRename(row)}
 	>
 		{#if row.kind === 'dir'}
 			<button
 				class="twist"
 				tabindex="-1"
-				on:click|stopPropagation={() => (expanded = { ...expanded, [row.id]: !expanded[row.id] })}
+				onclick={(e) => {
+					e.stopPropagation()
+					expanded = { ...expanded, [row.id]: !expanded[row.id] }
+				}}
 			>
 				{expanded[row.id] === false ? '▸' : '▾'}
 			</button>
@@ -327,19 +361,15 @@
 			<input
 				class="rename"
 				value={row.name}
-				on:pointerdown|stopPropagation
-				on:keydown={(e) => {
+				onpointerdown={(e) => e.stopPropagation()}
+				onkeydown={(e) => {
 					if (e.key === 'Enter') commitRename(e.currentTarget.value)
-					else if (e.key === 'Escape') (renaming = null)
+					else if (e.key === 'Escape') renaming = null
 				}}
-				on:blur={(e) => commitRename(e.currentTarget.value)}
+				onblur={(e) => commitRename(e.currentTarget.value)}
 			/>
 		{:else}
-			<span
-				class="name"
-				on:click={() => (row.kind === 'dir' ? (expanded = { ...expanded, [row.id]: expanded[row.id] === false }) : open(row))}
-				on:dblclick={() => startRename(row)}
-			>
+			<span class="name">
 				{row.kind === 'dir' ? '📁' : '🖼'} {row.name}
 			</span>
 		{/if}
@@ -358,16 +388,18 @@
 {#snippet CreateRow(depth: number)}
 	<div class="row" style:padding-left="{8 + depth * 14}px">
 		<span class="twist placeholder"></span>
+		<!-- svelte-ignore a11y_autofocus -->
 		<input
 			class="rename"
 			placeholder={creating?.kind === 'dir' ? '文件夹名…' : '图名…'}
 			autofocus
-			on:pointerdown|stopPropagation
-			on:keydown={(e) => {
+			onpointerdown={(e) => e.stopPropagation()}
+			onclick={(e) => e.stopPropagation()}
+			onkeydown={(e) => {
 				if (e.key === 'Enter') commitCreate(e.currentTarget.value)
-				else if (e.key === 'Escape') (creating = null)
+				else if (e.key === 'Escape') creating = null
 			}}
-			on:blur={(e) => commitCreate(e.currentTarget.value)}
+			onblur={(e) => commitCreate(e.currentTarget.value)}
 		/>
 	</div>
 {/snippet}

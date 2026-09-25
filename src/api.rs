@@ -261,11 +261,21 @@ async fn create_graph(body: Option<Json<CreateGraphBody>>) -> ApiResult<Json<Gra
     Ok(Json(graph))
 }
 
+/// PUT /api/graphs/{id} 的负载：只接受结构文档（节点 / 连线）。
+/// 不接收 created_at/updated_at —— 簿记字段由服务端掌管，
+/// 客户端快照也不应携带（此前要求整结构 Graph 导致前端 PUT 一律 422，
+/// 画布结构实际从未保存成功）。
+#[derive(Deserialize)]
+struct GraphUpdateBody {
+    nodes: Vec<GraphNode>,
+    edges: Vec<GraphEdge>,
+}
+
 /// 保存结构文档（节点/连线）。标题与分组是元数据，走专门接口/建图，
 /// PUT 不覆盖，避免前端文档快照把元数据抹掉。
 async fn update_graph(
     Path(id): Path<String>,
-    Json(graph): Json<Graph>,
+    Json(graph): Json<GraphUpdateBody>,
 ) -> ApiResult<Json<Graph>> {
     let Some(mut stored) = crate::store::get_graph(&id).await else {
         return Err(bad("图不存在"));

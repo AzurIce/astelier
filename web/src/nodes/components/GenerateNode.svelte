@@ -1,20 +1,25 @@
 <script lang="ts">
-	import { Ref } from 'rete-svelte-plugin/5'
+	import NodeFrame from './NodeFrame.svelte'
+	import Port from './Port.svelte'
+	import Icon from '../../components/Icon.svelte'
 	import type { AreaExtra } from '../types'
 	import { rt } from '../../runtime'
 	import { scheduleSave } from '../../graphStore'
+	import { removeNodeCascade } from '../actions'
 	import { OPENAI_IMAGE_PARAMS } from '../../apiParams'
+	import { openLightbox } from '../../components/lightbox.svelte'
 	import type { ParamDef } from '../../profiles'
 	import type { GenerateNode } from '../classes'
 
-	export let data: GenerateNode
-	export let emit: (p: AreaExtra) => void
+	let { data, emit }: { data: GenerateNode; emit: (p: AreaExtra) => void } = $props()
 
-	function touch() {
-		rt.area?.update('node', data.id)
-		scheduleSave()
+	let mainParams = $derived(OPENAI_IMAGE_PARAMS.filter((p) => !p.advanced))
+	let advancedParams = $derived(OPENAI_IMAGE_PARAMS.filter((p) => p.advanced))
+
+	function val(p: ParamDef): string {
+		const v = data.params[p.key]
+		return v === undefined ? '' : String(v)
 	}
-
 	function setParam(p: ParamDef, raw: string) {
 		if (raw === '') {
 			delete data.params[p.key]
@@ -27,198 +32,211 @@
 		}
 		touch()
 	}
-
-	$: mainParams = OPENAI_IMAGE_PARAMS.filter((p) => !p.advanced)
-	$: advancedParams = OPENAI_IMAGE_PARAMS.filter((p) => p.advanced)
+	function touch() {
+		rt.area?.update('node', data.id)
+		scheduleSave()
+	}
+	function stop(e: PointerEvent) {
+		e.stopPropagation()
+	}
+	const sizePresets =
+		OPENAI_IMAGE_PARAMS.find((p) => p.key === 'size')?.options ?? []
 </script>
 
-<div class="an-node" class:selected={data.selected} data-node-id={data.id}>
-	<div class="an-title an-t-model">Generate</div>
+<NodeFrame
+	nodeId={data.id}
+	type="generate"
+	icon="generate"
+	name="Generate"
+	desc={data.busy ? '生成中…' : 'OpenAI Images 协议'}
+	selected={data.selected}
+	busy={data.busy}
+	ondelete={() => removeNodeCascade(data.id)}
+>
+	{#snippet inputs()}
+		<Port {data} {emit} side="input" port="model" label="model" tone="model" />
+		<Port {data} {emit} side="input" port="prompt" label="prompt ×" tone="text" />
+		<Port {data} {emit} side="input" port="image" label="ref ×" tone="image" />
+	{/snippet}
 
-	<div class="an-in">
-		<Ref
-			class="an-socket an-sock-model"
-			init={(element: HTMLElement) =>
-				emit({
-					type: 'render',
-					data: {
-						type: 'socket',
-						side: 'input',
-						key: 'model',
-						nodeId: data.id,
-						element,
-						payload: data.inputs.model!.socket,
-					},
-				})}
-			unmount={(ref: HTMLElement) => emit({ type: 'unmount', data: { element: ref } })}
-		/>
-		<span class="an-port-label">model</span>
-	</div>
-	<div class="an-in">
-		<Ref
-			class="an-socket an-sock-text"
-			init={(element: HTMLElement) =>
-				emit({
-					type: 'render',
-					data: {
-						type: 'socket',
-						side: 'input',
-						key: 'prompt',
-						nodeId: data.id,
-						element,
-						payload: data.inputs.prompt!.socket,
-					},
-				})}
-			unmount={(ref: HTMLElement) => emit({ type: 'unmount', data: { element: ref } })}
-		/>
-		<span class="an-port-label">prompt ×</span>
-	</div>
-	<div class="an-in">
-		<Ref
-			class="an-socket an-sock-image"
-			init={(element: HTMLElement) =>
-				emit({
-					type: 'render',
-					data: {
-						type: 'socket',
-						side: 'input',
-						key: 'image',
-						nodeId: data.id,
-						element,
-						payload: data.inputs.image!.socket,
-					},
-				})}
-			unmount={(ref: HTMLElement) => emit({ type: 'unmount', data: { element: ref } })}
-		/>
-		<span class="an-port-label">ref ×</span>
-	</div>
-
-	<div class="an-body">
+	{#snippet body()}
 		{#each mainParams as p (p.key)}
 			{@render ParamRow(p)}
 		{/each}
 
 		{#if advancedParams.length}
-			<details class="an-advanced">
-				<summary>更多参数</summary>
-				{#each advancedParams as p (p.key)}
-					{@render ParamRow(p)}
-				{/each}
+			<details class="ui-details">
+				<summary><Icon name="chevronDown" size={12} />更多参数</summary>
+				<div class="details-body">
+					{#each advancedParams as p (p.key)}
+						{@render ParamRow(p)}
+					{/each}
+				</div>
 			</details>
 		{/if}
 
 		{#if data.busy}
-			<div class="an-status">生成中…</div>
-		{:else if data.error}
-			<div class="an-error" title={data.error}>{data.error}</div>
-		{/if}
-		{#if data.resultUrl}
-			<img class="an-preview" src={data.resultUrl} alt="生成结果" />
-		{/if}
-	</div>
-
-	<div class="an-out">
-		<span class="an-port-label">image</span>
-		<Ref
-			class="an-socket an-sock-image"
-			init={(element: HTMLElement) =>
-				emit({
-					type: 'render',
-					data: {
-						type: 'socket',
-						side: 'output',
-						key: 'image',
-						nodeId: data.id,
-						element,
-						payload: data.outputs.image!.socket,
-					},
-				})}
-			unmount={(ref: HTMLElement) => emit({ type: 'unmount', data: { element: ref } })}
-		/>
-	</div>
-</div>
-
-{#snippet ParamRow(p: ParamDef)}
-	<div class="an-row">
-		<span class="an-label" title={p.key}>{p.label}</span>
-		{#if p.kind === 'select' && p.control === 'slider'}
-			{@const opts = ['', ...p.options]}
-			{@const idx = Math.max(0, opts.indexOf(String(data.params[p.key] ?? '')))}
-			<div class="an-slider">
-				<input
-					type="range"
-					min="0"
-					max={opts.length - 1}
-					step="1"
-					value={idx}
-					title={String(data.params[p.key] ?? '默认')}
-					on:pointerdown|stopPropagation
-					on:input={(e) => setParam(p, opts[Number(e.currentTarget.value)])}
-				/>
-				<div class="an-ticks">
-					{#each opts as o, i (i)}
-						<button
-							type="button"
-							class="an-tick"
-							class:active={idx === i}
-							style:left="{(i / (opts.length - 1)) * 100}%"
-							title={o === '' ? '默认' : o}
-							on:pointerdown|stopPropagation
-							on:click={() => setParam(p, o)}
-						></button>
-					{/each}
+			<div class="gen-status">
+				<div class="ui-status">
+					<Icon name="spinner" size={13} class="spin" />
+					<span>生成中，可能需要几十秒…</span>
 				</div>
+				<div class="ui-skeleton"></div>
+				<div class="ui-skeleton" style="width: 62%"></div>
 			</div>
-			<span class="an-value">{data.params[p.key] ?? '默认'}</span>
-		{:else if p.kind === 'select' && p.control === 'segmented'}
-			<div class="an-seg">
-				{#each ['', ...p.options] as o, i (i)}
-					<button
-						type="button"
-						class:active={(data.params[p.key] ?? '') === o}
-						on:pointerdown|stopPropagation
-						on:click={() => setParam(p, o)}
-					>
-						{o === '' ? '默认' : o}
-					</button>
-				{/each}
+		{:else if data.error}
+			<div class="ui-error" title={data.error}>
+				<Icon name="alert" size={13} />
+				<span>{data.error}</span>
 			</div>
-		{:else if p.kind === 'select'}
-			<select
-				value={data.params[p.key] ?? ''}
-				on:pointerdown|stopPropagation
-				on:change={(e) => setParam(p, e.currentTarget.value)}
-			>
-				<option value="">默认</option>
-				{#each p.options as o (o)}
-					<option value={o}>{o}</option>
-				{/each}
-			</select>
-		{:else if p.kind === 'size'}
-			<!-- 协议开集合：预设建议 + 自由输入（gpt-image-2+ 任意 16 整除尺寸） -->
-			<input
-				type="text"
-				list="an-size-presets"
-				placeholder="默认"
-				value={data.params[p.key] ?? ''}
-				on:pointerdown|stopPropagation
-				on:change={(e) => setParam(p, e.currentTarget.value.trim())}
-			/>
-		{:else}
-			<input
-				type={p.kind === 'number' ? 'number' : 'text'}
-				min={p.min ?? undefined}
-				max={p.max ?? undefined}
-				value={data.params[p.key] ?? ''}
-				on:pointerdown|stopPropagation
-				on:change={(e) => setParam(p, e.currentTarget.value)}
-			/>
 		{/if}
-	</div>
-{/snippet}
 
-<datalist id="an-size-presets">
-	{#each OPENAI_IMAGE_PARAMS.find((p) => p.key === 'size')?.options ?? [] as o (o)}
+		{#if data.resultUrl && !data.busy}
+			<button
+				type="button"
+				class="img-btn"
+				title="点击查看大图"
+				onpointerdown={stop}
+				onclick={() => data.resultUrl && openLightbox(data.resultUrl)}
+			>
+				<img class="ui-img thumbnail result-img" src={data.resultUrl} alt="生成结果" />
+			</button>
+		{/if}
+	{/snippet}
+
+	{#snippet outputs()}
+		<Port {data} {emit} side="output" port="image" label="image" tone="image" />
+	{/snippet}
+</NodeFrame>
+
+<datalist id="size-presets">
+	{#each sizePresets as o (o)}
 		<option value={o}></option>
 	{/each}
 </datalist>
+
+{#snippet ParamRow(p: ParamDef)}
+	<div class="field-row">
+		<span class="field-label" title={p.key}>{p.label}</span>
+		<div class="field-value">
+			{#if p.kind === 'select' && p.control === 'slider'}
+				{@const opts = ['', ...p.options]}
+				{@const idx = Math.max(0, opts.indexOf(val(p)))}
+				<div class="slider-wrap">
+					<div class="top">
+						<span class="mono">{val(p) || '默认'}</span>
+					</div>
+					<input
+						class="ui-range"
+						type="range"
+						min="0"
+						max={opts.length - 1}
+						step="1"
+						value={idx}
+						title={val(p) || '默认'}
+						onpointerdown={stop}
+						oninput={(e) => setParam(p, opts[Number(e.currentTarget.value)])}
+					/>
+				</div>
+			{:else if p.kind === 'select' && p.control === 'segmented'}
+				<div class="ui-seg">
+					{#each ['', ...p.options] as o (o)}
+						<button
+							type="button"
+							class:active={val(p) === o}
+							onpointerdown={stop}
+							onclick={() => setParam(p, o)}
+						>
+							{o === '' ? '默认' : o}
+						</button>
+					{/each}
+				</div>
+			{:else if p.kind === 'select'}
+				<select
+					class="ui-select"
+					value={val(p)}
+					title={val(p) || '默认'}
+					onpointerdown={stop}
+					onchange={(e) => setParam(p, e.currentTarget.value)}
+				>
+					<option value="">默认</option>
+					{#each p.options as o (o)}
+						<option value={o}>{o}</option>
+					{/each}
+				</select>
+			{:else if p.kind === 'size'}
+				<input
+					class="ui-input mono"
+					type="text"
+					list="size-presets"
+					placeholder="默认"
+					title="常用尺寸可从下拉选择，也可直接输入如 1216x832（16 整除）"
+					value={val(p)}
+					onpointerdown={stop}
+					onchange={(e) => setParam(p, e.currentTarget.value.trim())}
+				/>
+			{:else if p.kind === 'number'}
+				<div class="ui-stepper">
+					<button
+						type="button"
+						aria-label="减少"
+						onpointerdown={stop}
+						onclick={() => {
+							const cur = Number(val(p) || p.min || 0)
+							const step = Math.max(1, Math.floor(cur) - 1)
+							setParam(p, String(Math.max(p.min ?? 0, step)))
+						}}
+					>
+						−
+					</button>
+					<input
+						class="ui-num"
+						type="number"
+						min={p.min ?? undefined}
+						max={p.max ?? undefined}
+						value={val(p)}
+						placeholder="默认"
+						onpointerdown={stop}
+						onchange={(e) => setParam(p, e.currentTarget.value)}
+					/>
+					<button
+						type="button"
+						aria-label="增加"
+						onpointerdown={stop}
+						onclick={() => {
+							const cur = Number(val(p) || p.min || 0)
+							const step = Math.ceil(cur) + 1
+							setParam(p, String(Math.min(p.max ?? 99, step)))
+						}}
+					>
+						+
+					</button>
+				</div>
+			{:else}
+				<input
+					class="ui-input"
+					type="text"
+					value={val(p)}
+					placeholder="默认"
+					onpointerdown={stop}
+					onchange={(e) => setParam(p, e.currentTarget.value)}
+				/>
+			{/if}
+		</div>
+	</div>
+{/snippet}
+
+<style>
+	.gen-status {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.result-img {
+		margin: 2px auto 0;
+	}
+	.slider-wrap .top .mono {
+		color: var(--ui-dim);
+		font-size: 10.5px;
+	}
+</style>

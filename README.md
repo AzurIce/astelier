@@ -17,10 +17,13 @@
 
 ```
 web/（bun + Vite + Svelte 5 + Rete.js 2）
-  src/editor.ts     Area/Svelte/Connection/ContextMenu 插件组装 + 连线类型约束
-  src/nodes/        节点类（ClassicPreset 派生）+ Svelte 节点组件
+  src/editor.ts     Area/Svelte/Connection 插件组装 + 连线类型约束 + 视口控制（zoom/fit）
+  src/nodes/        节点类（ClassicPreset 派生）+ Svelte 节点组件 + 自绘连线（ConnectionLine）
   src/exec.ts       全图拓扑求值：Model/Prompt/Image → Generate → Preview
-  src/persist.ts    画布 localStorage 持久化（后续接 /api/graphs）
+  src/graphStore.ts 画布持久化：结构/表现文档分别节流保存到服务端
+  src/design/       设计令牌：三套皮肤（工作台/晨雾/素白）× light/dark，运行时注入 --ui-*
+  src/components/   UI 基础件：Button/IconButton/Popover/Toast/Dialog/Lightbox
+  src/chrome/       外壳：Topbar（图名/皮肤/明暗/Run）、SkinSwitcher、ViewportControls
         │ fetch /api/*（dev 时 vite proxy → 127.0.0.1:8230）
         ▼
 src/（cargo，axum）

@@ -15,8 +15,28 @@ let graphId = ''
 let structTimer: ReturnType<typeof setTimeout> | null = null
 let viewTimer: ReturnType<typeof setTimeout> | null = null
 
+/* ---------------- 保存状态广播（顶栏小圆点） ---------------- */
+
+export type SaveState = 'saved' | 'dirty' | 'saving'
+
+const saveSubs = new Set<(s: SaveState) => void>()
+let saveState: SaveState = 'saved'
+
+function setSaveState(s: SaveState) {
+	if (s === saveState) return
+	saveState = s
+	for (const cb of saveSubs) cb(s)
+}
+
+/** 订阅保存状态；立即回调一次当前值 */
+export function onSaveState(cb: (s: SaveState) => void): () => void {
+	saveSubs.add(cb)
+	cb(saveState)
+	return () => saveSubs.delete(cb)
+}
+
 /** 解析当前图（本地记录的 id 优先，失效则由服务端建种子图）并载入画布 */
-export async function ensureGraphAndLoad(): Promise<void> {
+export async function ensureGraphAndLoad(): Promise<GraphDocWithId | null> {
 	const stored = localStorage.getItem(KEY) ?? ''
 	let doc: GraphDocWithId | null = null
 	if (stored) {
@@ -39,6 +59,7 @@ export async function ensureGraphAndLoad(): Promise<void> {
 		view = undefined
 	}
 	await loadDoc(doc, view)
+	return doc
 }
 
 export function activeGraphId(): string {
@@ -81,15 +102,19 @@ export async function openGraph(id: string): Promise<void> {
 export function scheduleSave() {
 	if (structTimer) return
 	structTimer = setTimeout(flushGraph, 400)
+	setSaveState('dirty')
 }
 
 async function flushGraph() {
 	structTimer = null
 	if (!graphId || !rt.editor) return
+	setSaveState('saving')
 	try {
 		await putGraph(graphId, toDoc())
+		setSaveState('saved')
 	} catch (e) {
 		console.error('保存画布结构失败', e)
+		setSaveState('saved')
 	}
 }
 

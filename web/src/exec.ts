@@ -2,7 +2,7 @@
 // 状态回写到对应的存活节点实例上。
 import { apiGenerate } from './api'
 import { toDoc, type GraphDoc } from './graphDoc'
-import { rt } from './runtime'
+import { rt, runningNodes } from './runtime'
 import { scheduleViewSave } from './graphStore'
 
 type Outputs = Record<string, unknown>
@@ -108,6 +108,7 @@ async function runNode(
 			gen.error = null
 			area.update('node', gen.id)
 		}
+		runningNodes.add(node.id)
 		try {
 			const result = await apiGenerate({
 				model,
@@ -132,6 +133,7 @@ async function runNode(
 				gen.busy = false
 				area.update('node', gen.id)
 			}
+			runningNodes.delete(node.id)
 		}
 		return { image: gen?.resultUrl! }
 	}

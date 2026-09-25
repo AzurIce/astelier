@@ -1,46 +1,79 @@
 <script lang="ts">
-	import { Ref } from 'rete-svelte-plugin/5'
+	import NodeFrame from './NodeFrame.svelte'
+	import Port from './Port.svelte'
+	import IconButton from '../../components/IconButton.svelte'
 	import type { AreaExtra } from '../types'
 	import { rt } from '../../runtime'
 	import { scheduleSave } from '../../graphStore'
+	import { removeNodeCascade } from '../actions'
 	import type { PromptNode } from '../classes'
 
-	export let data: PromptNode
-	export let emit: (p: AreaExtra) => void
+	let { data, emit }: { data: PromptNode; emit: (p: AreaExtra) => void } = $props()
+
+	let count = $derived(data.text.length)
+
+	function touch() {
+		rt.area?.update('node', data.id)
+		scheduleSave()
+	}
 </script>
 
-<div class="an-node" class:selected={data.selected} data-node-id={data.id}>
-	<div class="an-title an-t-text">Prompt</div>
-	<div class="an-body">
-		<textarea
-			placeholder="提示词…"
-			rows="4"
-			value={data.text}
-			on:pointerdown|stopPropagation
-			on:input={(e) => {
-				data.text = e.currentTarget.value
-				rt.area?.update('node', data.id)
-				scheduleSave()
-			}}
-		></textarea>
-	</div>
-	<div class="an-out">
-		<span class="an-port-label">text</span>
-		<Ref
-			class="an-socket an-sock-text"
-			init={(element: HTMLElement) =>
-				emit({
-					type: 'render',
-					data: {
-						type: 'socket',
-						side: 'output',
-						key: 'text',
-						nodeId: data.id,
-						element,
-						payload: data.outputs.text!.socket,
-					},
-				})}
-			unmount={(ref: HTMLElement) => emit({ type: 'unmount', data: { element: ref } })}
-		/>
-	</div>
-</div>
+<NodeFrame
+	nodeId={data.id}
+	type="prompt"
+	icon="prompt"
+	name="Prompt"
+	desc="提示词输入"
+	selected={data.selected}
+	ondelete={() => removeNodeCascade(data.id)}
+>
+	{#snippet body()}
+		<div class="prompt-wrap">
+			<textarea
+				class="ui-textarea"
+				placeholder="描述你想生成的画面…"
+				rows="4"
+				value={data.text}
+				onpointerdown={(e) => e.stopPropagation()}
+				oninput={(e) => {
+					data.text = e.currentTarget.value
+					touch()
+				}}
+			></textarea>
+			<div class="prompt-foot">
+				<span class="count mono">{count}</span>
+				{#if count > 0}
+					<IconButton
+						icon="x"
+						label="清空"
+						sm
+						onclick={() => {
+							data.text = ''
+							touch()
+						}}
+					/>
+				{/if}
+			</div>
+		</div>
+	{/snippet}
+
+	{#snippet outputs()}
+		<Port {data} {emit} side="output" port="text" label="text" tone="text" />
+	{/snippet}
+</NodeFrame>
+
+<style>
+	.prompt-wrap {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.prompt-foot {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 6px;
+		color: var(--ui-faint);
+		font-size: 10px;
+	}
+</style>

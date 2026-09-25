@@ -54,7 +54,7 @@ export async function uploadAsset(file: File): Promise<string> {
 
 import type { GraphDoc, ViewDoc } from './graphDoc'
 
-export type GraphDocWithId = GraphDoc & { id: string }
+export type GraphDocWithId = GraphDoc & { id: string; title?: string; group_id?: string | null }
 
 export async function createGraph(): Promise<GraphDocWithId> {
 	const res = await fetch('/api/graphs', { method: 'POST' })
@@ -77,8 +77,19 @@ export async function putGraph(id: string, doc: GraphDoc) {
 	if (!res.ok) throw new Error(`保存图失败（${res.status}）`)
 }
 
-export async function fetchView(id: string): Promise<ViewDoc> {
-	const res = await fetch(`/api/graphs/${encodeURIComponent(id)}/view`)
+/** 图重命名 = 目录改名，id 可能随之变化；返回新 id */
+export async function renameGraph(id: string, title: string): Promise<{ id: string }> {
+	const res = await fetch(`/api/graphs/${encodeURIComponent(id)}/title`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ title }),
+	})
+	const body = await res.json().catch(() => null)
+	if (!res.ok) throw new Error(body?.error ?? `重命名失败（${res.status}）`)
+	return body as { id: string }
+}
+
+export async function fetchView(id: string): Promise<ViewDoc> {	const res = await fetch(`/api/graphs/${encodeURIComponent(id)}/view`)
 	if (!res.ok) throw new Error(`读取视图失败（${res.status}）`)
 	return res.json()
 }

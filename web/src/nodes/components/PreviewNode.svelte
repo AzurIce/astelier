@@ -1,38 +1,43 @@
 <script lang="ts">
-	import { Ref } from 'rete-svelte-plugin/5'
+	import NodeFrame from './NodeFrame.svelte'
+	import Port from './Port.svelte'
+	import Icon from '../../components/Icon.svelte'
+	import { openLightbox } from '../../components/lightbox.svelte'
+	import { removeNodeCascade } from '../actions'
 	import type { AreaExtra } from '../types'
 	import type { PreviewNode } from '../classes'
 
-	export let data: PreviewNode
-	export let emit: (p: AreaExtra) => void
+	let { data, emit }: { data: PreviewNode; emit: (p: AreaExtra) => void } = $props()
 </script>
 
-<div class="an-node" class:selected={data.selected} data-node-id={data.id}>
-	<div class="an-title an-t-image">Preview</div>
-	<div class="an-in">
-		<Ref
-			class="an-socket an-sock-image"
-			init={(element: HTMLElement) =>
-				emit({
-					type: 'render',
-					data: {
-						type: 'socket',
-						side: 'input',
-						key: 'image',
-						nodeId: data.id,
-						element,
-						payload: data.inputs.image!.socket,
-					},
-				})}
-			unmount={(ref: HTMLElement) => emit({ type: 'unmount', data: { element: ref } })}
-		/>
-		<span class="an-port-label">image</span>
-	</div>
-	<div class="an-body">
+<NodeFrame
+	nodeId={data.id}
+	type="preview"
+	icon="preview"
+	name="Preview"
+	desc="结果展示"
+	selected={data.selected}
+	ondelete={() => removeNodeCascade(data.id)}
+>
+	{#snippet inputs()}
+		<Port {data} {emit} side="input" port="image" label="image" tone="image" />
+	{/snippet}
+
+	{#snippet body()}
 		{#if data.displayUrl}
-			<img class="an-preview" src={data.displayUrl} alt="预览" />
+			<button
+				type="button"
+				class="img-btn"
+				title="点击查看大图"
+				onclick={() => data.displayUrl && openLightbox(data.displayUrl)}
+			>
+				<img class="ui-img thumbnail" src={data.displayUrl} alt="预览" />
+			</button>
 		{:else}
-			<div class="an-empty">连入 image 后 Run</div>
+			<div class="ui-empty-hint">
+				<Icon name="image" size={22} />
+				<span>连入 image 输出<br />点 Run 查看结果</span>
+			</div>
 		{/if}
-	</div>
-</div>
+	{/snippet}
+</NodeFrame>

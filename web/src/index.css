@@ -103,9 +103,62 @@ body {
 	color: var(--an-dim);
 }
 .an-value {
-	min-width: 24px;
+	width: 44px;
+	flex: none;
 	text-align: right;
 	color: var(--an-dim);
+}
+
+/* 带刻度的滑块：刻度线可点选直达档位 */
+.an-slider {
+	flex: 1;
+	min-width: 0;
+	position: relative;
+	padding-bottom: 13px;
+}
+.an-slider input[type='range'] {
+	width: 100%;
+}
+.an-slider input[type='range']::-webkit-slider-thumb {
+	width: 10px;
+	height: 10px;
+}
+.an-ticks {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: 12px;
+}
+.an-tick {
+	position: absolute;
+	top: 0;
+	width: 14px;
+	height: 12px;
+	margin-left: -7px;
+	padding: 0;
+	border: none;
+	background: transparent;
+	cursor: pointer;
+}
+.an-tick::after {
+	content: '';
+	position: absolute;
+	left: 50%;
+	top: 0;
+	width: 2px;
+	height: 5px;
+	transform: translateX(-50%);
+	background: var(--an-dim);
+	opacity: 0.5;
+}
+.an-tick:hover::after {
+	opacity: 1;
+}
+.an-tick.active::after {
+	height: 9px;
+	background: var(--an-sock-model);
+	opacity: 1;
 }
 .an-slider-row input[type='range'],
 .an-row input[type='range'] {

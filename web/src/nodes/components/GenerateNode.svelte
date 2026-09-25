@@ -144,16 +144,30 @@
 		{#if p.kind === 'select' && p.control === 'slider'}
 			{@const opts = ['', ...p.options]}
 			{@const idx = Math.max(0, opts.indexOf(String(data.params[p.key] ?? '')))}
-			<input
-				type="range"
-				min="0"
-				max={opts.length - 1}
-				step="1"
-				value={idx}
-				title={String(data.params[p.key] ?? '默认')}
-				on:pointerdown|stopPropagation
-				on:input={(e) => setParam(p, opts[Number(e.currentTarget.value)])}
-			/>
+			<div class="an-slider">
+				<input
+					type="range"
+					min="0"
+					max={opts.length - 1}
+					step="1"
+					value={idx}
+					title={String(data.params[p.key] ?? '默认')}
+					on:pointerdown|stopPropagation
+					on:input={(e) => setParam(p, opts[Number(e.currentTarget.value)])}
+				/>
+				<div class="an-ticks">
+					{#each opts as o, i (i)}
+						<button
+							type="button"
+							class:active={idx === i}
+							style:left="{(i / (opts.length - 1)) * 100}%"
+							title={o === '' ? '默认' : o}
+							on:pointerdown|stopPropagation
+							on:click={() => setParam(p, o)}
+						></button>
+					{/each}
+				</div>
+			</div>
 			<span class="an-value">{data.params[p.key] ?? '默认'}</span>
 		{:else if p.kind === 'select' && p.control === 'segmented'}
 			<div class="an-seg">

@@ -109,35 +109,66 @@ body {
 	color: var(--an-dim);
 }
 
-/* 带刻度的滑块：刻度线可点选直达档位 */
+/* 带刻度的离散滑块：细轨道 + 圆形拇指 + 可点刻度线 */
 .an-slider {
 	flex: 1;
 	min-width: 0;
 	position: relative;
-	padding-bottom: 13px;
+	padding-bottom: 12px;
 }
 .an-slider input[type='range'] {
+	-webkit-appearance: none;
+	appearance: none;
 	width: 100%;
+	height: 14px;
+	margin: 0;
+	background: transparent;
+}
+.an-slider input[type='range']::-webkit-slider-runnable-track {
+	height: 4px;
+	border-radius: 2px;
+	background: #2c2c34;
 }
 .an-slider input[type='range']::-webkit-slider-thumb {
-	width: 10px;
-	height: 10px;
+	-webkit-appearance: none;
+	width: 12px;
+	height: 12px;
+	margin-top: -4px;
+	border-radius: 50%;
+	background: var(--an-sock-model);
+	box-shadow: 0 0 0 2px rgba(79, 142, 247, 0.25);
+}
+.an-slider input[type='range']::-moz-range-track {
+	height: 4px;
+	border-radius: 2px;
+	background: #2c2c34;
+}
+.an-slider input[type='range']::-moz-range-thumb {
+	width: 12px;
+	height: 12px;
+	border: none;
+	border-radius: 50%;
+	background: var(--an-sock-model);
+	box-shadow: 0 0 0 2px rgba(79, 142, 247, 0.25);
 }
 .an-ticks {
 	position: absolute;
 	left: 0;
 	right: 0;
 	bottom: 0;
-	height: 12px;
+	height: 10px;
 }
 .an-tick {
+	-webkit-appearance: none;
+	appearance: none;
 	position: absolute;
 	top: 0;
-	width: 14px;
-	height: 12px;
-	margin-left: -7px;
+	width: 12px;
+	height: 10px;
+	margin-left: -6px;
 	padding: 0;
 	border: none;
+	border-radius: 0;
 	background: transparent;
 	cursor: pointer;
 }
@@ -149,14 +180,15 @@ body {
 	width: 2px;
 	height: 5px;
 	transform: translateX(-50%);
+	border-radius: 1px;
 	background: var(--an-dim);
-	opacity: 0.5;
+	opacity: 0.4;
 }
 .an-tick:hover::after {
-	opacity: 1;
+	opacity: 0.9;
 }
 .an-tick.active::after {
-	height: 9px;
+	height: 8px;
 	background: var(--an-sock-model);
 	opacity: 1;
 }

@@ -159,6 +159,7 @@
 					{#each opts as o, i (i)}
 						<button
 							type="button"
+							class="an-tick"
 							class:active={idx === i}
 							style:left="{(i / (opts.length - 1)) * 100}%"
 							title={o === '' ? '默认' : o}

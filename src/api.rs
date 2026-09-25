@@ -62,9 +62,11 @@ pub fn router() -> Router {
         )
         .route("/graphs/{id}/view", get(get_graph_view).put(save_graph_view))
         .route("/graphs/{id}/group", put(set_graph_group))
+        .route("/graphs/{id}/title", put(rename_graph))
         // 分组
         .route("/groups", get(list_groups).post(create_group))
         .route("/groups/{id}", patch(rename_group).delete(delete_group))
+        .route("/groups/{id}/parent", patch(move_group))
         // 资产
         .route("/assets", post(upload_asset))
         // 批次
@@ -149,22 +151,35 @@ async fn get_graph(Path(id): Path<String>) -> ApiResult<Json<Graph>> {
 }
 
 /// 新建节点图：种入「Model + Prompt → Generate → Preview」最小闭环，
-/// 并写默认布局视图。
-async fn create_graph() -> ApiResult<Json<Graph>> {
-    use crate::model::{GraphNode, NodeType};
+/// 并写默认布局视图。可指定目录与标题。
+#[derive(Deserialize, Default)]
+struct CreateGraphBody {
+    #[serde(default)]
+    group_id: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+}
+
+async fn create_graph(body: Option<Json<CreateGraphBody>>) -> ApiResult<Json<Graph>> {
+    let body = body.map(|Json(b)| b).unwrap_or_default();
     let now = now_ms();
     let cfg = crate::store::load_config().await;
     let (provider_id, model_id) = cfg
         .active()
         .map(|p| (p.id.clone(), p.models.first().cloned().unwrap_or_default()))
         .unwrap_or_default();
+    if let Some(gid) = &body.group_id {
+        if crate::store::list_groups().await.iter().all(|g| &g.id != gid) {
+            return Err(bad("目标目录不存在"));
+        }
+    }
     let nid = |tag: &str| format!("{tag}-{}", uuid::Uuid::new_v4().simple());
     let (model_id_node, prompt_id, gen_id, prev_id) =
         (nid("model"), nid("prompt"), nid("gen"), nid("prev"));
     let graph = Graph {
         id: uuid::Uuid::new_v4().simple().to_string(),
-        title: "未命名图".into(),
-        group_id: None,
+        title: body.title.unwrap_or_else(|| "未命名图".into()),
+        group_id: body.group_id,
         nodes: vec![
             GraphNode {
                 id: model_id_node.clone(),
@@ -243,13 +258,20 @@ async fn create_graph() -> ApiResult<Json<Graph>> {
     Ok(Json(graph))
 }
 
-async fn update_graph(Path(id): Path<String>, Json(mut graph): Json<Graph>) -> ApiResult<Json<Graph>> {
-    if graph.id != id {
-        return Err(bad("路径与体内的图 id 不一致"));
-    }
-    graph.updated_at = now_ms();
-    crate::store::save_graph(&graph).await;
-    Ok(Json(graph))
+/// 保存结构文档（节点/连线）。标题与分组是元数据，走专门接口/建图，
+/// PUT 不覆盖，避免前端文档快照把元数据抹掉。
+async fn update_graph(
+    Path(id): Path<String>,
+    Json(graph): Json<Graph>,
+) -> ApiResult<Json<Graph>> {
+    let Some(mut stored) = crate::store::get_graph(&id).await else {
+        return Err(bad("图不存在"));
+    };
+    stored.nodes = graph.nodes;
+    stored.edges = graph.edges;
+    stored.updated_at = now_ms();
+    crate::store::save_graph(&stored).await;
+    Ok(Json(stored))
 }
 
 async fn delete_graph(Path(id): Path<String>) -> ApiResult<()> {
@@ -281,6 +303,15 @@ async fn set_graph_group(Path(id): Path<String>, Json(body): Json<GroupBody>) ->
     Ok(())
 }
 
+async fn rename_graph(Path(id): Path<String>, Json(body): Json<NameBody>) -> ApiResult<()> {
+    let Some(mut graph) = crate::store::get_graph(&id).await else {
+        return Err(bad("图不存在"));
+    };
+    graph.title = body.name;
+    crate::store::save_graph(&graph).await;
+    Ok(())
+}
+
 // ---------- 分组 ----------
 
 async fn list_groups() -> Json<Vec<GraphGroup>> {
@@ -292,24 +323,72 @@ struct NameBody {
     name: String,
 }
 
-async fn create_group(Json(body): Json<NameBody>) -> Json<GraphGroup> {
+#[derive(Deserialize)]
+struct CreateDirBody {
+    name: String,
+    #[serde(default)]
+    parent_id: Option<String>,
+}
+
+async fn create_group(Json(body): Json<CreateDirBody>) -> ApiResult<Json<GraphGroup>> {
+    let groups = crate::store::list_groups().await;
+    if let Some(pid) = &body.parent_id {
+        if !groups.iter().any(|g| &g.id == pid) {
+            return Err(bad("父目录不存在"));
+        }
+    }
     let group = GraphGroup {
         id: uuid::Uuid::new_v4().simple().to_string(),
         name: if body.name.trim().is_empty() {
-            "新建分组".into()
+            "新建文件夹".into()
         } else {
             body.name
         },
+        parent_id: body.parent_id,
         created_at: now_ms(),
     };
     crate::store::save_group(&group).await;
-    Json(group)
+    Ok(Json(group))
 }
 
 async fn rename_group(Path(id): Path<String>, Json(body): Json<NameBody>) -> ApiResult<()> {
     let mut groups = crate::store::list_groups().await;
     if let Some(g) = groups.iter_mut().find(|g| g.id == id) {
         g.name = body.name;
+    }
+    crate::store::write_groups(&groups).await;
+    Ok(())
+}
+
+#[derive(Deserialize)]
+struct MoveBody {
+    parent_id: Option<String>,
+}
+
+/// 移动目录到目标父目录（None = 根）。目标不能是自己或自己的后代。
+async fn move_group(Path(id): Path<String>, Json(body): Json<MoveBody>) -> ApiResult<()> {
+    let mut groups = crate::store::list_groups().await;
+    if let Some(pid) = &body.parent_id {
+        // 沿 parent 链向上走，若路过自己则成环
+        let mut cursor = pid.clone();
+        for _ in 0..groups.len() + 1 {
+            if cursor == id {
+                return Err(bad("不能把目录移动到它自己内部"));
+            }
+            let Some(parent) = groups.iter().find(|g| g.id == cursor) else {
+                return Err(bad("目标目录不存在"));
+            };
+            match &parent.parent_id {
+                Some(next) => cursor = next.clone(),
+                None => break,
+            }
+        }
+        if !groups.iter().any(|g| &g.id == pid) {
+            return Err(bad("目标目录不存在"));
+        }
+    }
+    if let Some(g) = groups.iter_mut().find(|g| g.id == id) {
+        g.parent_id = body.parent_id;
     }
     crate::store::write_groups(&groups).await;
     Ok(())

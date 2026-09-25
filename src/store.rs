@@ -140,13 +140,32 @@ pub async fn write_groups(groups: &[GraphGroup]) {
     write_json(&["groups.json"], &groups).await;
 }
 
-/// 删除分组，其中的图回到未分组
+/// 删除目录及其全部子目录（递归）；其中的图回到未分组（图是资产，不连带删）。
 pub async fn delete_group(id: &str) {
     let mut v: Vec<GraphGroup> = read_json(&["groups.json"]).await.unwrap_or_default();
-    v.retain(|x| x.id != id);
-    write_json(&["groups.json"], &v).await;
+    let mut doomed: Vec<String> = vec![id.to_string()];
+    loop {
+        let mut grew = false;
+        for g in &v {
+            if let Some(p) = &g.parent_id {
+                if doomed.contains(p) && !doomed.contains(&g.id) {
+                    doomed.push(g.id.clone());
+                    grew = true;
+                }
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    v.retain(|x| !doomed.contains(&x.id));
+    write_groups(&v).await;
     for graph in list_graphs().await {
-        if graph.group_id.as_deref() == Some(id) {
+        if graph
+            .group_id
+            .as_deref()
+            .map_or(false, |gid| doomed.iter().any(|d| d == gid))
+        {
             let mut g = graph;
             g.group_id = None;
             write_json(&["graphs", &g.id, "graph.json"], &g).await;

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte'
 	import ContextMenu from './ContextMenu.svelte'
+	import Sidebar from './Sidebar.svelte'
 	import { currentTheme, toggleTheme, type Theme } from './theme'
 	import { rt } from './runtime'
 
@@ -59,24 +60,40 @@
 	}
 </script>
 
-<div class="topbar">
-	<div class="brand">Atelier</div>
-	<button class="run" disabled={!ready || running} on:click={run}>
-		{running ? 'Running…' : 'Run'}
-	</button>
-	{#if status}<span class="status">{status}</span>{/if}
-	{#if error}<span class="error" title={error}>{error}</span>{/if}
-	<div class="spacer"></div>
-	<button class="ghost" on:click={clearCanvas}>清空</button>
-	<button class="ghost icon" title="切换 light / dark" on:click={() => (theme = toggleTheme())}>
-		{theme === 'dark' ? '☀' : '☾'}
-	</button>
-	<span class="hint">右键画布添加节点</span>
+<div class="shell">
+	<Sidebar />
+	<div class="main">
+		<div class="topbar">
+			<div class="brand">Atelier</div>
+			<button class="run" disabled={!ready || running} on:click={run}>
+				{running ? 'Running…' : 'Run'}
+			</button>
+			{#if status}<span class="status">{status}</span>{/if}
+			{#if error}<span class="error" title={error}>{error}</span>{/if}
+			<div class="spacer"></div>
+			<button class="ghost" on:click={clearCanvas}>清空</button>
+			<button class="ghost icon" title="切换 light / dark" on:click={() => (theme = toggleTheme())}>
+				{theme === 'dark' ? '☀' : '☾'}
+			</button>
+			<span class="hint">右键画布添加节点 · 右键侧栏管理目录</span>
+		</div>
+		<div id="rete"></div>
+	</div>
 </div>
-<div id="rete"></div>
 <ContextMenu bind:this={ctxMenu} />
 
 <style>
+	.shell {
+		flex: 1;
+		display: flex;
+		min-height: 0;
+	}
+	.main {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+	}
 	.topbar {
 		display: flex;
 		align-items: center;

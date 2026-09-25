@@ -41,6 +41,36 @@ export async function ensureGraphAndLoad(): Promise<void> {
 	await loadDoc(doc, view)
 }
 
+export function activeGraphId(): string {
+	return graphId
+}
+
+/** 立即落盘未保存的挂起变更（切图前调用） */
+export async function flushNow(): Promise<void> {
+	if (structTimer) {
+		clearTimeout(structTimer)
+		structTimer = null
+		await flushGraph()
+	}
+	if (viewTimer) {
+		clearTimeout(viewTimer)
+		viewTimer = null
+		await flushView()
+	}
+}
+
+/** 打开另一张图：落盘旧图 → 清空编辑器 → 载入新图文档与视图 */
+export async function openGraph(id: string): Promise<void> {
+	if (id === graphId || !rt.editor || !rt.area) return
+	await flushNow()
+	const doc = await fetchGraph(id)
+	const view = await fetchView(id).catch(() => undefined)
+	graphId = id
+	localStorage.setItem(KEY, id)
+	await rt.editor.clear()
+	await loadDoc(doc, view)
+}
+
 /** 结构变更（节点/连线/参数）→ PUT 结构文档 */
 export function scheduleSave() {
 	if (structTimer) return

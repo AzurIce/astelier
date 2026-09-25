@@ -262,11 +262,14 @@ impl AssetRef {
     }
 }
 
-/// 节点图分组（文件夹）。删除分组时其图回到未分组，不连带删除。
+/// 图目录（可嵌套；parent_id = None 为根）。删除目录时其图回到未分组。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct GraphGroup {
     pub id: String,
     pub name: String,
+    /// 父目录；None = 根级
+    #[serde(default)]
+    pub parent_id: Option<String>,
     #[serde(default)]
     pub created_at: u64,
 }

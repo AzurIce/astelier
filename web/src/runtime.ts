@@ -9,4 +9,6 @@ export const rt: {
 	area?: AreaPlugin<Schemes, AreaExtra>
 	providers: { id: string; name: string; models: string[] }[]
 	activeProvider?: string
+	/** 画布右键 → App 里的 ContextMenu（editor.ts 只管事件，不碰 UI 组件） */
+	onCanvasContextMenu?: (clientX: number, clientY: number) => void
 } = { providers: [] }

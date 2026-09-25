@@ -123,66 +123,49 @@ body {
 	stroke-width: 2.5px;
 }
 
-/* ---------- 右键菜单（rete-context-menu：scoped 默认是深蓝底白字条目，
-   这里连同 margin/width/border 全量重置为令牌化的简约样式） ---------- */
+/* ---------- 右键菜单（自研：搜索框自动聚焦、条目高亮、方向键导航） ---------- */
 
-#rete .rete-context-menu {
-	margin: 0;
-	width: auto;
-	min-width: 168px;
-	padding: 4px;
+.an-ctx {
+	position: fixed;
+	z-index: 100;
+	min-width: 184px;
+	padding: 6px;
 	background: var(--an-panel);
 	border: 1px solid var(--an-border);
 	border-radius: 10px;
 	box-shadow: var(--an-menu-shadow);
-	font-family: inherit;
 	font-size: 12px;
-	color: var(--an-text);
-	overflow: visible;
 }
-#rete .rete-context-menu .search {
+.an-ctx-search {
+	display: block;
+	width: 100%;
+	padding: 6px 8px;
+	margin-bottom: 4px;
 	background: var(--an-input);
 	border: 1px solid var(--an-border);
 	border-radius: 6px;
 	color: var(--an-text);
 	font: inherit;
-	padding: 5px 8px;
-	margin: 2px 2px 6px;
-	width: 100%;
 	outline: none;
 }
-#rete .rete-context-menu .search:focus {
+.an-ctx-search:focus {
 	border-color: var(--an-accent);
 }
-#rete .rete-context-menu .block {
+.an-ctx-search::placeholder {
+	color: var(--an-dim);
+}
+.an-ctx-item {
 	padding: 6px 10px;
-	border: none;
 	border-radius: 6px;
-	box-shadow: none;
 	color: var(--an-text);
 	cursor: pointer;
-	background: transparent;
-	width: auto;
-	position: static;
 }
-#rete .rete-context-menu .block:hover,
-#rete .rete-context-menu .block:hover:first-child,
-#rete .rete-context-menu .block:hover:last-child {
+.an-ctx-item.active {
 	background: var(--an-hover);
-	color: var(--an-text);
 }
-#rete .rete-context-menu .block:first-child {
-	border-radius: 6px 6px 0 0;
-}
-#rete .rete-context-menu .block:last-child {
-	border-radius: 0 0 6px 6px;
-}
-#rete .rete-context-menu .subitems {
-	background: var(--an-panel);
-	border: 1px solid var(--an-border);
-	border-radius: 10px;
-	box-shadow: var(--an-menu-shadow);
-	padding: 4px;
+.an-ctx-empty {
+	padding: 8px 10px;
+	color: var(--an-dim);
 }
 
 /* ---------- 节点卡片 ---------- */

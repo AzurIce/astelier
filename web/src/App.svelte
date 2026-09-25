@@ -1,18 +1,20 @@
 <script lang="ts">
 	import { onMount } from 'svelte'
+	import ContextMenu from './ContextMenu.svelte'
 	import { currentTheme, toggleTheme, type Theme } from './theme'
+	import { rt } from './runtime'
 
 	let ready = false
 	let running = false
 	let status = ''
 	let error: string | null = null
 	let theme: Theme = 'dark'
+	let ctxMenu: ContextMenu
 
 	onMount(async () => {
 		theme = currentTheme()
 		// svelte 插件仅客户端可用，动态导入编辑器模块
 		const { fetchConfig } = await import('./api')
-		const { rt } = await import('./runtime')
 		const { createEditor } = await import('./editor')
 		const { restoreGraph, scheduleSave } = await import('./persist')
 		const { seedGraph } = await import('./seed')
@@ -26,6 +28,7 @@
 		}
 
 		createEditor(document.getElementById('rete')!)
+		rt.onCanvasContextMenu = (cx, cy) => ctxMenu.openAt(cx, cy)
 		const restored = await restoreGraph()
 		if (!restored) await seedGraph()
 		scheduleSave()
@@ -70,6 +73,7 @@
 	<span class="hint">右键画布添加节点</span>
 </div>
 <div id="rete"></div>
+<ContextMenu bind:this={ctxMenu} />
 
 <style>
 	.topbar {

@@ -1,7 +1,6 @@
 import { NodeEditor } from 'rete'
 import { AreaPlugin, AreaExtensions } from 'rete-area-plugin'
 import { ConnectionPlugin, Presets as ConnectionPresets } from 'rete-connection-plugin'
-import { ContextMenuPlugin, Presets as ContextMenuPresets } from 'rete-context-menu-plugin'
 import { SveltePlugin, Presets } from 'rete-svelte-plugin/5'
 import ModelNodeComp from './nodes/components/ModelNode.svelte'
 import PromptNodeComp from './nodes/components/PromptNode.svelte'
@@ -9,13 +8,6 @@ import LoadImageNodeComp from './nodes/components/LoadImageNode.svelte'
 import GenerateNodeComp from './nodes/components/GenerateNode.svelte'
 import PreviewNodeComp from './nodes/components/PreviewNode.svelte'
 import EmptySocket from './nodes/components/EmptySocket.svelte'
-import {
-	GenerateNode,
-	LoadImageNode,
-	ModelNode,
-	PreviewNode,
-	PromptNode,
-} from './nodes/classes'
 import { type Schemes, type AreaExtra } from './nodes/types'
 import { connKeys } from './nodes/conn'
 import { rt } from './runtime'
@@ -51,29 +43,19 @@ export function createEditor(container: HTMLElement) {
 			},
 		}),
 	)
-	// 右键菜单的 render 信号由独立预设渲染，缺了它菜单永远不显示。
-	// 其信号类型不在 SvelteArea2D 内且未被包根导出，与 scope 方差问题
-	// 同理（见下）按运行时兼容处理
-	render.addPreset(Presets.contextMenu.setup() as never)
-
 	const connection = new ConnectionPlugin<Schemes, AreaExtra>()
 	connection.addPreset(ConnectionPresets.classic.setup())
-
-	const contextMenu = new ContextMenuPlugin<Schemes>({
-		items: ContextMenuPresets.classic.setup([
-			['Model', () => new ModelNode()],
-			['Prompt', () => new PromptNode()],
-			['Image', () => new LoadImageNode()],
-			['Generate', () => new GenerateNode()],
-			['Preview', () => new PreviewNode()],
-		]),
-	})
 
 	editor.use(area)
 	area.use(connection)
 	area.use(render)
-	// context-menu 2.0.6 的 Signals 类型与 area Extra 不协变（运行时兼容，官方示例同用法）
-	area.use(contextMenu as never)
+
+	// 右键：菜单 UI 由 App 挂的 ContextMenu 组件承担（自研，行为完整：
+	// 自动聚焦/过滤/方向键/回车），这里只负责拦截事件并转发坐标
+	container.addEventListener('contextmenu', (e) => {
+		e.preventDefault()
+		rt.onCanvasContextMenu?.(e.clientX, e.clientY)
+	})
 
 	AreaExtensions.selectableNodes(area, AreaExtensions.selector(), {
 		accumulating: { active: () => false },

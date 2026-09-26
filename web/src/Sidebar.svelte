@@ -390,10 +390,10 @@
 				value={row.name}
 				onpointerdown={(e) => e.stopPropagation()}
 				onkeydown={(e) => {
-					if (e.key === 'Enter') void commitRename(e.currentTarget.value)
+					if (e.key === 'Enter') void commitRename((e.target as HTMLInputElement).value)
 					else if (e.key === 'Escape') renaming = null
 				}}
-				onblur={(e) => void commitRename(e.currentTarget.value)}
+				onblur={(e) => void commitRename((e.target as HTMLInputElement).value)}
 			/>
 		{:else}
 			<span class="name">{row.name}</span>
@@ -450,10 +450,10 @@
 			onpointerdown={(e) => e.stopPropagation()}
 			onclick={(e) => e.stopPropagation()}
 			onkeydown={(e) => {
-				if (e.key === 'Enter') void commitCreate(e.currentTarget.value)
+				if (e.key === 'Enter') void commitCreate((e.target as HTMLInputElement).value)
 				else if (e.key === 'Escape') creating = null
 			}}
-			onblur={(e) => void commitCreate(e.currentTarget.value)}
+			onblur={(e) => void commitCreate((e.target as HTMLInputElement).value)}
 		/>
 	</div>
 {/snippet}

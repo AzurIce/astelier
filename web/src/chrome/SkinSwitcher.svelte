@@ -10,7 +10,7 @@
 	let anchor = $state({ x: 0, y: 0 })
 
 	function openFrom(e: MouseEvent) {
-		const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+		const r = (e.target as HTMLElement).getBoundingClientRect()
 		anchor = { x: r.right, y: r.bottom + 6 }
 		open = true
 	}

@@ -4,12 +4,10 @@
 	import IconButton from '../../components/IconButton.svelte'
 	import Icon from '../../components/Icon.svelte'
 	import type { AreaExtra } from '../types'
-	import { rt } from '../../runtime'
-	import { scheduleSave } from '../../graphStore'
 	import { uploadAsset } from '../../api'
 	import { toast } from '../../components/toast.svelte'
 	import { openLightbox } from '../../components/lightbox.svelte'
-	import { removeNodeCascade } from '../actions'
+	import { editNode, removeNodeCascade } from '../actions'
 	import type { LoadImageNode } from '../classes'
 
 	let { data, emit }: { data: LoadImageNode; emit: (p: AreaExtra) => void } = $props()
@@ -18,24 +16,21 @@
 	let over = $state(false)
 	let error: string | null = $state(null)
 
-	function touch() {
-		rt.area?.update('node', data.id)
-		scheduleSave()
-	}
-
 	async function pick(file: File | undefined | null) {
 		if (!file) return
 		busy = true
 		error = null
 		try {
-			data.assetUrl = await uploadAsset(file)
-			data.fileName = file.name
+			const url = await uploadAsset(file)
+			editNode<LoadImageNode>(data.id, (n) => {
+				n.assetUrl = url
+				n.fileName = file.name
+			})
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e)
 			toast({ kind: 'err', title: '图片上传失败', msg: error })
 		}
 		busy = false
-		touch()
 	}
 </script>
 
@@ -46,7 +41,7 @@
 	name="Image"
 	desc={busy ? '上传中…' : data.fileName || '参考图 / 垫图'}
 	selected={data.selected}
-	ondelete={() => removeNodeCascade(data.id)}
+	ondelete={() => void removeNodeCascade(data.id)}
 >
 	{#snippet body()}
 		<label
@@ -67,7 +62,7 @@
 				type="file"
 				accept="image/*"
 				onpointerdown={(e) => e.stopPropagation()}
-				onchange={(e) => void pick(e.currentTarget.files?.[0])}
+				onchange={(e) => void pick((e.target as HTMLInputElement).files?.[0])}
 			/>
 			{#if busy}
 				<Icon name="spinner" size={18} class="spin" />
@@ -98,11 +93,11 @@
 					icon="trash"
 					label="移除图片"
 					sm
-					onclick={() => {
-						data.assetUrl = null
-						data.fileName = ''
-						touch()
-					}}
+					onclick={() =>
+						editNode<LoadImageNode>(data.id, (n) => {
+							n.assetUrl = null
+							n.fileName = ''
+						})}
 				/>
 			</div>
 		{/if}

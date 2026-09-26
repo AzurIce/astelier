@@ -623,7 +623,9 @@ body {
 	font-family: var(--ui-font);
 }
 
-/* 点阵网格：挂在随平移/缩放变换的 content 层上 */
+/* 点阵网格：挂在随平移/缩放变换的 content 层上。
+   注意：该类所在的元素就是 rete 的内容层（节点/连线的容器），
+   绝不能加 pointer-events: none —— 那会关掉整个画布的交互 */
 .ui-grid {
 	position: absolute;
 	left: 0;
@@ -632,7 +634,6 @@ body {
 	height: 100000px;
 	background-image: var(--ui-grid-image);
 	background-size: var(--ui-grid-size);
-	pointer-events: none;
 }
 
 /* 空画布引导 */

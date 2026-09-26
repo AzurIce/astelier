@@ -3,12 +3,10 @@
 	import Port from './Port.svelte'
 	import Icon from '../../components/Icon.svelte'
 	import type { AreaExtra } from '../types'
-	import { rt } from '../../runtime'
-	import { scheduleSave } from '../../graphStore'
-	import { removeNodeCascade } from '../actions'
 	import { OPENAI_IMAGE_PARAMS } from '../../apiParams'
 	import { openLightbox } from '../../components/lightbox.svelte'
 	import type { ParamDef } from '../../profiles'
+	import { editNode, removeNodeCascade } from '../actions'
 	import type { GenerateNode } from '../classes'
 
 	let { data, emit }: { data: GenerateNode; emit: (p: AreaExtra) => void } = $props()
@@ -21,26 +19,22 @@
 		return v === undefined ? '' : String(v)
 	}
 	function setParam(p: ParamDef, raw: string) {
-		if (raw === '') {
-			delete data.params[p.key]
-		} else if (p.kind === 'number') {
-			const n = Number(raw)
-			if (isNaN(n)) return
-			data.params[p.key] = n
-		} else {
-			data.params[p.key] = raw
-		}
-		touch()
-	}
-	function touch() {
-		rt.area?.update('node', data.id)
-		scheduleSave()
+		editNode<GenerateNode>(data.id, (n) => {
+			if (raw === '') {
+				delete n.params[p.key]
+			} else if (p.kind === 'number') {
+				const v = Number(raw)
+				if (isNaN(v)) return
+				n.params[p.key] = v
+			} else {
+				n.params[p.key] = raw
+			}
+		})
 	}
 	function stop(e: PointerEvent) {
 		e.stopPropagation()
 	}
-	const sizePresets =
-		OPENAI_IMAGE_PARAMS.find((p) => p.key === 'size')?.options ?? []
+	const sizePresets = OPENAI_IMAGE_PARAMS.find((p) => p.key === 'size')?.options ?? []
 </script>
 
 <NodeFrame
@@ -51,7 +45,7 @@
 	desc={data.busy ? '生成中…' : 'OpenAI Images 协议'}
 	selected={data.selected}
 	busy={data.busy}
-	ondelete={() => removeNodeCascade(data.id)}
+	ondelete={() => void removeNodeCascade(data.id)}
 >
 	{#snippet inputs()}
 		<Port {data} {emit} side="input" port="model" label="model" tone="model" />
@@ -135,7 +129,7 @@
 						value={idx}
 						title={val(p) || '默认'}
 						onpointerdown={stop}
-						oninput={(e) => setParam(p, opts[Number(e.currentTarget.value)])}
+						oninput={(e) => setParam(p, opts[Number((e.target as HTMLInputElement).value)])}
 					/>
 				</div>
 			{:else if p.kind === 'select' && p.control === 'segmented'}
@@ -157,7 +151,7 @@
 					value={val(p)}
 					title={val(p) || '默认'}
 					onpointerdown={stop}
-					onchange={(e) => setParam(p, e.currentTarget.value)}
+					onchange={(e) => setParam(p, (e.target as HTMLSelectElement).value)}
 				>
 					<option value="">默认</option>
 					{#each p.options as o (o)}
@@ -173,7 +167,7 @@
 					title="常用尺寸可从下拉选择，也可直接输入如 1216x832（16 整除）"
 					value={val(p)}
 					onpointerdown={stop}
-					onchange={(e) => setParam(p, e.currentTarget.value.trim())}
+					onchange={(e) => setParam(p, (e.target as HTMLInputElement).value.trim())}
 				/>
 			{:else if p.kind === 'number'}
 				<div class="ui-stepper">
@@ -197,7 +191,7 @@
 						value={val(p)}
 						placeholder="默认"
 						onpointerdown={stop}
-						onchange={(e) => setParam(p, e.currentTarget.value)}
+						onchange={(e) => setParam(p, (e.target as HTMLInputElement).value)}
 					/>
 					<button
 						type="button"
@@ -219,7 +213,7 @@
 					value={val(p)}
 					placeholder="默认"
 					onpointerdown={stop}
-					onchange={(e) => setParam(p, e.currentTarget.value)}
+					onchange={(e) => setParam(p, (e.target as HTMLInputElement).value)}
 				/>
 			{/if}
 		</div>

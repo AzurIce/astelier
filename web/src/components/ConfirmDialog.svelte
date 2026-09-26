@@ -22,6 +22,7 @@
 	} = $props()
 
 	let okBtn: HTMLButtonElement | null = $state(null)
+	let overlay: HTMLDivElement | null = $state(null)
 
 	$effect(() => {
 		okBtn?.focus()
@@ -30,10 +31,11 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
+	bind:this={overlay}
 	class="ui-overlay"
 	role="presentation"
 	onclick={(e) => {
-		if (e.target === e.currentTarget) onclose?.(false)
+		if (e.target === overlay) onclose?.(false)
 	}}
 	onkeydown={(e) => {
 		if (e.key === 'Escape') onclose?.(false)

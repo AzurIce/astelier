@@ -1,24 +1,34 @@
 <script lang="ts">
 	import { rt, runningNodes } from '../runtime'
-	import { connKeys } from './conn'
-	import type { Schemes } from './types'
 
 	// 自绘连线（rete classic preset 的 connection 渲染替换件）。
+	// 注意：ConnectionWrapper 把连接的字段**平铺**成 props（{...data}），
+	// 所以这里直接收 id / source / target / sourceOutput / targetInput / isPseudo。
 	// 着色 = 源端口 socket 类型；悬停出现删除钮；Generate 运行中的出线流动。
-	let { data, start, end }: { data: Schemes['Connection'] & { isPseudo?: boolean }; start: { x: number; y: number }; end: { x: number; y: number } } = $props()
+	let {
+		id,
+		source,
+		sourceOutput,
+		isPseudo,
+		start,
+		end,
+	}: {
+		id: string
+		source: string
+		sourceOutput: string
+		isPseudo?: boolean
+		start: { x: number; y: number }
+		end: { x: number; y: number }
+	} = $props()
 
 	let hovered = $state(false)
 
-	// 源节点 id 与端口键 → socket 类型。
-	// 注意：拖拽中的伪连线（data 只有 isPseudo，没有 source/target）也要渲染。
-	const conn = $derived((data ?? {}) as unknown as Record<string, unknown>)
-	const isPseudo = $derived(Boolean(conn.isPseudo))
-	const k = $derived(connKeys(conn))
-	const srcId = $derived(k.source || null)
-	const sourceNode = $derived(srcId ? rt.editor?.getNode(srcId) : undefined)
-	const socket = $derived(sourceNode?.outputs[k.output]?.socket as { name?: string } | undefined)
+	const sourceNode = $derived(rt.editor?.getNode(source))
+	const socket = $derived(
+		sourceNode?.outputs[sourceOutput]?.socket as { name?: string } | undefined,
+	)
 	const type = $derived(socket?.name ?? null)
-	const flowing = $derived(Boolean(srcId && runningNodes.has(srcId)))
+	const flowing = $derived(!isPseudo && runningNodes.has(source))
 
 	// 三次贝塞尔：按连接方向自适应。
 	// 端口位于节点上/下边缘（行式布局）时走竖向 S；左右分布时走横向 S，
@@ -50,14 +60,14 @@
 		y: (start.y + 3 * curve.p1.y + 3 * curve.p2.y + end.y) / 8,
 	}))
 
-	async function remove() {
+	function remove() {
 		const editor = rt.editor
 		if (!editor) return
-		await editor.removeConnection(data.id)
+		void editor.removeConnection(id)
 	}
 </script>
 
-<svg class="ui-conn {type ? `t-${type}` : ''}" class:pseudo={isPseudo} class:flowing={!isPseudo && flowing}>
+<svg class="ui-conn {type ? `t-${type}` : ''}" class:pseudo={isPseudo} class:flowing>
 	<!-- 视觉线 -->
 	<path class="wire" {d} />
 	<!-- 命中区（悬停显示删除钮） -->
@@ -68,13 +78,23 @@
 		onpointerenter={() => (hovered = true)}
 		onpointerleave={() => (hovered = false)}
 	/>
-	{#if hovered && !isPseudo}
-		<!-- svelte-ignore a11y_click_events_have_key_events -->
-		<g class="del" role="button" tabindex="-1" aria-label="删除连线" onclick={remove}>
-			<circle cx={mid.x} cy={mid.y} r="8" />
-			<path d="M {mid.x - 3} {mid.y - 3} L {mid.x + 3} {mid.y + 3} M {mid.x + 3} {mid.y - 3} L {mid.x - 3} {mid.y + 3}" />
-		</g>
-	{/if}
+	<!-- 删除钮常驻 DOM（opacity 控制显隐），避免悬停切换时的卸载竞态 -->
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<g
+		class="del"
+		class:visible={hovered && !isPseudo}
+		role="button"
+		tabindex="-1"
+		aria-label="删除连线"
+		onpointerenter={() => (hovered = true)}
+		onpointerleave={() => (hovered = false)}
+		onclick={remove}
+	>
+		<circle cx={mid.x} cy={mid.y} r="8" />
+		<path
+			d="M {mid.x - 3} {mid.y - 3} L {mid.x + 3} {mid.y + 3} M {mid.x + 3} {mid.y - 3} L {mid.x - 3} {mid.y + 3}"
+		/>
+	</g>
 	<!-- 端点小圆：盖住 socket 边缘，视觉更实 -->
 	<circle class="port" cx={start.x} cy={start.y} r="2.6" />
 	<circle class="port" cx={end.x} cy={end.y} r="2.6" />
@@ -154,10 +174,16 @@
 		filter: drop-shadow(0 0 4px var(--ui-accent-fade));
 	}
 
-	/* 悬停删除钮 */
+	/* 悬停删除钮（常驻 DOM，class 控制显隐） */
 	.ui-conn .del {
 		cursor: pointer;
+		pointer-events: none;
+		opacity: 0;
+		transition: opacity var(--ui-fast);
+	}
+	.ui-conn .del.visible {
 		pointer-events: auto;
+		opacity: 1;
 	}
 	.ui-conn .del circle {
 		fill: var(--ui-panel);

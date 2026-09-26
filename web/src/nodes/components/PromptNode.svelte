@@ -3,19 +3,12 @@
 	import Port from './Port.svelte'
 	import IconButton from '../../components/IconButton.svelte'
 	import type { AreaExtra } from '../types'
-	import { rt } from '../../runtime'
-	import { scheduleSave } from '../../graphStore'
-	import { removeNodeCascade } from '../actions'
+	import { editNode, removeNodeCascade } from '../actions'
 	import type { PromptNode } from '../classes'
 
 	let { data, emit }: { data: PromptNode; emit: (p: AreaExtra) => void } = $props()
 
 	let count = $derived(data.text.length)
-
-	function touch() {
-		rt.area?.update('node', data.id)
-		scheduleSave()
-	}
 </script>
 
 <NodeFrame
@@ -25,7 +18,7 @@
 	name="Prompt"
 	desc="提示词输入"
 	selected={data.selected}
-	ondelete={() => removeNodeCascade(data.id)}
+	ondelete={() => void removeNodeCascade(data.id)}
 >
 	{#snippet body()}
 		<div class="prompt-wrap">
@@ -35,10 +28,10 @@
 				rows="4"
 				value={data.text}
 				onpointerdown={(e) => e.stopPropagation()}
-				oninput={(e) => {
-					data.text = e.currentTarget.value
-					touch()
-				}}
+				oninput={(e) =>
+					editNode<PromptNode>(data.id, (n) => {
+						n.text = (e.target as HTMLTextAreaElement).value
+					})}
 			></textarea>
 			<div class="prompt-foot">
 				<span class="count mono">{count}</span>
@@ -47,10 +40,10 @@
 						icon="x"
 						label="清空"
 						sm
-						onclick={() => {
-							data.text = ''
-							touch()
-						}}
+						onclick={() =>
+							editNode<PromptNode>(data.id, (n) => {
+								n.text = ''
+							})}
 					/>
 				{/if}
 			</div>

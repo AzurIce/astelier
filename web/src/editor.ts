@@ -2,6 +2,7 @@ import { NodeEditor } from 'rete'
 import { AreaPlugin, AreaExtensions } from 'rete-area-plugin'
 import { ConnectionPlugin, Presets as ConnectionPresets } from 'rete-connection-plugin'
 import { SveltePlugin, Presets } from 'rete-svelte-plugin/5'
+import { getDOMSocketPosition } from 'rete-render-utils'
 import ModelNodeComp from './nodes/components/ModelNode.svelte'
 import PromptNodeComp from './nodes/components/PromptNode.svelte'
 import LoadImageNodeComp from './nodes/components/LoadImageNode.svelte'
@@ -25,6 +26,12 @@ export function createEditor(container: HTMLElement) {
 	const render = new SveltePlugin<Schemes, AreaExtra>()
 	render.addPreset(
 		Presets.classic.setup({
+			// 默认 DOMSocketPosition 会把位置在 x 轴平移 ±12px（为老式大圆点
+			// 设计的），我们的 socket 骑在节点边框上、中心即视觉中心，
+			// 用恒等 offset 覆盖，否则连线从圆点外侧一截起笔
+			socketPositionWatcher: getDOMSocketPosition<Schemes, AreaExtra>({
+				offset: (p) => p,
+			}),
 			customize: {
 				node(context) {
 					switch (context.payload.label) {

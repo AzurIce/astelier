@@ -883,6 +883,8 @@ body {
 	gap: 2px;
 	flex: none;
 }
+/* 端口行：输入 = [圆点(骑左缘)] [标签]；输出 = [标签] [圆点(骑右缘)]。
+   两者都是圆点在外侧边框、文字在内侧，互为镜像 */
 .port-row {
 	display: flex;
 	align-items: center;
@@ -891,7 +893,8 @@ body {
 	white-space: nowrap;
 }
 .port-row.output {
-	flex-direction: row-reverse;
+	flex-direction: row;
+	justify-content: flex-end;
 }
 .port-row .port-label {
 	color: var(--ui-dim);

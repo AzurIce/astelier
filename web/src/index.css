@@ -862,55 +862,60 @@ body {
 	color: var(--ui-danger);
 }
 
-/* 节点体 */
+/* 节点主体三列：左端口 | 内容 | 右端口 */
+.ui-node .node-main {
+	display: flex;
+	align-items: stretch;
+	min-height: 0;
+}
 .ui-node .node-body {
+	flex: 1;
+	min-width: 0;
 	padding: var(--ui-body-pad);
 	display: flex;
 	flex-direction: column;
 	gap: var(--ui-gap);
 }
-
-/* 端口行 */
+.ui-node .ports {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	gap: 2px;
+	flex: none;
+}
 .port-row {
 	display: flex;
 	align-items: center;
-	gap: 8px;
-	height: 26px;
-	padding: 0 var(--ui-body-pad);
-}
-.port-row.out {
-	justify-content: flex-end;
-}
-.port-row .port-label {
-	display: inline-flex;
-	align-items: center;
-	gap: 5px;
-	color: var(--ui-dim);
-	font-size: 11px;
+	gap: 7px;
+	height: 22px;
 	white-space: nowrap;
 }
-.port-row .port-label i {
-	width: 6px;
-	height: 6px;
-	border-radius: 50%;
-	flex: none;
+.port-row.output {
+	flex-direction: row-reverse;
 }
-.port-row .socket-slot {
-	width: 14px;
-	height: 14px;
-	flex: none;
-	display: flex;
-	align-items: center;
-	justify-content: center;
+.port-row .port-label {
+	color: var(--ui-dim);
+	font-size: 11px;
+	line-height: 1;
 }
+/* 圆点骑在左右边框上（外边探出一半），内圈用卡片色收边 */
 .ui-socket {
-	width: 11px;
-	height: 11px;
+	width: 12px;
+	height: 12px;
+	flex: none;
 	border-radius: 50%;
 	background: var(--ui-dim);
 	border: 2px solid var(--ui-card);
 	box-shadow: 0 0 0 1px var(--ui-border-fade);
 	transition: box-shadow var(--ui-fast), transform var(--ui-fast);
+	position: relative;
+	z-index: 2;
+}
+.port-row.input .ui-socket {
+	margin-left: -6px;
+}
+.port-row.output .ui-socket {
+	margin-right: -6px;
 }
 .ui-socket:hover {
 	box-shadow: 0 0 0 3px var(--ui-accent-fade);

@@ -1,10 +1,12 @@
 <script lang="ts">
+	import { onMount } from 'svelte'
 	import { rt, runningNodes } from '../runtime'
+	import { selectConnection, subscribeConnection } from '../editor'
 
 	// 自绘连线（rete classic preset 的 connection 渲染替换件）。
 	// 注意：ConnectionWrapper 把连接的字段**平铺**成 props（{...data}），
-	// 所以这里直接收 id / source / target / sourceOutput / targetInput / isPseudo。
-	// 着色 = 源端口 socket 类型；悬停出现删除钮；Generate 运行中的出线流动。
+	// 所以这里直接收 id / source / sourceOutput / isPseudo。
+	// 单击选中（高亮），Delete/Backspace 删除选中的连线；悬停仅提亮，不加按钮。
 	let {
 		id,
 		source,
@@ -21,7 +23,10 @@
 		end: { x: number; y: number }
 	} = $props()
 
+	let selected = $state(false)
 	let hovered = $state(false)
+
+	onMount(() => subscribeConnection((selId) => (selected = selId === id)))
 
 	const sourceNode = $derived(rt.editor?.getNode(source))
 	const socket = $derived(
@@ -30,71 +35,42 @@
 	const type = $derived(socket?.name ?? null)
 	const flowing = $derived(!isPseudo && runningNodes.has(source))
 
-	// 三次贝塞尔：按连接方向自适应。
-	// 端口位于节点上/下边缘（行式布局）时走竖向 S；左右分布时走横向 S，
-	// 避免传统水平贝塞尔在上下连接时甩出大回环。
+	// 三次贝塞尔：端口固定在左右缘，统一用水平 S 曲线（n8n/Blender 做法）。
+	// 控制点只做水平偏移，垂直方向自然过渡，不甩环。
 	const curve = $derived.by(() => {
 		const sx = start.x
 		const sy = start.y
 		const ex = end.x
 		const ey = end.y
-		if (Math.abs(ex - sx) >= Math.abs(ey - sy)) {
-			const k = Math.max(48, Math.abs(ex - sx) * 0.55)
-			return {
-				d: `M ${sx} ${sy} C ${sx + k} ${sy}, ${ex - k} ${ey}, ${ex} ${ey}`,
-				p1: { x: sx + k, y: sy },
-				p2: { x: ex - k, y: ey },
-			}
-		}
-		const k = Math.max(48, Math.abs(ey - sy) * 0.55)
+		const k = Math.max(60, Math.abs(ex - sx) * 0.6)
 		return {
-			d: `M ${sx} ${sy} C ${sx} ${sy + k}, ${ex} ${ey - k}, ${ex} ${ey}`,
-			p1: { x: sx, y: sy + k },
-			p2: { x: ex, y: ey - k },
+			d: `M ${sx} ${sy} C ${sx + k} ${sy}, ${ex - k} ${ey}, ${ex} ${ey}`,
+			p1: { x: sx + k, y: sy },
+			p2: { x: ex - k, y: ey },
 		}
 	})
 	const d = $derived(curve.d)
-	// 删除钮落点：三次曲线参数中点 B(0.5)
-	const mid = $derived.by(() => ({
-		x: (start.x + 3 * curve.p1.x + 3 * curve.p2.x + end.x) / 8,
-		y: (start.y + 3 * curve.p1.y + 3 * curve.p2.y + end.y) / 8,
-	}))
-
-	function remove() {
-		const editor = rt.editor
-		if (!editor) return
-		void editor.removeConnection(id)
-	}
 </script>
 
-<svg class="ui-conn {type ? `t-${type}` : ''}" class:pseudo={isPseudo} class:flowing>
+<svg
+	class="ui-conn {type ? `t-${type}` : ''}"
+	class:pseudo={isPseudo}
+	class:selected
+	class:flowing
+	class:hovered
+>
 	<!-- 视觉线 -->
 	<path class="wire" {d} />
-	<!-- 命中区（悬停显示删除钮） -->
+	<!-- 命中区（悬停提亮 + 单击选中） -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<path
 		class="wire hit"
 		{d}
 		onpointerenter={() => (hovered = true)}
 		onpointerleave={() => (hovered = false)}
+		onclick={() => selectConnection(id)}
 	/>
-	<!-- 删除钮常驻 DOM（opacity 控制显隐），避免悬停切换时的卸载竞态 -->
-	<!-- svelte-ignore a11y_click_events_have_key_events -->
-	<g
-		class="del"
-		class:visible={hovered && !isPseudo}
-		role="button"
-		tabindex="-1"
-		aria-label="删除连线"
-		onpointerenter={() => (hovered = true)}
-		onpointerleave={() => (hovered = false)}
-		onclick={remove}
-	>
-		<circle cx={mid.x} cy={mid.y} r="8" />
-		<path
-			d="M {mid.x - 3} {mid.y - 3} L {mid.x + 3} {mid.y + 3} M {mid.x + 3} {mid.y - 3} L {mid.x - 3} {mid.y + 3}"
-		/>
-	</g>
 	<!-- 端点小圆：盖住 socket 边缘，视觉更实 -->
 	<circle class="port" cx={start.x} cy={start.y} r="2.6" />
 	<circle class="port" cx={end.x} cy={end.y} r="2.6" />
@@ -111,7 +87,6 @@
 		pointer-events: none;
 		z-index: 0;
 	}
-	/* 连线插在节点之下；命中区单独允许事件 */
 	.ui-conn path.wire {
 		fill: none;
 		stroke-width: 2;
@@ -129,6 +104,18 @@
 		fill: var(--ui-conn);
 		vector-effect: non-scaling-stroke;
 		transition: fill var(--ui-mid);
+	}
+	/* 悬停提亮 / 选中高亮 */
+	.ui-conn.hovered path.wire:not(.hit) {
+		stroke-width: 2.8;
+		filter: brightness(1.3);
+	}
+	.ui-conn.selected path.wire:not(.hit) {
+		stroke: var(--ui-accent) !important;
+		stroke-width: 3;
+	}
+	.ui-conn.selected circle.port {
+		fill: var(--ui-accent) !important;
 	}
 	/* 按端口类型着色 */
 	.ui-conn.t-model path.wire:not(.hit),
@@ -172,37 +159,5 @@
 		stroke-dasharray: 10 6;
 		animation: dash-flow 1s linear infinite;
 		filter: drop-shadow(0 0 4px var(--ui-accent-fade));
-	}
-
-	/* 悬停删除钮（常驻 DOM，class 控制显隐） */
-	.ui-conn .del {
-		cursor: pointer;
-		pointer-events: none;
-		opacity: 0;
-		transition: opacity var(--ui-fast);
-	}
-	.ui-conn .del.visible {
-		pointer-events: auto;
-		opacity: 1;
-	}
-	.ui-conn .del circle {
-		fill: var(--ui-panel);
-		stroke: var(--ui-danger);
-		stroke-width: 1.5;
-		vector-effect: non-scaling-stroke;
-		cursor: pointer;
-	}
-	.ui-conn .del path {
-		stroke: var(--ui-danger);
-		stroke-width: 1.6;
-		stroke-linecap: round;
-		vector-effect: non-scaling-stroke;
-		pointer-events: none;
-	}
-	.ui-conn .del:hover circle {
-		fill: var(--ui-danger);
-	}
-	.ui-conn .del:hover path {
-		stroke: #fff;
 	}
 </style>

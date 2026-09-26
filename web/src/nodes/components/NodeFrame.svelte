@@ -4,8 +4,9 @@
 	import type { Snippet } from 'svelte'
 	import type { NodeType } from '../classes'
 
-	// 节点外框：标题栏（类型图标 + 名称 + 描述 + 删除）+ 输入区 / 主体 / 输出区。
-	// 保持 data-node-id（右键选中依赖）与 .ui-node/.selected 结构不变。
+	// 节点外框：标题栏 + 左右端口列（输入左 / 输出右）+ 中列内容。
+	// 端口圆点骑在节点边框上（负半边），连线端点即圆点中心。
+	// 保持 data-node-id（右键选中依赖）与 .ui-node/.selected 结构。
 	let {
 		nodeId,
 		type,
@@ -52,19 +53,22 @@
 			</button>
 		</span>
 	</header>
-	{#if inputs}
-		<div class="node-ports in">
-			{@render inputs()}
-		</div>
-	{/if}
-	{#if body}
-		<div class="node-body">
-			{@render body()}
-		</div>
-	{/if}
-	{#if outputs}
-		<div class="node-ports out">
-			{@render outputs()}
-		</div>
-	{/if}
+
+	<div class="node-main">
+		{#if inputs}
+			<div class="ports left">
+				{@render inputs()}
+			</div>
+		{/if}
+		{#if body}
+			<div class="node-body">
+				{@render body()}
+			</div>
+		{/if}
+		{#if outputs}
+			<div class="ports right">
+				{@render outputs()}
+			</div>
+		{/if}
+	</div>
 </div>

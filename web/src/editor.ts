@@ -76,16 +76,17 @@ export function createEditor(container: HTMLElement) {
 	})
 
 	// 删除选中节点：Delete / Backspace（输入框聚焦时忽略）。
-	// removeNode 不会级联清理连线，须先删相邻连线
+	// removeNode 不会级联清理连线，须先删相邻连线。
+	// 有选中连线时优先删连线。
 	document.addEventListener('keydown', (e) => {
 		if (e.key === 'Delete' || e.key === 'Backspace') {
 			const tag = (document.activeElement as HTMLElement | null)?.tagName
 			if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
 			if ((e.target as HTMLElement | null)?.closest?.('input, textarea, select, [contenteditable]')) return
-			const selected = editor.getNodes().filter((n) => n.selected)
-			if (selected.length === 0) return
 			e.preventDefault()
 			void (async () => {
+				if (await removeSelectedConnection()) return
+				const selected = editor.getNodes().filter((n) => n.selected)
 				for (const node of selected) {
 					for (const conn of editor.getConnections()) {
 						const k = connKeys(conn as unknown as Record<string, unknown>)
@@ -140,15 +141,42 @@ export function createEditor(container: HTMLElement) {
 		}
 		return ctx
 	})
-	// 缩放百分比广播（视口控件订阅）
+	// 缩放百分比广播（视口控件订阅）+ 连线选中清理（点节点/空白处取消）
 	area.addPipe((ctx) => {
 		if (ctx.type === 'zoomed' || ctx.type === 'translated') notifyZoom(area.area.transform.k)
+		if (ctx.type === 'nodepicked' || ctx.type === 'pointerdown') selectConnection(null)
 		return ctx
 	})
 
 	rt.editor = editor
 	rt.area = area
 	return { editor, area }
+}
+
+/* ---------------- 连线选中（点击高亮 + Delete 删除） ---------------- */
+
+const connSubs = new Set<(id: string | null) => void>()
+let selectedConnection: string | null = null
+
+export function subscribeConnection(cb: (id: string | null) => void): () => void {
+	connSubs.add(cb)
+	cb(selectedConnection)
+	return () => connSubs.delete(cb)
+}
+
+export function selectConnection(id: string | null): void {
+	if (id === selectedConnection) return
+	selectedConnection = id
+	for (const cb of connSubs) cb(id)
+}
+
+/** 删除当前选中的连线；无选中返回 false */
+export async function removeSelectedConnection(): Promise<boolean> {
+	if (!selectedConnection || !rt.editor) return false
+	const id = selectedConnection
+	selectConnection(null)
+	await rt.editor.removeConnection(id)
+	return true
 }
 
 /* ---------------- 视口控制（按钮 / 适配 / 缩放百分比） ---------------- */

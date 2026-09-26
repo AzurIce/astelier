@@ -82,7 +82,9 @@
 		height: 9999px;
 		overflow: visible;
 		pointer-events: none;
-		z-index: 0;
+		/* 负层：走在所有节点下方。连线进入节点的部分被节点主体遮住，
+		   到边框即止，不会压过端口标签；网格背景仍在线之下 */
+		z-index: -1;
 	}
 	.ui-conn path.wire {
 		fill: none;

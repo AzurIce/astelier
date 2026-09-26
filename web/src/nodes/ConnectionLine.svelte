@@ -71,9 +71,6 @@
 		onpointerleave={() => (hovered = false)}
 		onclick={() => selectConnection(id)}
 	/>
-	<!-- 端点小圆：盖住 socket 边缘，视觉更实 -->
-	<circle class="port" cx={start.x} cy={start.y} r="2.6" />
-	<circle class="port" cx={end.x} cy={end.y} r="2.6" />
 </svg>
 
 <style>
@@ -100,11 +97,6 @@
 		pointer-events: stroke;
 		cursor: pointer;
 	}
-	.ui-conn circle.port {
-		fill: var(--ui-conn);
-		vector-effect: non-scaling-stroke;
-		transition: fill var(--ui-mid);
-	}
 	/* 悬停提亮 / 选中高亮 */
 	.ui-conn.hovered path.wire:not(.hit) {
 		stroke-width: 2.8;
@@ -114,30 +106,15 @@
 		stroke: var(--ui-accent) !important;
 		stroke-width: 3;
 	}
-	.ui-conn.selected circle.port {
-		fill: var(--ui-accent) !important;
-	}
 	/* 按端口类型着色 */
-	.ui-conn.t-model path.wire:not(.hit),
-	.ui-conn.t-model circle.port {
+	.ui-conn.t-model path.wire:not(.hit) {
 		stroke: var(--ui-sock-model);
 	}
-	.ui-conn.t-model circle.port {
-		fill: var(--ui-sock-model);
-	}
-	.ui-conn.t-text path.wire:not(.hit),
-	.ui-conn.t-text circle.port {
+	.ui-conn.t-text path.wire:not(.hit) {
 		stroke: var(--ui-sock-text);
 	}
-	.ui-conn.t-text circle.port {
-		fill: var(--ui-sock-text);
-	}
-	.ui-conn.t-image path.wire:not(.hit),
-	.ui-conn.t-image circle.port {
+	.ui-conn.t-image path.wire:not(.hit) {
 		stroke: var(--ui-sock-image);
-	}
-	.ui-conn.t-image circle.port {
-		fill: var(--ui-sock-image);
 	}
 	/* 默认色 */
 	.ui-conn:not(.t-model):not(.t-text):not(.t-image) path.wire:not(.hit) {

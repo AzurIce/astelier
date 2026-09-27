@@ -152,6 +152,10 @@ export function createEditor(container: HTMLElement) {
 	area.addPipe((ctx) => {
 		if (ctx.type === 'zoomed' || ctx.type === 'translated') notifyZoom(area.area.transform.k)
 		if (ctx.type === 'nodepicked' || ctx.type === 'pointerdown') selectConnection(null)
+		// 指针广播：伪连线的「指针端」由 ConnectionLine 自取实时指针
+		//（rete-svelte-plugin 的 ConnectionWrapper 对对象形式位置有 bug，
+		// 直接传 observedStart/End = {0,0}，导致拖拽时伪线终点钉死）
+		if (ctx.type === 'pointermove') notifyPointer(area.area.pointer)
 		return ctx
 	})
 
@@ -160,8 +164,21 @@ export function createEditor(container: HTMLElement) {
 	return { editor, area }
 }
 
-/* ---------------- 连线选中（点击高亮 + Delete 删除） ---------------- */
+/* ---------------- 指针广播（伪连线实时跟随） ---------------- */
 
+const pointerSubs = new Set<(p: { x: number; y: number }) => void>()
+
+/** 订阅画布指针（内容坐标）变化；伪连线拖拽时每帧回调 */
+export function subscribePointer(cb: (p: { x: number; y: number }) => void): () => void {
+	pointerSubs.add(cb)
+	return () => pointerSubs.delete(cb)
+}
+
+function notifyPointer(p: { x: number; y: number }) {
+	for (const cb of pointerSubs) cb(p)
+}
+
+/* ---------------- 连线选中（点击高亮 + Delete 删除） ---------------- */
 const connSubs = new Set<(id: string | null) => void>()
 let selectedConnection: string | null = null
 

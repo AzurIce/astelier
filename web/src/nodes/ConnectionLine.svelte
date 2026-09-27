@@ -1,12 +1,17 @@
 <script lang="ts">
 	import { onMount } from 'svelte'
 	import { rt, runningNodes } from '../runtime'
-	import { selectConnection, subscribeConnection } from '../editor'
+	import { selectConnection, subscribeConnection, subscribePointer } from '../editor'
 
 	// 自绘连线（rete classic preset 的 connection 渲染替换件）。
 	// 注意：ConnectionWrapper 把连接的字段**平铺**成 props（{...data}），
-	// 所以这里直接收 id / source / sourceOutput / isPseudo。
+	// 所以这里直接收 id / source / sourceOutput / targetInput / isPseudo。
 	// 单击选中（高亮），Delete/Backspace 删除选中的连线；悬停仅提亮，不加按钮。
+	//
+	// 伪连线（拖拽中）：插件 wrapper 对「对象形式的位置」（指针端）有 bug，
+	// 传的是 observedStart/End（永远 {0,0}），指针端钉死不动。这里自取订阅
+	// 的实时指针：输出起拖（source 非空）时 start=socket 端、end=指针端；
+	// 输入起拖反之。
 	let {
 		id,
 		source,
@@ -25,8 +30,16 @@
 
 	let selected = $state(false)
 	let hovered = $state(false)
+	let livePointer = $state<{ x: number; y: number } | null>(null)
 
-	onMount(() => subscribeConnection((selId) => (selected = selId === id)))
+	onMount(() => {
+		const unsub1 = subscribeConnection((selId) => (selected = selId === id))
+		const unsub2 = isPseudo ? subscribePointer((p) => (livePointer = p)) : null
+		return () => {
+			unsub1()
+			unsub2?.()
+		}
+	})
 
 	const sourceNode = $derived(rt.editor?.getNode(source))
 	const socket = $derived(
@@ -35,18 +48,28 @@
 	const type = $derived(socket?.name ?? null)
 	const flowing = $derived(!isPseudo && runningNodes.has(source))
 
+	// 伪连线取实时指针端；socket 端沿用 props（watcher 传来的真实位置）
+	const from = $derived.by(() => {
+		if (isPseudo && livePointer && source) return start
+		if (isPseudo && livePointer && !source) return livePointer
+		return start
+	})
+	const to = $derived.by(() => {
+		if (isPseudo && livePointer && source) return livePointer
+		if (isPseudo && livePointer && !source) return end
+		return end
+	})
+
 	// 三次贝塞尔：端口固定在左右缘，统一用水平 S 曲线（n8n/Blender 做法）。
 	// 控制点只做水平偏移，垂直方向自然过渡，不甩环。
 	const curve = $derived.by(() => {
-		const sx = start.x
-		const sy = start.y
-		const ex = end.x
-		const ey = end.y
+		const sx = from.x
+		const sy = from.y
+		const ex = to.x
+		const ey = to.y
 		const k = Math.max(60, Math.abs(ex - sx) * 0.6)
 		return {
 			d: `M ${sx} ${sy} C ${sx + k} ${sy}, ${ex - k} ${ey}, ${ex} ${ey}`,
-			p1: { x: sx + k, y: sy },
-			p2: { x: ex - k, y: ey },
 		}
 	})
 	const d = $derived(curve.d)
@@ -71,6 +94,7 @@
 		onpointerleave={() => (hovered = false)}
 		onclick={() => selectConnection(id)}
 	/>
+	<!-- 端点小圆：盖住 socket 边缘，视觉更实 -->
 </svg>
 
 <style>

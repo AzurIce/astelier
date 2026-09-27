@@ -909,9 +909,10 @@ body {
 	border-radius: 50%;
 	background: var(--ui-dim);
 	border: 2px solid var(--ui-card);
-	transition: box-shadow var(--ui-fast), transform var(--ui-fast);
+	transition: box-shadow var(--ui-fast), transform var(--ui-fast) var(--ui-ease);
 	position: relative;
 	z-index: 2;
+	cursor: crosshair;
 }
 .port-row.input .ui-socket {
 	margin-left: -6px;
@@ -920,7 +921,12 @@ body {
 	margin-right: -6px;
 }
 .ui-socket:hover {
-	box-shadow: 0 0 0 3px var(--ui-accent-fade);
+	box-shadow: 0 0 0 4px var(--ui-accent-fade);
+	transform: scale(1.25);
+}
+/* 端口行悬停：标签提亮，整行提示可交互 */
+.port-row:hover .port-label {
+	color: var(--ui-text);
 }
 .ui-socket.model {
 	background: var(--ui-sock-model);

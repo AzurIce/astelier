@@ -127,6 +127,81 @@ export function createEditor(container: HTMLElement) {
 		return ctx
 	})
 
+	/* ---------------- 「拖回原输出」恢复旧连线 ----------------
+	 * ClassicFlow 的 PickedExisting：从已连接输入拖开时，initial 被设为旧线
+	 * 的输出 socket 且旧线立即移除。若用户拖回该输出 socket 松手，
+	 * canMakeConnection(initial, 同一 socket) = false（自连拒绝），旧线又
+	 * 已不在 → 两端都接不上。这里记录被移除的旧线，pointerup 时若释放点
+	 * 正是该输出 socket，则恢复。拖到别处成功建线 / 拖空删除均不受影响。 */
+	let pendingRestore: {
+		source: string
+		sourceOutput: string
+		target: string
+		targetInput: string
+	} | null = null
+	let restoreTimer: ReturnType<typeof setTimeout> | null = null
+
+	editor.addPipe((ctx) => {
+		if (ctx.type === 'connectionremoved') {
+			const c = ctx.data as unknown as {
+				source: string
+				sourceOutput: string
+				target: string
+				targetInput: string
+			}
+			pendingRestore = {
+				source: c.source,
+				sourceOutput: c.sourceOutput,
+				target: c.target,
+				targetInput: c.targetInput,
+			}
+			if (restoreTimer) clearTimeout(restoreTimer)
+			restoreTimer = setTimeout(() => (pendingRestore = null), 900)
+		}
+		if (ctx.type === 'connectioncreated') pendingRestore = null
+		return ctx
+	})
+
+	window.addEventListener('pointerup', (e) => {
+		const r = pendingRestore
+		if (!r) return
+		pendingRestore = null
+		// 释放点是否落在旧线的输出 socket 上（少量容差）
+		const sock = rt.editor
+			?.getNode(r.source)
+			? document.querySelector(
+					`.ui-node[data-node-id="${r.source}"] .port-row.output .ui-socket`,
+				)
+			: null
+		if (!sock) return
+		const rect = sock.getBoundingClientRect()
+		const pad = 8
+		const inside =
+			e.clientX >= rect.left - pad &&
+			e.clientX <= rect.right + pad &&
+			e.clientY >= rect.top - pad &&
+			e.clientY <= rect.bottom + pad
+		if (!inside) return
+		// 旧线确实不在（没被别的路径重建）→ 恢复
+		const exists = editor
+			.getConnections()
+			.some(
+				(c) =>
+					c.source === r.source &&
+					c.sourceOutput === r.sourceOutput &&
+					c.target === r.target &&
+					c.targetInput === r.targetInput,
+			)
+		if (exists) return
+		void editor.addConnection({
+			id: `restore-${Date.now()}-${Math.round(performance.now())}`,
+			source: r.source,
+			sourceOutput: r.sourceOutput,
+			target: r.target,
+			targetInput: r.targetInput,
+		} as Parameters<typeof editor.addConnection>[0])
+	})
+
 	// 持久化：结构变化立即排队，位置变化节流；连线变化同时通知参数区刷新
 	const structural = new Set([
 		'nodecreated',

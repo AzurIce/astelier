@@ -30,7 +30,9 @@
 
 	let selected = $state(false)
 	let hovered = $state(false)
-	let livePointer = $state<{ x: number; y: number } | null>(null)
+	// 初值取 area 当前指针：按下即拖时（还没 pointermove）伪线也要画在
+	// 指针处，不能回退到 wrapper 的坏值 {0,0}
+	let livePointer = $state<{ x: number; y: number } | null>(rt.area?.area.pointer ?? null)
 
 	onMount(() => {
 		const unsub1 = subscribeConnection((selId) => (selected = selId === id))

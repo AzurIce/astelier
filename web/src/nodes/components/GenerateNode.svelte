@@ -6,12 +6,11 @@
 	import { OPENAI_IMAGE_PARAMS } from '../../apiParams'
 	import { openLightbox } from '../../components/lightbox.svelte'
 	import type { ParamDef } from '../../profiles'
-	import { editNode, removeNodeCascade } from '../actions'
+	import { editNode, removeNodeCascade, refreshNodeSockets, touchNode } from '../actions'
 	import { noNodeDrag } from '../noNodeDrag'
 	import type { GenerateNode } from '../classes'
 
 	let { data, emit }: { data: GenerateNode; emit: (p: AreaExtra) => void } = $props()
-
 	let mainParams = $derived(OPENAI_IMAGE_PARAMS.filter((p) => !p.advanced))
 	let advancedParams = $derived(OPENAI_IMAGE_PARAMS.filter((p) => p.advanced))
 
@@ -57,7 +56,10 @@
 		{/each}
 
 		{#if advancedParams.length}
-			<details class="ui-details">
+			<!-- 展开改变节点高度（CSS 驱动），rete 不发 resize 信号，
+			     socket 位置缓存会过期导致连线端点脱节；touchNode 重渲染 +
+			     refreshNodeSockets 主动重算 socket 位置 -->
+			<details class="ui-details" ontoggle={() => { touchNode(data.id); refreshNodeSockets(data.id) }}>
 				<summary><Icon name="chevronDown" size={12} />更多参数</summary>
 				<div class="details-body">
 					{#each advancedParams as p (p.key)}

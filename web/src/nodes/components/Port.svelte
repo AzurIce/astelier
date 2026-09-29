@@ -36,6 +36,8 @@
 	{#if side === 'input'}
 		<Ref
 			class="ui-socket {tone}"
+			data-port-key={port}
+			data-port-side="input"
 			init={(element: HTMLElement) =>
 				emit({
 					type: 'render',
@@ -55,6 +57,8 @@
 		<span class="port-label">{label}</span>
 		<Ref
 			class="ui-socket {tone}"
+			data-port-key={port}
+			data-port-side="output"
 			init={(element: HTMLElement) =>
 				emit({
 					type: 'render',

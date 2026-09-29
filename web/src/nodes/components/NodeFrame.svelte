@@ -31,8 +31,7 @@
 		inputs?: Snippet
 		body?: Snippet
 		outputs?: Snippet
-	} = $props()
-</script>
+	} = $props()</script>
 
 <div class="ui-node" class:selected class:busy data-node-id={nodeId} data-node-type={type}>
 	<header>

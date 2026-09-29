@@ -8,6 +8,7 @@
 	import { toast } from '../../components/toast.svelte'
 	import { openLightbox } from '../../components/lightbox.svelte'
 	import { editNode, removeNodeCascade } from '../actions'
+	import { noNodeDrag } from '../noNodeDrag'
 	import type { LoadImageNode } from '../classes'
 
 	let { data, emit }: { data: LoadImageNode; emit: (p: AreaExtra) => void } = $props()
@@ -61,7 +62,7 @@
 			<input
 				type="file"
 				accept="image/*"
-				onpointerdown={(e) => e.stopPropagation()}
+				use:noNodeDrag
 				onchange={(e) => void pick((e.target as HTMLInputElement).files?.[0])}
 			/>
 			{#if busy}
@@ -84,7 +85,7 @@
 					type="button"
 					class="img-btn"
 					title="点击查看大图"
-					onpointerdown={(e) => e.stopPropagation()}
+					use:noNodeDrag
 					onclick={() => data.assetUrl && openLightbox(data.assetUrl)}
 				>
 					<img class="ui-img thumbnail" src={data.assetUrl} alt={data.fileName} />

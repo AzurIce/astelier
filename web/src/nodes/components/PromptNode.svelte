@@ -4,6 +4,7 @@
 	import IconButton from '../../components/IconButton.svelte'
 	import type { AreaExtra } from '../types'
 	import { editNode, removeNodeCascade } from '../actions'
+	import { noNodeDrag } from '../noNodeDrag'
 	import type { PromptNode } from '../classes'
 
 	let { data, emit }: { data: PromptNode; emit: (p: AreaExtra) => void } = $props()
@@ -27,7 +28,7 @@
 				placeholder="描述你想生成的画面…"
 				rows="4"
 				value={data.text}
-				onpointerdown={(e) => e.stopPropagation()}
+				use:noNodeDrag
 				oninput={(e) =>
 					editNode<PromptNode>(data.id, (n) => {
 						n.text = (e.target as HTMLTextAreaElement).value

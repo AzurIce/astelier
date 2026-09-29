@@ -4,6 +4,7 @@
 	import type { AreaExtra } from '../types'
 	import { rt } from '../../runtime'
 	import { editNode, removeNodeCascade } from '../actions'
+	import { noNodeDrag } from '../noNodeDrag'
 	import type { ModelNode } from '../classes'
 
 	let { data, emit }: { data: ModelNode; emit: (p: AreaExtra) => void } = $props()
@@ -29,7 +30,7 @@
 				<select
 					class="ui-select"
 					value={data.provider}
-					onpointerdown={(e) => e.stopPropagation()}
+					use:noNodeDrag
 					onchange={(e) => {
 						const providerId = (e.target as HTMLSelectElement).value
 						editNode<ModelNode>(data.id, (n) => {
@@ -51,7 +52,7 @@
 				<select
 					class="ui-select"
 					value={data.modelId}
-					onpointerdown={(e) => e.stopPropagation()}
+					use:noNodeDrag
 					onchange={(e) =>
 						editNode<ModelNode>(data.id, (n) => {
 							n.modelId = (e.target as HTMLSelectElement).value

@@ -1023,10 +1023,12 @@ body {
 	font-size: 11px;
 }
 
-/* 离散滑块（质量等） */
+/* 离散滑块（质量等）+ 档位刻度 */
 .slider-wrap {
 	flex: 1;
 	min-width: 0;
+	position: relative;
+	padding-bottom: 12px;
 	display: flex;
 	flex-direction: column;
 	gap: 2px;
@@ -1082,6 +1084,50 @@ body {
 	border-radius: 50%;
 	background: var(--ui-accent);
 	box-shadow: 0 0 0 3px var(--ui-accent-weak);
+}
+
+/* 档位刻度：可点击跳档，当前档加高变强调色 */
+.slider-wrap .ticks {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: 10px;
+}
+.slider-wrap .tick {
+	-webkit-appearance: none;
+	appearance: none;
+	position: absolute;
+	top: 0;
+	width: 12px;
+	height: 10px;
+	margin-left: -6px;
+	padding: 0;
+	border: none;
+	background: transparent;
+	cursor: pointer;
+}
+.slider-wrap .tick::after {
+	content: '';
+	position: absolute;
+	left: 50%;
+	top: 0;
+	width: 2px;
+	height: 5px;
+	transform: translateX(-50%);
+	border-radius: 1px;
+	background: var(--ui-dim);
+	opacity: 0.45;
+	transition: height var(--ui-fast), opacity var(--ui-fast), background var(--ui-fast);
+}
+.slider-wrap .tick:hover::after {
+	opacity: 0.9;
+	height: 7px;
+}
+.slider-wrap .tick.active::after {
+	height: 8px;
+	background: var(--ui-accent);
+	opacity: 1;
 }
 
 /* 分段按钮组 */

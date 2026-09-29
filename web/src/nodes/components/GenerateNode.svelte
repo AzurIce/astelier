@@ -7,6 +7,7 @@
 	import { openLightbox } from '../../components/lightbox.svelte'
 	import type { ParamDef } from '../../profiles'
 	import { editNode, removeNodeCascade } from '../actions'
+	import { noNodeDrag } from '../noNodeDrag'
 	import type { GenerateNode } from '../classes'
 
 	let { data, emit }: { data: GenerateNode; emit: (p: AreaExtra) => void } = $props()
@@ -30,9 +31,6 @@
 				n.params[p.key] = raw
 			}
 		})
-	}
-	function stop(e: PointerEvent) {
-		e.stopPropagation()
 	}
 	const sizePresets = OPENAI_IMAGE_PARAMS.find((p) => p.key === 'size')?.options ?? []
 </script>
@@ -90,7 +88,7 @@
 				type="button"
 				class="img-btn"
 				title="点击查看大图"
-				onpointerdown={stop}
+				use:noNodeDrag
 				onclick={() => data.resultUrl && openLightbox(data.resultUrl)}
 			>
 				<img class="ui-img thumbnail result-img" src={data.resultUrl} alt="生成结果" />
@@ -128,9 +126,22 @@
 						step="1"
 						value={idx}
 						title={val(p) || '默认'}
-						onpointerdown={stop}
+						use:noNodeDrag
 						oninput={(e) => setParam(p, opts[Number((e.target as HTMLInputElement).value)])}
 					/>
+					<div class="ticks">
+						{#each opts as o, i (i)}
+							<button
+								type="button"
+								class="tick"
+								class:active={idx === i}
+								style:left="{(i / (opts.length - 1)) * 100}%"
+								title={o === '' ? '默认' : o}
+								use:noNodeDrag
+								onclick={() => setParam(p, o)}
+							></button>
+						{/each}
+					</div>
 				</div>
 			{:else if p.kind === 'select' && p.control === 'segmented'}
 				<div class="ui-seg">
@@ -138,7 +149,7 @@
 						<button
 							type="button"
 							class:active={val(p) === o}
-							onpointerdown={stop}
+							use:noNodeDrag
 							onclick={() => setParam(p, o)}
 						>
 							{o === '' ? '默认' : o}
@@ -150,7 +161,7 @@
 					class="ui-select"
 					value={val(p)}
 					title={val(p) || '默认'}
-					onpointerdown={stop}
+					use:noNodeDrag
 					onchange={(e) => setParam(p, (e.target as HTMLSelectElement).value)}
 				>
 					<option value="">默认</option>
@@ -166,7 +177,7 @@
 					placeholder="默认"
 					title="常用尺寸可从下拉选择，也可直接输入如 1216x832（16 整除）"
 					value={val(p)}
-					onpointerdown={stop}
+					use:noNodeDrag
 					onchange={(e) => setParam(p, (e.target as HTMLInputElement).value.trim())}
 				/>
 			{:else if p.kind === 'number'}
@@ -174,7 +185,7 @@
 					<button
 						type="button"
 						aria-label="减少"
-						onpointerdown={stop}
+						use:noNodeDrag
 						onclick={() => {
 							const cur = Number(val(p) || p.min || 0)
 							const step = Math.max(1, Math.floor(cur) - 1)
@@ -190,13 +201,13 @@
 						max={p.max ?? undefined}
 						value={val(p)}
 						placeholder="默认"
-						onpointerdown={stop}
+						use:noNodeDrag
 						onchange={(e) => setParam(p, (e.target as HTMLInputElement).value)}
 					/>
 					<button
 						type="button"
 						aria-label="增加"
-						onpointerdown={stop}
+						use:noNodeDrag
 						onclick={() => {
 							const cur = Number(val(p) || p.min || 0)
 							const step = Math.ceil(cur) + 1
@@ -212,7 +223,7 @@
 					type="text"
 					value={val(p)}
 					placeholder="默认"
-					onpointerdown={stop}
+					use:noNodeDrag
 					onchange={(e) => setParam(p, (e.target as HTMLInputElement).value)}
 				/>
 			{/if}

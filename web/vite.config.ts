@@ -8,6 +8,16 @@ const backend = process.env.ATELIER_BACKEND ?? 'http://127.0.0.1:8230'
 
 export default defineConfig({
 	plugins: [svelte()],
+	css: {
+		preprocessorOptions: {
+			scss: {
+				// 上游 rete-svelte-plugin 的 preset 组件（context-menu/classic 等）
+				// 仍用 @import 与 legacy color 函数，Dart Sass 3.0 前刷弃用警告，
+				// 静默之，保持 dev 输出干净（上游修复前不影响构建）
+				silenceDeprecations: ['import', 'global-builtin', 'color-functions'],
+			},
+		},
+	},
 	server: {
 		proxy: {
 			'/api': backend,

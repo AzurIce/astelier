@@ -105,6 +105,10 @@ pub struct ParamDef {
     /// 限定出现的模式；空 = gen + edit 都出现
     #[serde(default)]
     pub modes: Vec<Mode>,
+    /// 参数的协议默认值。UI 初值与「始终完整发送」的归一化都以它为准：
+    /// 缺失该键 = 按此值显式发送（None = 不强制，如 text 类可空参数）
+    #[serde(default)]
+    pub default_value: Option<ParamValue>,
 }
 
 impl ParamDef {
@@ -392,6 +396,22 @@ pub struct ResolvedRequest {
 }
 
 /// 请求级校验：模型已选、图片总数上限、参数取值（按 profile 元数据）。
+/// 把缺失的协议参数补齐为档案默认值（「始终完整发送」）。
+/// UI 侧同样会填默认，这里是兜底：老图、直接调 /api/runs、重放的路径
+/// 都保证发出的请求参数完整。text 类（default_value=None）不补。
+pub fn with_defaults(profile: &ModelProfile, params: &ParamMap) -> ParamMap {
+    let mut out = params.clone();
+    for def in &profile.params {
+        if out.contains_key(&def.key) {
+            continue;
+        }
+        if let Some(dv) = &def.default_value {
+            out.insert(def.key.clone(), dv.clone());
+        }
+    }
+    out
+}
+
 pub fn validate_request(
     profile: &ModelProfile,
     model_id: &str,
@@ -595,6 +615,36 @@ fn truncate_label(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn with_defaults_fills_all_protocol_params() {
+        let profile = crate::profiles::merged("gpt-image-2", None);
+        // 空参数 → 全部补齐为档案默认
+        let full = with_defaults(&profile, &ParamMap::new());
+        for def in &profile.params {
+            if def.default_value.is_some() {
+                assert!(full.contains_key(&def.key), "默认值未覆盖 {}", def.key);
+            }
+        }
+        // 具体默认值抽查
+        assert_eq!(full.get("quality"), Some(&ParamValue::Text("auto".into())));
+        assert_eq!(full.get("size"), Some(&ParamValue::Text("auto".into())));
+        assert_eq!(full.get("background"), Some(&ParamValue::Text("auto".into())));
+        assert_eq!(full.get("output_format"), Some(&ParamValue::Text("png".into())));
+        assert_eq!(full.get("input_fidelity"), Some(&ParamValue::Text("low".into())));
+        assert_eq!(full.get("n"), Some(&ParamValue::Number(1.0)));
+        assert_eq!(
+            full.get("output_compression"),
+            Some(&ParamValue::Number(100.0))
+        );
+        // user 已从面板与档案移除：不发送、也无默认
+        assert!(!profile.params.iter().any(|p| p.key == "user"));
+        assert!(!full.contains_key("user"));
+        // 显式值不被默认覆盖
+        let with_size = with_defaults(&profile, &full);
+        assert_eq!(with_size.get("quality"), full.get("quality"));
+        assert_eq!(with_size.get("size"), Some(&ParamValue::Text("auto".into())));
+    }
 
     fn asset(id: &str) -> AssetRef {
         AssetRef {

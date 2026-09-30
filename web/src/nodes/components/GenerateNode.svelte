@@ -16,12 +16,14 @@
 
 	function val(p: ParamDef): string {
 		const v = data.params[p.key]
-		return v === undefined ? '' : String(v)
+		// 始终完整发送：缺失键回落到协议默认（老图 / 未初始化 params）
+		return v === undefined ? String(p.def ?? '') : String(v)
 	}
 	function setParam(p: ParamDef, raw: string) {
 		editNode<GenerateNode>(data.id, (n) => {
 			if (raw === '') {
-				delete n.params[p.key]
+				// 可清空输入（size）：空 = 回默认值，不产生「不发送」
+				n.params[p.key] = typeof p.def === 'number' ? p.def : String(p.def ?? '')
 			} else if (p.kind === 'number') {
 				const v = Number(raw)
 				if (isNaN(v)) return
@@ -114,11 +116,11 @@
 		<span class="field-label" title={p.key}>{p.label}</span>
 		<div class="field-value">
 			{#if p.kind === 'select' && p.control === 'slider'}
-				{@const opts = ['', ...p.options]}
+				{@const opts = p.options}
 				{@const idx = Math.max(0, opts.indexOf(val(p)))}
 				<div class="slider-wrap">
 					<div class="top">
-						<span class="mono">{val(p) || '默认'}</span>
+						<span class="mono">{val(p)}</span>
 					</div>
 					<input
 						class="ui-range"
@@ -127,7 +129,7 @@
 						max={opts.length - 1}
 						step="1"
 						value={idx}
-						title={val(p) || '默认'}
+						title={val(p)}
 						use:noNodeDrag
 						oninput={(e) => setParam(p, opts[Number((e.target as HTMLInputElement).value)])}
 					/>
@@ -138,7 +140,7 @@
 								class="tick"
 								class:active={idx === i}
 								style:left="{(i / (opts.length - 1)) * 100}%"
-								title={o === '' ? '默认' : o}
+								title={o}
 								use:noNodeDrag
 								onclick={() => setParam(p, o)}
 							></button>
@@ -147,14 +149,14 @@
 				</div>
 			{:else if p.kind === 'select' && p.control === 'segmented'}
 				<div class="ui-seg">
-					{#each ['', ...p.options] as o (o)}
+					{#each p.options as o (o)}
 						<button
 							type="button"
 							class:active={val(p) === o}
 							use:noNodeDrag
 							onclick={() => setParam(p, o)}
 						>
-							{o === '' ? '默认' : o}
+							{o}
 						</button>
 					{/each}
 				</div>
@@ -162,11 +164,10 @@
 				<select
 					class="ui-select"
 					value={val(p)}
-					title={val(p) || '默认'}
+					title={val(p)}
 					use:noNodeDrag
 					onchange={(e) => setParam(p, (e.target as HTMLSelectElement).value)}
 				>
-					<option value="">默认</option>
 					{#each p.options as o (o)}
 						<option value={o}>{o}</option>
 					{/each}
@@ -176,7 +177,7 @@
 					class="ui-input mono"
 					type="text"
 					list="size-presets"
-					placeholder="默认"
+					placeholder={String(p.def ?? '')}
 					title="常用尺寸可从下拉选择，也可直接输入如 1216x832（16 整除）"
 					value={val(p)}
 					use:noNodeDrag
@@ -202,7 +203,7 @@
 						min={p.min ?? undefined}
 						max={p.max ?? undefined}
 						value={val(p)}
-						placeholder="默认"
+						placeholder={String(p.def ?? '')}
 						use:noNodeDrag
 						onchange={(e) => setParam(p, (e.target as HTMLInputElement).value)}
 					/>
@@ -224,7 +225,7 @@
 					class="ui-input"
 					type="text"
 					value={val(p)}
-					placeholder="默认"
+					placeholder={String(p.def ?? '')}
 					use:noNodeDrag
 					onchange={(e) => setParam(p, (e.target as HTMLInputElement).value)}
 				/>

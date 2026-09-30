@@ -6,7 +6,9 @@
 //! （视图辅助 badges 等：React 前端接回模型选择 UI 前暂无调用方）
 #![allow(dead_code)]
 
-use crate::model::{ApiKind, ModelProfile, ParamDef, ParamKind, RatioPreset, SizeRule};
+use crate::model::{
+    ApiKind, ModelProfile, ParamDef, ParamKind, ParamValue, RatioPreset, SizeRule,
+};
 
 fn param(key: &str, label: &str, kind: ParamKind) -> ParamDef {
     ParamDef {
@@ -20,6 +22,7 @@ fn param(key: &str, label: &str, kind: ParamKind) -> ParamDef {
         advanced: false,
         group: String::new(),
         modes: vec![],
+        default_value: None,
     }
 }
 
@@ -31,6 +34,16 @@ fn in_group(mut p: ParamDef, group: &str) -> ParamDef {
 
 fn with_options(mut p: ParamDef, options: &[&str]) -> ParamDef {
     p.options = options.iter().map(|s| s.to_string()).collect();
+    p
+}
+
+/// 默认值 = options 第一项（OpenAI Images 协议里各枚举的默认档）
+fn first_option(mut p: ParamDef) -> ParamDef {
+    if let Some(first) = p.options.first() {
+        if p.default_value.is_none() {
+            p.default_value = Some(ParamValue::Text(first.clone()));
+        }
+    }
     p
 }
 
@@ -46,70 +59,62 @@ fn advanced(mut p: ParamDef) -> ParamDef {
 }
 
 pub fn quality_def(opts: &[&str]) -> ParamDef {
-    with_options(param("quality", "画质", ParamKind::Select), opts)
+    // 默认 = options 第一项（协议默认档）
+    first_option(with_options(param("quality", "画质", ParamKind::Select), opts))
 }
 
 pub fn size_def(presets: &[&str], _custom_rule: Option<SizeRule>) -> ParamDef {
     // 自定义规则存放在 ModelProfile.size_rule，控件读取同一处
-    with_options(param("size", "尺寸", ParamKind::Size), presets)
+    first_option(with_options(param("size", "尺寸", ParamKind::Size), presets))
 }
 
 pub fn n_def(max: f64) -> ParamDef {
-    with_max(param("n", "数量", ParamKind::Number), max)
+    let mut p = with_max(param("n", "数量", ParamKind::Number), max);
+    p.default_value = Some(ParamValue::Number(1.0));
+    p
 }
 
 pub fn background_def() -> ParamDef {
-    with_options(
+    first_option(with_options(
         param("background", "背景", ParamKind::Select),
         &["auto", "transparent", "opaque"],
-    )
-}
-
-pub fn moderation_def() -> ParamDef {
-    advanced(in_group(
-        with_options(
-            param("moderation", "审核", ParamKind::Select),
-            &["auto", "low"],
-        ),
-        "safety",
     ))
 }
 
+pub fn moderation_def() -> ParamDef {
+    first_option(advanced(in_group(
+        with_options(param("moderation", "审核", ParamKind::Select), &["auto", "low"]),
+        "safety",
+    )))
+}
+
 pub fn output_format_def() -> ParamDef {
-    in_group(
+    first_option(in_group(
         with_options(
             param("output_format", "输出格式", ParamKind::Select),
             &["png", "jpeg", "webp"],
         ),
         "output",
-    )
+    ))
 }
 
 pub fn output_compression_def() -> ParamDef {
-    advanced(in_group(
-        with_max(
-            param("output_compression", "压缩率", ParamKind::Number),
-            100.0,
-        ),
+    let mut p = advanced(in_group(
+        with_max(param("output_compression", "压缩率", ParamKind::Number), 100.0),
         "output",
-    ))
-}
-
-pub fn user_def() -> ParamDef {
-    advanced(in_group(
-        param("user", "终端用户标识", ParamKind::Text),
-        "safety",
-    ))
+    ));
+    p.default_value = Some(ParamValue::Number(100.0));
+    p
 }
 
 pub fn input_fidelity_def() -> ParamDef {
-    in_group(
+    first_option(in_group(
         with_options(
             param("input_fidelity", "原图保真", ParamKind::Select),
             &["low", "high"],
         ),
         "safety",
-    )
+    ))
     .modes_edit_only()
 }
 
@@ -135,7 +140,6 @@ fn gpt_params(quality_opts: &[&str]) -> Vec<ParamDef> {
         output_format_def(),
         moderation_def(),
         output_compression_def(),
-        user_def(),
         input_fidelity_def(),
     ]
 }
@@ -216,7 +220,6 @@ pub fn builtin(model_id: &str) -> ModelProfile {
                 n_def(10.0),
                 background_def(),
                 output_format_def(),
-                user_def(),
             ],
         );
         p.api = ApiKind::Generic;

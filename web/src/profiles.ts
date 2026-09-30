@@ -12,6 +12,9 @@ export interface ParamDef {
 	max: number | null
 	advanced: boolean
 	group: string
+	/** 协议默认值（与后端 ParamDef.default_value 同源）：
+	 *  始终完整发送——控件初值与缺失键归一都以它为准 */
+	def: string | number | null
 }
 
 export interface ModelProfile {

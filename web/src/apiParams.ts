@@ -1,7 +1,8 @@
 // OpenAI Images 协议参数表（gpt-image 系）。
-// Generate 节点直接针对协议设计：无论接入什么模型（model 是开集合），
-// 参数面板恒定；模型不支持的值由服务端按档案校验报错或由网关裁决。
-// 高级参数默认折叠；「默认」（未设置）= 不随请求发送。
+// 与后端 src/profiles.rs 的档案同源（当前为镜像维护；权威默认值在后端
+// ParamDef.default_value，前端展示与「始终完整发送」init 以这里为准，
+// 后端 launch_run 也会按档案兜底补齐）。
+// UI 不再提供「默认」占位：每个参数始终有具体值，缺失键按 def 归一。
 import type { ParamDef } from './profiles'
 
 export const OPENAI_IMAGE_PARAMS: ParamDef[] = [
@@ -15,6 +16,7 @@ export const OPENAI_IMAGE_PARAMS: ParamDef[] = [
 		max: null,
 		advanced: false,
 		group: '',
+		def: 'auto',
 	},
 	{
 		key: 'size',
@@ -26,6 +28,7 @@ export const OPENAI_IMAGE_PARAMS: ParamDef[] = [
 		max: null,
 		advanced: false,
 		group: '',
+		def: 'auto',
 	},
 	{
 		key: 'n',
@@ -36,6 +39,7 @@ export const OPENAI_IMAGE_PARAMS: ParamDef[] = [
 		max: 10,
 		advanced: false,
 		group: '',
+		def: 1,
 	},
 	{
 		key: 'background',
@@ -47,6 +51,7 @@ export const OPENAI_IMAGE_PARAMS: ParamDef[] = [
 		max: null,
 		advanced: false,
 		group: '',
+		def: 'auto',
 	},
 	{
 		key: 'output_format',
@@ -58,6 +63,7 @@ export const OPENAI_IMAGE_PARAMS: ParamDef[] = [
 		max: null,
 		advanced: false,
 		group: 'output',
+		def: 'png',
 	},
 	{
 		key: 'input_fidelity',
@@ -68,6 +74,7 @@ export const OPENAI_IMAGE_PARAMS: ParamDef[] = [
 		max: null,
 		advanced: true,
 		group: 'edit',
+		def: 'low',
 	},
 	{
 		key: 'output_compression',
@@ -78,6 +85,7 @@ export const OPENAI_IMAGE_PARAMS: ParamDef[] = [
 		max: 100,
 		advanced: true,
 		group: 'output',
+		def: 100,
 	},
 	{
 		key: 'moderation',
@@ -88,15 +96,6 @@ export const OPENAI_IMAGE_PARAMS: ParamDef[] = [
 		max: null,
 		advanced: true,
 		group: 'safety',
-	},
-	{
-		key: 'user',
-		label: '用户标识',
-		kind: 'text',
-		options: [],
-		min: null,
-		max: null,
-		advanced: true,
-		group: 'safety',
+		def: 'auto',
 	},
 ]

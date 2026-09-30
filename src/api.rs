@@ -570,9 +570,11 @@ async fn launch_run(body: RunBody, rerun_of: Option<String>) -> ApiResult<Run> {
     let profile = crate::profiles::merged(&body.model_id, provider.overrides.get(&body.model_id));
 
     let mode = if body.images.is_empty() { Mode::Gen } else { Mode::Edit };
+    // 始终完整发送：缺失的协议参数按档案默认值补齐（老图 / 直连接口兜底）
+    let params = crate::model::with_defaults(&profile, &body.params);
     let resolved = ResolvedRequest {
         prompt: body.prompt,
-        params: body.params,
+        params,
         images: body.images,
         mask: body.mask,
         mode,

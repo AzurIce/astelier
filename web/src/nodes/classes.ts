@@ -1,4 +1,5 @@
 import { ClassicPreset } from 'rete'
+import { OPENAI_IMAGE_PARAMS } from '../apiParams'
 
 // 端口类型：socket 实例即类型（连线两端 socket 相同才兼容）
 export const sockets = {
@@ -121,6 +122,12 @@ export function applyParams(node: NodeTypes, params: Record<string, unknown>) {
 		for (const [k, v] of Object.entries(params)) {
 			if (v === '' || v == null) continue
 			node.params[k] = typeof v === 'number' ? v : String(v)
+		}
+		// 始终完整发送：缺失的协议参数按档案默认补齐（老图 / 直连接口兜底，
+		// 与后端 launch_run 的归一化同规则）
+		for (const p of OPENAI_IMAGE_PARAMS) {
+			if (p.key in node.params) continue
+			node.params[p.key] = typeof p.def === 'number' ? p.def : String(p.def ?? '')
 		}
 	}
 }

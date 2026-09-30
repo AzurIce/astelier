@@ -43,6 +43,52 @@
 
 	// 右键菜单（视口内翻转）
 	let menu: { x: number; y: number; target: Row | null } | null = $state(null)
+
+	/* ---------- 宽度可调（拖拽把手 + 持久化 + 双击复位 + 键盘） ---------- */
+	const DEFAULT_W = 244
+	const MIN_W = 180
+	const MAX_W = 480
+	const W_KEY = 'atelier-sidebar-w'
+
+	function loadWidth(): number {
+		const v = Number(localStorage.getItem(W_KEY))
+		return Number.isFinite(v) && v >= MIN_W && v <= MAX_W ? v : DEFAULT_W
+	}
+	let width = $state(loadWidth())
+	let resizing = $state(false)
+
+	function clampWidth(w: number): number {
+		return Math.min(MAX_W, Math.max(MIN_W, Math.round(w)))
+	}
+	function onResizerDown(e: PointerEvent) {
+		if (e.button !== 0) return
+		e.preventDefault()
+		resizing = true
+		const startX = e.clientX
+		const startW = width
+		const move = (ev: PointerEvent) => {
+			width = clampWidth(startW + (ev.clientX - startX))
+		}
+		const up = () => {
+			resizing = false
+			window.removeEventListener('pointermove', move)
+			window.removeEventListener('pointerup', up)
+			localStorage.setItem(W_KEY, String(width))
+		}
+		window.addEventListener('pointermove', move)
+		window.addEventListener('pointerup', up)
+	}
+	function onResizerKey(e: KeyboardEvent) {
+		if (e.key === 'ArrowLeft') {
+			e.preventDefault()
+			width = clampWidth(width - 16)
+			localStorage.setItem(W_KEY, String(width))
+		} else if (e.key === 'ArrowRight') {
+			e.preventDefault()
+			width = clampWidth(width + 16)
+			localStorage.setItem(W_KEY, String(width))
+		}
+	}
 	// 拖拽移动
 	let dragging: { kind: 'dir' | 'graph'; id: string } | null = $state(null)
 	let dropTarget: string | null = $state(null) // 'root' 或目录 id
@@ -302,7 +348,35 @@
 	onkeydown={(e) => e.key === 'Escape' && closeMenu()}
 />
 
-<aside class="sidebar" role="navigation" oncontextmenu={(e) => onContext(e, null)}>
+<aside
+	class="sidebar"
+	class:resizing
+	style:width="{width}px"
+	role="navigation"
+	oncontextmenu={(e) => onContext(e, null)}
+>
+	<!-- 宽度把手：拖动 / 双击复位 / ←→ 微调。
+	     ARIA window splitter 模式：role=separator + tabindex=0 可聚焦键盘操作 -->
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+	<!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+	<div
+		class="side-resizer"
+		class:active={resizing}
+		role="separator"
+		aria-orientation="vertical"
+		aria-valuenow={width}
+		aria-valuemin={MIN_W}
+		aria-valuemax={MAX_W}
+		tabindex="0"
+		title="拖动调整侧栏宽度 · 双击复位 · ←→ 微调"
+		onpointerdown={onResizerDown}
+		ondblclick={() => {
+			width = DEFAULT_W
+			localStorage.setItem(W_KEY, String(DEFAULT_W))
+		}}
+		onkeydown={onResizerKey}
+	></div>
 	<div class="side-head">
 		<span class="label">图库</span>
 		<IconButton

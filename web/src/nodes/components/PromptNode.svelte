@@ -5,6 +5,7 @@
 	import type { AreaExtra } from '../types'
 	import { editNode, removeNodeCascade } from '../actions'
 	import { noNodeDrag } from '../noNodeDrag'
+	import { noCanvasWheel } from '../../noCanvasWheel'
 	import type { PromptNode } from '../classes'
 
 	let { data, emit }: { data: PromptNode; emit: (p: AreaExtra) => void } = $props()
@@ -29,6 +30,7 @@
 				rows="4"
 				value={data.text}
 				use:noNodeDrag
+				use:noCanvasWheel
 				oninput={(e) =>
 					editNode<PromptNode>(data.id, (n) => {
 						n.text = (e.target as HTMLTextAreaElement).value

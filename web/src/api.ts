@@ -82,7 +82,7 @@ export async function renameGraph(id: string, title: string): Promise<{ id: stri
 	const res = await fetch(`/api/graphs/${encodeURIComponent(id)}/title`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ title }),
+		body: JSON.stringify({ name: title }),
 	})
 	const body = await res.json().catch(() => null)
 	if (!res.ok) throw new Error(body?.error ?? `重命名失败（${res.status}）`)

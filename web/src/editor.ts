@@ -13,6 +13,7 @@ import EmptySocket from './nodes/components/EmptySocket.svelte'
 import { type Schemes, type AreaExtra } from './nodes/types'
 import { connKeys } from './nodes/conn'
 import { rt } from './runtime'
+import { refreshNodeSockets } from './nodes/actions'
 import { scheduleSave, scheduleViewSave } from './graphStore'
 
 export function createEditor(container: HTMLElement) {
@@ -60,9 +61,46 @@ export function createEditor(container: HTMLElement) {
 	const connection = new ConnectionPlugin<Schemes, AreaExtra>()
 	connection.addPreset(ConnectionPresets.classic.setup())
 
+	/* ---------------- 节点尺寸变化 → socket 位置刷新 ----------------
+	 * 上传图片、展开面板、busy 骨架屏等 CSS 驱动的高度变化不会触发 rete
+	 * 的 resize 信号，socket 位置缓存过期后连线端点钉死在旧位置（刷新
+	 * 才好）。挂 ResizeObserver 到每个节点容器做通用兜底，rAF 合帧。 */
+	const refreshPending = new Set<string>()
+	let refreshRaf = 0
+	function scheduleSocketRefresh(nodeId: string) {
+		refreshPending.add(nodeId)
+		if (refreshRaf) return
+		refreshRaf = requestAnimationFrame(() => {
+			refreshRaf = 0
+			for (const id of refreshPending) refreshNodeSockets(id)
+			refreshPending.clear()
+		})
+	}
+	const resizeObserver =
+		typeof ResizeObserver !== 'undefined'
+			? new ResizeObserver((entries) => {
+					for (const entry of entries) {
+						const nodeEl = (entry.target as HTMLElement).querySelector<HTMLElement>(
+							'.ui-node[data-node-id]',
+						)
+						if (nodeEl?.dataset.nodeId) scheduleSocketRefresh(nodeEl.dataset.nodeId)
+					}
+				})
+			: null
+
 	editor.use(area)
 	area.use(connection)
 	area.use(render)
+
+	// 必须晚于 use(area) 注册：area 的 nodecreated pipe 先跑、view 先建，
+	// 这里才能 observe 到容器元素
+	editor.addPipe((ctx) => {
+		if (ctx.type === 'nodecreated' && resizeObserver) {
+			const view = area.nodeViews.get((ctx.data as { id: string }).id)
+			if (view) resizeObserver.observe(view.element)
+		}
+		return ctx
+	})
 
 	// 右键：空白处打开添加菜单；节点上则选中该节点（配合 Delete/Backspace 删除）
 	const selector = AreaExtensions.selector()

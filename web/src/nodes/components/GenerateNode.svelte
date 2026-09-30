@@ -6,7 +6,7 @@
 	import { OPENAI_IMAGE_PARAMS } from '../../apiParams'
 	import { openLightbox } from '../../components/lightbox.svelte'
 	import type { ParamDef } from '../../profiles'
-	import { editNode, removeNodeCascade, refreshNodeSockets, touchNode } from '../actions'
+	import { editNode, removeNodeCascade } from '../actions'
 	import { noNodeDrag } from '../noNodeDrag'
 	import type { GenerateNode } from '../classes'
 
@@ -58,10 +58,9 @@
 		{/each}
 
 		{#if advancedParams.length}
-			<!-- 展开改变节点高度（CSS 驱动），rete 不发 resize 信号，
-			     socket 位置缓存会过期导致连线端点脱节；touchNode 重渲染 +
-			     refreshNodeSockets 主动重算 socket 位置 -->
-			<details class="ui-details" ontoggle={() => { touchNode(data.id); refreshNodeSockets(data.id) }}>
+			<!-- 展开改变节点高度：rete 不发 resize 信号，socket 位置由
+			     editor.ts 的 ResizeObserver 兜底重算（下一帧合帧） -->
+			<details class="ui-details">
 				<summary><Icon name="chevronDown" size={12} />更多参数</summary>
 				<div class="details-body">
 					{#each advancedParams as p (p.key)}

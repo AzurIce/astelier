@@ -62,14 +62,16 @@
 		return end
 	})
 
-	// 三次贝塞尔：端口固定在左右缘，统一用水平 S 曲线（n8n/Blender 做法）。
-	// 控制点只做水平偏移，垂直方向自然过渡，不甩环。
+	// 三次贝塞尔：端口固定在左右缘，水平 S 曲线。
+	// 控制点偏移取 min(|dx|,|dy|) 的一半：dx 主导时是横 S；dy 主导
+	// （节点高低错落、水平距离近）时偏移自动收小，曲线转竖 S / 斜插，
+	// 不再有「先横拐 60px 再纵向拉升」的折角竖弯。
 	const curve = $derived.by(() => {
 		const sx = from.x
 		const sy = from.y
 		const ex = to.x
 		const ey = to.y
-		const k = Math.max(60, Math.abs(ex - sx) * 0.6)
+		const k = Math.max(20, Math.min(Math.abs(ex - sx) * 0.5, Math.abs(ey - sy) * 0.5))
 		return {
 			d: `M ${sx} ${sy} C ${sx + k} ${sy}, ${ex - k} ${ey}, ${ex} ${ey}`,
 		}

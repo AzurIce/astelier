@@ -78,6 +78,9 @@
 		try {
 			const doc = await ensureGraphAndLoad()
 			title = doc?.title ?? '未命名图'
+			// 侧栏的 onMount 早于此处（子组件先挂载），当时图还没载入、
+			// activeId 读为空；载入后刷新一次才能高亮当前图
+			await sidebar?.refreshAndKeepActive()
 		} catch (e) {
 			toast({ kind: 'err', title: '载入画布失败', msg: e instanceof Error ? e.message : String(e) })
 		}

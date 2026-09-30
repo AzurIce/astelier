@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte'
+	import { autoFocusSelect } from './autoFocusSelect'
 	import Icon from './components/Icon.svelte'
 	import IconButton from './components/IconButton.svelte'
 	import { confirmDialog } from './components/confirm.svelte'
@@ -34,9 +35,11 @@
 	let expanded: Record<string, boolean> = $state({})
 	let loadError: string | null = $state(null)
 
-	// 内联新建 / 重命名
+	// 内联新建 / 重命名（draft = 输入框当前值，供 window pointerdown 提交）
 	let creating: { kind: 'dir' | 'graph'; parentId: string | null } | null = $state(null)
 	let renaming: { kind: 'dir' | 'graph'; id: string } | null = $state(null)
+	let renameDraft = $state('')
+	let createDraft = $state('')
 
 	// 右键菜单（视口内翻转）
 	let menu: { x: number; y: number; target: Row | null } | null = $state(null)
@@ -110,6 +113,7 @@
 		expanded = { ...expanded, [parentId ?? 'root']: true }
 		creating = { kind, parentId }
 		renaming = null
+		createDraft = ''
 	}
 
 	async function commitCreate(name: string) {
@@ -133,8 +137,10 @@
 	}
 
 	function startRename(row: Row) {
+		console.log('[startRename]', row.id)
 		creating = null
 		renaming = { kind: row.kind, id: row.id }
+		renameDraft = row.name
 	}
 
 	async function commitRename(name: string) {
@@ -202,32 +208,62 @@
 		await refresh()
 	}
 
-	// ---------- 拖拽移动 ----------
+	// ---------- 拖拽移动（pointer 事件） ----------
+	// 5px 阈值区分「点击」（打开图 / 选中目录）与「拖动」；拖动目标由
+	// elementFromPoint 命中 .tree-row 决定：目录行 → 移入该目录；侧栏
+	// 空白（含画布方向外）→ 根目录；图行 / 拖出侧栏无效目标 → 松手取消。
 
-	function onDragstart(e: DragEvent, row: Row) {
-		dragging = { kind: row.kind, id: row.id }
-		e.dataTransfer?.setData('text/plain', row.id)
+	let pressStart: { x: number; y: number; row: Row } | null = null
+	let dragMoved = false
+
+	function onRowPointerDown(e: PointerEvent, row: Row) {
+		if (e.button !== 0) return
+		if ((e.target as HTMLElement | null)?.closest?.('button, input, textarea')) return
+		pressStart = { x: e.clientX, y: e.clientY, row }
+		dragMoved = false
 	}
-	function onDragover(e: DragEvent, dirId: string | null) {
-		if (!dragging) return
-		if (dragging.id === dirId) return
-		e.preventDefault()
-		dropTarget = dirId
+
+	function onWinPointerMove(e: PointerEvent) {
+		if (!pressStart) return
+		const dx = e.clientX - pressStart.x
+		const dy = e.clientY - pressStart.y
+		if (!dragMoved) {
+			if (Math.hypot(dx, dy) < 5) return
+			dragMoved = true
+			dragging = { kind: pressStart.row.kind, id: pressStart.row.id }
+		}
+		const el = document.elementFromPoint(e.clientX, e.clientY)
+		const rowEl = el?.closest<HTMLElement>('.tree-row')
+		const inSidebar = Boolean(rowEl?.closest('.sidebar'))
+		if (rowEl?.dataset.rowKind === 'dir' && rowEl.dataset.rowId !== dragging?.id) {
+			dropTarget = rowEl.dataset.rowId!
+		} else if (inSidebar) {
+			dropTarget = 'root'
+		} else {
+			dropTarget = null // 无效目标：松手取消
+		}
 	}
-	async function onDrop(e: DragEvent, parentId: string | null) {
-		e.preventDefault()
+
+	function onWinPointerUp() {
 		const d = dragging
+		const target = dropTarget
+		pressStart = null
+		dragMoved = false
 		dragging = null
 		dropTarget = null
 		if (!d) return
-		try {
-			if (d.kind === 'graph') await setGraphGroup(d.id, parentId)
-			else await moveGroup(d.id, parentId)
-			await refresh()
-		} catch (e2) {
-			toast({ kind: 'err', title: '移动失败', msg: String(e2) })
-		}
+		if (target === null) return // 取消
+		void (async () => {
+			try {
+				if (d.kind === 'graph') await setGraphGroup(d.id, target === 'root' ? null : target)
+				else await moveGroup(d.id, target === 'root' ? null : target)
+				await refresh()
+			} catch (e2) {
+				toast({ kind: 'err', title: '移动失败', msg: String(e2) })
+			}
+		})()
 	}
+
 
 	// ---------- 右键菜单 ----------
 
@@ -242,6 +278,14 @@
 	function closeMenu() {
 		menu = null
 	}
+	/** 点击输入框之外的任何地方：提交重命名 / 新建（blur 路径不可靠） */
+	function onWinPointerDown(e: PointerEvent) {
+		console.log('[win-pd] renaming=', !!renaming, 'creating=', !!creating, 'target=', (e.target as HTMLElement)?.tagName)
+		closeMenu()
+		const inInput = (e.target as HTMLElement | null)?.closest?.('.rename')
+		if (renaming && !inInput) void commitRename(renameDraft)
+		else if (creating && !inInput) void commitCreate(createDraft)
+	}
 	async function menuAct(fn: () => void, row: Row | null) {
 		closeMenu()
 		if (row?.kind === 'dir') expanded = { ...expanded, [row.id]: true }
@@ -249,7 +293,14 @@
 	}
 </script>
 
-<svelte:window onpointerdown={closeMenu} onkeydown={(e) => e.key === 'Escape' && closeMenu()} />
+<!-- capture 阶段：画布的拖拽层会 stopPropagation 拦掉冒泡的 pointerdown，
+     捕获阶段在 window 最先执行，任何地方点击都能收到 -->
+<svelte:window
+	onpointerdowncapture={onWinPointerDown}
+	onpointermove={onWinPointerMove}
+	onpointerup={onWinPointerUp}
+	onkeydown={(e) => e.key === 'Escape' && closeMenu()}
+/>
 
 <aside class="sidebar" role="navigation" oncontextmenu={(e) => onContext(e, null)}>
 	<div class="side-head">
@@ -272,13 +323,7 @@
 		<div class="side-err">{loadError}</div>
 	{/if}
 
-	<div
-		class="tree"
-		role="tree"
-		tabindex="-1"
-		ondragover={(e) => onDragover(e, 'root')}
-		ondrop={(e) => onDrop(e, null)}
-	>
+	<div class="tree" role="tree" tabindex="-1">
 		{#each tree as row (row.kind + row.id)}
 			{@render RowEl(row, 0)}
 		{/each}
@@ -289,6 +334,21 @@
 			<div class="side-empty">还没有图。<br />点上方 + 或右键新建。</div>
 		{/if}
 	</div>
+
+	{#if dragging}
+		{#if dropTarget === null}
+			<div class="drop-hint muted">松手取消移动</div>
+		{:else}
+			{@const targetName =
+				dropTarget === 'root'
+					? '根目录'
+					: (dirs.find((d) => d.id === dropTarget)?.name ?? '…')}
+			<div class="drop-hint">
+				<Icon name="folder" size={13} />
+				<span>松手移动到「{targetName}」</span>
+			</div>
+		{/if}
+	{/if}
 
 	{#if menu}
 		<div
@@ -336,23 +396,16 @@
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div
 		class="tree-row"
+		data-row-id={row.id}
+		data-row-kind={row.kind}
 		aria-selected={row.kind === 'graph' && row.id === activeId}
 		class:active={row.kind === 'graph' && row.id === activeId}
 		class:droppable={dropTarget === row.id && row.kind === 'dir'}
+		class:dragging={dragging?.id === row.id}
 		style:padding-left="{8 + depth * 14}px"
 		role="treeitem"
 		tabindex="-1"
-		draggable="true"
-		ondragstart={(e) => onDragstart(e, row)}
-		ondragover={(e) => {
-			if (row.kind === 'dir') onDragover(e, row.id)
-		}}
-		ondragleave={() => {
-			if (row.kind === 'dir' && dropTarget === row.id) dropTarget = null
-		}}
-		ondrop={(e) => {
-			if (row.kind === 'dir') onDrop(e, row.id)
-		}}
+		onpointerdown={(e) => onRowPointerDown(e, row)}
 		oncontextmenu={(e) => onContext(e, row)}
 		onclick={() => {
 			// 重命名输入框的点击会冒泡到行上，此时不做行展开/打开
@@ -388,7 +441,9 @@
 			<input
 				class="rename"
 				value={row.name}
+				use:autoFocusSelect
 				onpointerdown={(e) => e.stopPropagation()}
+				oninput={(e) => (renameDraft = (e.target as HTMLInputElement).value)}
 				onkeydown={(e) => {
 					if (e.key === 'Enter') void commitRename((e.target as HTMLInputElement).value)
 					else if (e.key === 'Escape') renaming = null
@@ -442,13 +497,13 @@
 		<span class="tree-icon">
 			<Icon name={creating?.kind === 'dir' ? 'folder' : 'graph'} size={14} />
 		</span>
-		<!-- svelte-ignore a11y_autofocus -->
 		<input
 			class="rename"
 			placeholder={creating?.kind === 'dir' ? '文件夹名…' : '图名…'}
-			autofocus
+			use:autoFocusSelect
 			onpointerdown={(e) => e.stopPropagation()}
 			onclick={(e) => e.stopPropagation()}
+			oninput={(e) => (createDraft = (e.target as HTMLInputElement).value)}
 			onkeydown={(e) => {
 				if (e.key === 'Enter') void commitCreate((e.target as HTMLInputElement).value)
 				else if (e.key === 'Escape') creating = null

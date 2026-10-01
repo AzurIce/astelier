@@ -48,24 +48,32 @@
 		if (data.store && data.store !== activeStore) activeStore = data.store
 	})
 
-	async function refresh() {
+	let lastSnapshot = ''
+
+	async function refresh(force = false) {
 		const gid = activeGraphId()
 		if (!gid) return
-		loading = true
+		// 只有首次/强制才显示 loading——轮询静默，避免「加载中」闪烁
+		if (stores.length === 0 || force) loading = true
 		loadError = null
 		try {
-			stores = await fetchStores(gid)
+			const next = await fetchStores(gid)
+			// 内容没变就不替换 state：轮询不应触发重渲染（否则节点「时不时会闪」）
+			const snapshot = JSON.stringify(next)
+			const changed = snapshot !== lastSnapshot
+			if (changed || force) {
+				lastSnapshot = snapshot
+				stores = next
+			}
 			// 仅在从未绑定过时兜底选第一个（建库时的显式绑定不被覆盖）
-			if (!activeStore && !data.store && stores.length > 0) {
-				activeStore = stores[0].name
+			if (!activeStore && !data.store && next.length > 0) {
+				activeStore = next[0].name
 				data.store = activeStore
 			}
-			if (activeStore && !stores.some((s) => s.name === activeStore)) {
+			if (activeStore && !next.some((s) => s.name === activeStore)) {
 				// 绑定已不存在（被删/改名）：清空
-				if (stores.length === 0 || !stores.some((s) => s.name === activeStore)) {
-					activeStore = ''
-					data.store = ''
-				}
+				activeStore = ''
+				data.store = ''
 			}
 		} catch (e) {
 			loadError = e instanceof Error ? e.message : String(e)
@@ -75,8 +83,11 @@
 
 	$effect(() => {
 		if (!data.id) return
-		refresh()
-		const timer = setInterval(refresh, 3000)
+		refresh(true)
+		const timer = setInterval(() => {
+			if (document.hidden) return
+			void refresh()
+		}, 5000)
 		return () => clearInterval(timer)
 	})
 
@@ -93,7 +104,7 @@
 			await createStore(gid, name)
 			activeStore = name // 先绑定，再 refresh（refresh 的兜底逻辑不会再改）
 			data.store = name
-			await refresh()
+			await refresh(true)
 			rt.area?.update('node', data.id)
 		} catch (e) {
 			toast({ kind: 'err', title: '创建图库失败', msg: String(e) })
@@ -114,7 +125,7 @@
 				activeStore = ''
 				data.store = ''
 			}
-			await refresh()
+			await refresh(true)
 		} catch (e) {
 			toast({ kind: 'err', title: '删除失败', msg: String(e) })
 		}
@@ -136,7 +147,7 @@
 				activeStore = next
 				data.store = next
 			}
-			await refresh()
+			await refresh(true)
 		} catch (e) {
 			toast({ kind: 'err', title: '重命名失败', msg: String(e) })
 		}
@@ -159,7 +170,7 @@
 				toast({ kind: 'err', title: `上传 ${f.name} 失败`, msg: String(e) })
 			}
 		}
-		await refresh()
+		await refresh(true)
 	}
 
 	async function removeFile(f: StoreFileMeta) {
@@ -167,7 +178,7 @@
 		if (!s) return
 		try {
 			await deleteStoreFile(activeGraphId(), s.name, f.name)
-			await refresh()
+			await refresh(true)
 		} catch (e) {
 			toast({ kind: 'err', title: '删除文件失败', msg: String(e) })
 		}
@@ -255,7 +266,7 @@ async function saveUrl(url: string): Promise<void> {
 		const blob = await res.blob()
 		const name = decodeURIComponent(url.split('/').pop() || 'image.png')
 		await uploadStoreFile(activeGraphId(), s.name, new File([blob], name, { type: blob.type || 'image/png' }))
-		await refresh()
+		await refresh(true)
 		toast({ kind: 'ok', title: `已保存到「${s.name}」`, msg: name })
 	} catch (err) {
 		toast({ kind: 'err', title: '保存失败', msg: err instanceof Error ? err.message : String(err) })

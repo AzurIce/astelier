@@ -12,7 +12,8 @@
 		type,
 		icon,
 		name,
-		desc,
+		desc = '',
+		title,
 		selected = false,
 		busy = false,
 		ondelete,
@@ -24,7 +25,9 @@
 		type: NodeType
 		icon: IconName
 		name: string
-		desc: string
+		desc?: string
+		/** desc 的动态版本（优先于 desc） */
+		title?: string
 		selected?: boolean
 		busy?: boolean
 		ondelete: () => void
@@ -44,7 +47,7 @@
 		</span>
 		<span class="titles">
 			<strong>{name}</strong>
-			{#if desc}<small>{desc}</small>{/if}
+			{#if title || desc}<small>{title || desc}</small>{/if}
 		</span>
 		<span class="head-actions">
 			<button type="button" title="删除节点" aria-label="删除节点" onclick={ondelete}>

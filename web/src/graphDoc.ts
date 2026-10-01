@@ -9,7 +9,7 @@ import { rt } from './runtime'
 export interface DocNode {
 	id: string
 	type: NodeType
-	params: Record<string, string | number>
+	params: Record<string, string | number | boolean | object | null>
 }
 export interface DocEdge {
 	id: string
@@ -121,8 +121,9 @@ function defaultPosition(type: NodeType, index: number): { x: number; y: number 
 		model: 60,
 		prompt: 60,
 		image: 60,
+		store: 780,
 		generate: 420,
-		preview: 780,
+		preview: 1120,
 	}
 	return { x: col[type] ?? 60, y: 120 + index * 180 }
 }

@@ -4,11 +4,14 @@
 	import IconButton from '../../components/IconButton.svelte'
 	import Icon from '../../components/Icon.svelte'
 	import type { AreaExtra } from '../types'
-	import { uploadAsset } from '../../api'
 	import { toast } from '../../components/toast.svelte'
 	import { openLightbox } from '../../components/lightbox.svelte'
 	import { editNode, removeNodeCascade } from '../actions'
 	import { noNodeDrag } from '../noNodeDrag'
+	import { acceptImageDrop } from '../acceptImageDrop'
+	import { inlineDel, inlineGet, inlineKey, inlinePut } from '../../inlineImages'
+	import { blobToDataUrl } from '../../inlineImages'
+	import { activeGraphId } from '../../graphStore'
 	import type { LoadImageNode } from '../classes'
 
 	let { data, emit }: { data: LoadImageNode; emit: (p: AreaExtra) => void } = $props()
@@ -17,22 +20,62 @@
 	let over = $state(false)
 	let error: string | null = $state(null)
 
+	const gid = activeGraphId()
+
+	/** 上传 = inline（IndexedDB，不落服务端） */
 	async function pick(file: File | undefined | null) {
 		if (!file) return
 		busy = true
 		error = null
 		try {
-			const url = await uploadAsset(file)
+			const dataUrl = await blobToDataUrl(file)
+			await inlinePut(inlineKey(gid, data.id), file)
 			editNode<LoadImageNode>(data.id, (n) => {
-				n.assetUrl = url
+				n.assetUrl = dataUrl // inline：data URL 即数据本体
 				n.fileName = file.name
+				n.inline = true
+				n.ref = null
 			})
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e)
-			toast({ kind: 'err', title: '图片上传失败', msg: error })
+			toast({ kind: 'err', title: '读取图片失败', msg: error })
 		}
 		busy = false
 	}
+
+	/** 从 image store 拖入 = 引用（/gstore/…） */
+	async function acceptStore(url: string, file: string, w?: number, h?: number) {
+		await inlineDel(inlineKey(gid, data.id))
+		editNode<LoadImageNode>(data.id, (n) => {
+			n.assetUrl = url
+			n.fileName = file
+			n.inline = false
+			n.ref = { store: decodeURIComponent(url.split('/')[3] ?? ''), file: decodeURIComponent(file) }
+			n.w = w
+			n.h = h
+		})
+		toast({ kind: 'ok', title: '已引用图库图片', msg: decodeURIComponent(file) })
+	}
+
+	async function clear() {
+		await inlineDel(inlineKey(gid, data.id))
+		editNode<LoadImageNode>(data.id, (n) => {
+			n.assetUrl = null
+			n.fileName = ''
+			n.inline = false
+			n.ref = null
+		})
+	}
+
+	const title = $derived(
+		busy
+			? '读取中…'
+			: data.inline
+				? `${data.fileName} · 节点内联`
+				: data.ref
+					? `${data.fileName} · 图库引用`
+					: '参考图 / 垫图',
+	)
 </script>
 
 <NodeFrame
@@ -40,7 +83,7 @@
 	type="image"
 	icon="image"
 	name="Image"
-	desc={busy ? '上传中…' : data.fileName || '参考图 / 垫图'}
+	{title}
 	selected={data.selected}
 	ondelete={() => void removeNodeCascade(data.id)}
 >
@@ -48,6 +91,9 @@
 		<label
 			class="ui-drop"
 			class:over
+			use:acceptImageDrop={{
+				onDrop: (img) => acceptStore(img.url, img.file, img.w, img.h),
+			}}
 			ondragover={(e) => {
 				e.preventDefault()
 				over = true
@@ -67,10 +113,10 @@
 			/>
 			{#if busy}
 				<Icon name="spinner" size={18} class="spin" />
-				<span>上传中…</span>
+				<span>读取中…</span>
 			{:else}
 				<Icon name="upload" size={18} />
-				<span class="file-name">{data.fileName || '选择或拖入图片'}</span>
+				<span class="file-name">{data.fileName || '上传 / 从图库拖入'}</span>
 			{/if}
 		</label>
 
@@ -79,6 +125,23 @@
 				<Icon name="alert" size={13} />
 				<span>{error}</span>
 			</div>
+		{:else if data.inline}
+			{#await inlineGet(inlineKey(gid, data.id)) then blob}
+				{#if blob}
+					<div class="img-wrap">
+						<button
+							type="button"
+							class="img-btn"
+							title="点击查看大图"
+							use:noNodeDrag
+							onclick={() => openLightbox(URL.createObjectURL(blob))}
+						>
+							<img class="ui-img thumbnail" src={URL.createObjectURL(blob)} alt={data.fileName} />
+						</button>
+						<IconButton icon="trash" label="移除图片" sm onclick={() => void clear()} />
+					</div>
+				{/if}
+			{/await}
 		{:else if data.assetUrl}
 			<div class="img-wrap">
 				<button
@@ -86,20 +149,11 @@
 					class="img-btn"
 					title="点击查看大图"
 					use:noNodeDrag
-					onclick={() => data.assetUrl && openLightbox(data.assetUrl)}
+					onclick={() => openLightbox(data.assetUrl!)}
 				>
 					<img class="ui-img thumbnail" src={data.assetUrl} alt={data.fileName} />
 				</button>
-				<IconButton
-					icon="trash"
-					label="移除图片"
-					sm
-					onclick={() =>
-						editNode<LoadImageNode>(data.id, (n) => {
-							n.assetUrl = null
-							n.fileName = ''
-						})}
-				/>
+				<IconButton icon="trash" label="移除图片" sm onclick={() => void clear()} />
 			</div>
 		{/if}
 	{/snippet}

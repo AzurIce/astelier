@@ -19,7 +19,7 @@ export interface GenerateParams {
 	model: string
 	prompt: string
 	/** 统一键 → 标量（数字/字符串）；服务端按模型档案过滤与校验 */
-	params?: Record<string, string | number>
+	params?: Record<string, string | number | boolean | object | null>
 	imageUrls?: string[]
 }
 

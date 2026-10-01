@@ -78,6 +78,8 @@ async function runNode(
 		return { text: String(node.params.text ?? '') }
 	}
 	if (node.type === 'image') {
+		// assetUrl 对两种模式都成立：inline 由组件上传时同步写入 data URL，
+		// store 引用为 /gstore/…（组件解析）；服务端 url_to_asset 均支持。
 		const url = String(node.params.assetUrl ?? '')
 		if (!url) throw new Error('Image 节点未上传图片')
 		return { image: url }

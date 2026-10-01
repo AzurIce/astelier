@@ -8,6 +8,7 @@ import PromptNodeComp from './nodes/components/PromptNode.svelte'
 import LoadImageNodeComp from './nodes/components/LoadImageNode.svelte'
 import GenerateNodeComp from './nodes/components/GenerateNode.svelte'
 import PreviewNodeComp from './nodes/components/PreviewNode.svelte'
+import StoreNodeComp from './nodes/components/StoreNode.svelte'
 import ConnectionLine from './nodes/ConnectionLine.svelte'
 import EmptySocket from './nodes/components/EmptySocket.svelte'
 import { type Schemes, type AreaExtra } from './nodes/types'
@@ -44,6 +45,8 @@ export function createEditor(container: HTMLElement) {
 							return LoadImageNodeComp
 						case 'Generate':
 							return GenerateNodeComp
+						case 'Image Store':
+							return StoreNodeComp
 						case 'Preview':
 							return PreviewNodeComp
 					}

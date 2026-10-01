@@ -20,6 +20,7 @@
 		{ type: 'prompt', label: 'Prompt', desc: '输入提示词', icon: 'prompt', group: '输入' },
 		{ type: 'image', label: 'Image', desc: '上传参考图 / 垫图', icon: 'image', group: '输入' },
 		{ type: 'generate', label: 'Generate', desc: '按协议参数调用模型', icon: 'generate', group: '生成' },
+		{ type: 'store', label: 'Image Store', desc: '图库：拖入保存，拖出引用', icon: 'layers', group: '资产' },
 		{ type: 'preview', label: 'Preview', desc: '展示生成结果', icon: 'preview', group: '输出' },
 	]
 

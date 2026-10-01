@@ -1859,3 +1859,17 @@ body {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+
+/* image store 节点 */
+.store-grid.dragover {
+	border-color: var(--ui-accent);
+	background: var(--ui-accent-weak);
+}
+
+/* 可拖拽图片（生成结果 / 预览）—— 拖入 Image Store 保存 */
+.draggable-img {
+	cursor: grab;
+}
+.draggable-img:active {
+	cursor: grabbing;
+}

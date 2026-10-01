@@ -316,6 +316,8 @@ pub enum NodeType {
     Prompt,
     Image,
     Generate,
+    /// 图库节点：不参与执行，只是显式资产库的落点
+    Store,
     Preview,
 }
 

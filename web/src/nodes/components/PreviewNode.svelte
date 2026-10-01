@@ -27,11 +27,18 @@
 		{#if data.displayUrl}
 			<button
 				type="button"
-				class="img-btn"
-				title="点击查看大图"
+				class="img-btn draggable-img"
+				title="点击查看大图 · 拖入 Image Store 保存"
+				draggable="true"
+				ondragstart={(e) => {
+					if (!e.dataTransfer || !data.displayUrl) return
+					e.dataTransfer.setData('text/plain', data.displayUrl)
+					e.dataTransfer.setData('text/uri-list', data.displayUrl)
+					e.dataTransfer.effectAllowed = 'copy'
+				}}
 				onclick={() => data.displayUrl && openLightbox(data.displayUrl)}
 			>
-				<img class="ui-img thumbnail" src={data.displayUrl} alt="预览" />
+				<img class="ui-img thumbnail" src={data.displayUrl} alt="预览" draggable="false" />
 			</button>
 		{:else}
 			<div class="ui-empty-hint">

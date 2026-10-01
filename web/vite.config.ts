@@ -22,6 +22,8 @@ export default defineConfig({
 		proxy: {
 			'/api': backend,
 			'/asset': backend,
+			// image store 静态寻址（dev 下同样代理到后端，否则落 SPA 返回 HTML 导致裂图）
+			'/gstore': backend,
 		},
 	},
 })

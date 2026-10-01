@@ -333,14 +333,24 @@ async function saveUrl(url: string): Promise<void> {
 			use:storeDropTarget
 		>
 			{#if !active()}
-				<div class="drop-hint">
-					<Icon name="layers" size={20} />
-					<span>先创建或选择一个图库</span>
+				<div class="store-empty">
+					<span class="empty-icon"><Icon name="layers" size={18} /></span>
+					<strong>还没有图库</strong>
+					<span class="empty-sub">图库用来显式收藏生成结果<br />可建多个、随时切换</span>
+					<button type="button" class="ui-btn primary sm" onclick={() => void create()}>
+						<Icon name="plus" size={12} />
+						新建图库
+					</button>
 				</div>
 			{:else if active()!.files.length === 0}
-				<div class="drop-hint">
-					<Icon name="upload" size={20} />
-					<span>拖入图片保存<br />或 <button type="button" class="link" onclick={() => uploadRef?.click()}>点击上传</button></span>
+				<div class="store-empty">
+					<span class="empty-icon"><Icon name="upload" size={18} /></span>
+					<strong>「{activeStore}」还是空的</strong>
+					<span class="empty-sub">把 Generate / Preview 的结果图拖进来保存<br />或直接上传本地图片</span>
+					<button type="button" class="ui-btn ghost sm" onclick={() => uploadRef?.click()}>
+						<Icon name="upload" size={12} />
+						上传图片
+					</button>
 				</div>
 			{:else}
 				{#each active()!.files as f (f.name)}
@@ -460,29 +470,43 @@ async function saveUrl(url: string): Promise<void> {
 		background: var(--ui-input);
 		transition: border-color var(--ui-fast), background var(--ui-fast);
 	}
-	.store-grid:has(.drop-hint) {
+	.store-grid:has(.store-empty) {
 		display: flex;
 		align-items: center;
 		justify-content: center;
 	}
-	.drop-hint {
+	.store-empty {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 6px;
-		color: var(--ui-faint);
-		font-size: 11px;
+		gap: 4px;
+		padding: 10px 8px;
 		text-align: center;
-		line-height: 1.6;
 	}
-	.drop-hint .link {
-		border: none;
-		background: none;
-		color: var(--ui-accent);
-		font: inherit;
-		text-decoration: underline;
-		cursor: pointer;
-		padding: 0;
+	.store-empty .empty-icon {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		height: 36px;
+		margin-bottom: 2px;
+		border-radius: 50%;
+		background: var(--ui-track);
+		color: var(--ui-dim);
+	}
+	.store-empty strong {
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--ui-text);
+	}
+	.store-empty .empty-sub {
+		color: var(--ui-faint);
+		font-size: 10.5px;
+		line-height: 1.6;
+		margin-bottom: 4px;
+	}
+	.store-empty :global(.ui-btn) {
+		margin-top: 2px;
 	}
 	.cell {
 		position: relative;

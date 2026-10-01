@@ -34,14 +34,22 @@
 		inputs?: Snippet
 		body?: Snippet
 		outputs?: Snippet
-	} = $props()</script>
+	} = $props()	// 标题图标的强调色 token；store 无专属端口色，用 accent
+	const tone = $derived(
+		type === 'model' || type === 'prompt'
+			? `sock-${type}`
+			: type === 'image' || type === 'generate' || type === 'preview'
+				? 'sock-image'
+				: 'accent',
+	)
+</script>
 
 <div class="ui-node" class:selected class:busy data-node-id={nodeId} data-node-type={type}>
 	<header>
 		<span
 			class="type-icon"
-			style:color={`var(--ui-sock-${type === 'generate' || type === 'preview' ? 'image' : type})`}
-			style:background={`color-mix(in srgb, var(--ui-sock-${type === 'generate' || type === 'preview' ? 'image' : type}) 16%, transparent)`}
+			style:color={`var(--ui-${tone})`}
+			style:background={`color-mix(in srgb, var(--ui-${tone}) 16%, transparent)`}
 		>
 			<Icon name={icon} size={13} />
 		</span>

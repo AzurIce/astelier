@@ -14,8 +14,10 @@
 
 use crate::model::{AssetRef, Config, Graph, GraphGroup, GraphView, Run};
 use axum::http::{header, StatusCode};
+use axum::extract::Query;
 use axum::response::{IntoResponse, Response};
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::sync::Mutex;
 
@@ -416,4 +418,317 @@ fn sniff_dimensions(bytes: &[u8]) -> (Option<u32>, Option<u32>) {
         }
     }
     (None, None)
+}
+
+// ---------- image store（图内资产库：graphs/{gid}/store/{name}/） ----------
+//
+// 与 assets/ 统一池的区别：store 是「用户显式命名的库」，按图归属，
+// 画布上 image store 节点的落点。图删除（remove_dir_all graphs/{gid}）
+// 自动级联；图改名只换外层目录名，store 引用用 {store}/{file} 相对址。
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct StoreFile {
+    pub name: String,
+    #[serde(default)]
+    pub w: Option<u32>,
+    #[serde(default)]
+    pub h: Option<u32>,
+    #[serde(default)]
+    pub bytes: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct StoreManifest {
+    #[serde(default)]
+    pub files: std::collections::BTreeMap<String, StoreFile>,
+    /// 展示名（用户输入的语言文本）；目录名 name 是其 ASCII slug
+    #[serde(default)]
+    pub title: String,
+}
+
+/// URL / 目录段安全名（store slug）：ASCII 保留，其余折叠为 '-'；
+/// 折叠后为空（纯非 ASCII 名）或含穿越残留時，用展示名的小写 hex
+/// 摘要兜底，保证任何语言输入都能得到 URL 安全、目录安全的标识。
+/// 只作标识用；人类可读名走 manifest.title。
+pub fn safe_store_name(name: &str) -> Option<String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut out = String::new();
+    for c in trimmed.chars() {
+        match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => out.push(c),
+            // '.' 等特殊字符一律折叠，杜绝 '..' 穿越与点号名
+            _ => {
+                if !out.ends_with('-') {
+                    out.push('-')
+                }
+            }
+        }
+    }
+    let slug = out.trim_matches('-').to_string();
+    if slug.is_empty() || slug == "." || slug == ".." || slug.contains('/') || slug.contains('\\') {
+        // 兜底：展示名摘要（ASCII hex），避开 '.' 与 '/' 等特殊字符
+        let mut hex = String::new();
+        for b in trimmed.as_bytes() {
+            hex.push_str(&format!("{b:02x}"));
+        }
+        let digest: String = hex.chars().take(24).collect();
+        if digest.is_empty() {
+            return None;
+        }
+        let out = format!("s-{digest}");
+        if out.len() > 64 {
+            return None;
+        }
+        return Some(out);
+    }
+    if slug.len() > 64 {
+        return None;
+    }
+    Some(slug)
+}
+
+/// store 内文件名：单段 + 扩展名白名单
+pub fn safe_store_file(name: &str) -> Option<String> {
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return None;
+    }
+    let (stem, ext) = name.rsplit_once('.')?;
+    let ext = ext.to_ascii_lowercase();
+    if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif") {
+        return None;
+    }
+    let ext = if ext == "jpeg" { "jpg".to_string() } else { ext };
+    let clean_stem: String = stem
+        .chars()
+        .filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        .collect();
+    let clean_stem = clean_stem.trim().to_string();
+    if clean_stem.is_empty() {
+        return None;
+    }
+    Some(format!("{clean_stem}.{ext}"))
+}
+
+fn store_dir(gid: &str, store: &str) -> std::path::PathBuf {
+    sub_dir(&["graphs", gid, "store", store])
+}
+
+pub async fn list_stores(gid: &str) -> Vec<(String, StoreManifest)> {
+    let root = sub_dir(&["graphs", gid, "store"]);
+    let mut out = Vec::new();
+    let Ok(mut rd) = tokio::fs::read_dir(&root).await else {
+        return out;
+    };
+    while let Ok(Some(entry)) = rd.next_entry().await {
+        if !entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        out.push((name.clone(), read_manifest(gid, &name).await));
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+pub async fn read_manifest(gid: &str, store: &str) -> StoreManifest {
+    read_json(&["graphs", gid, "store", store, "manifest.json"])
+        .await
+        .unwrap_or_default()
+}
+
+async fn write_manifest(gid: &str, store: &str, manifest: &StoreManifest) {
+    write_json(&["graphs", gid, "store", store, "manifest.json"], manifest).await;
+}
+
+/// 存入一张图（写文件 + 更新 manifest）。返回文件元信息。
+pub async fn save_store_asset(
+    gid: &str,
+    store: &str,
+    filename: &str,
+    bytes: &[u8],
+) -> Result<StoreFile, String> {
+    let name = safe_store_file(filename).ok_or("文件名不合法")?;
+    if bytes.is_empty() {
+        return Err("空文件".into());
+    }
+    let (w, h) = sniff_dimensions(bytes);
+    let dir = store_dir(gid, store);
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| format!("创建 store 失败：{e}"))?;
+    tokio::fs::write(dir.join(&name), bytes)
+        .await
+        .map_err(|e| format!("写文件失败：{e}"))?;
+    let meta = StoreFile {
+        name: name.clone(),
+        w,
+        h,
+        bytes: bytes.len() as u64,
+    };
+    let mut manifest = read_manifest(gid, store).await;
+    manifest.files.insert(name, meta.clone());
+    write_manifest(gid, store, &manifest).await;
+    Ok(meta)
+}
+
+/// 建库（写 manifest，title = 展示名）。已存在则只更新 title。
+pub async fn create_store_dir(gid: &str, slug: &str, title: &str) -> Result<(), String> {
+    let dir = store_dir(gid, slug);
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| format!("创建 store 失败：{e}"))?;
+    let mut manifest = read_manifest(gid, slug).await;
+    manifest.title = title.trim().to_string();
+    write_manifest(gid, slug, &manifest).await;
+    Ok(())
+}
+
+pub async fn delete_store_asset(gid: &str, store: &str, name: &str) -> Result<(), String> {
+    let name = safe_store_file(name).ok_or("文件名不合法")?;
+    let _ = tokio::fs::remove_file(store_dir(gid, store).join(&name)).await;
+    let mut manifest = read_manifest(gid, store).await;
+    if manifest.files.remove(&name).is_some() {
+        write_manifest(gid, store, &manifest).await;
+    }
+    Ok(())
+}
+
+/// 删除整个 store（目录）。manifest 一并消失。
+pub async fn delete_store(gid: &str, store: &str) -> Result<(), String> {
+    tokio::fs::remove_dir_all(store_dir(gid, store))
+        .await
+        .map_err(|e| format!("删除 store 失败：{e}"))
+}
+
+/// 重命名 store（目录改名 + manifest 随行）。next 为展示名，
+/// 内部 slug 化；只改大小写等 slug 不变的改名只更新 title。
+pub async fn rename_store(gid: &str, store: &str, next: &str) -> Result<(), String> {
+    let slug = safe_store_name(next).ok_or("名称不合法")?;
+    let from = store_dir(gid, store);
+    let to = store_dir(gid, &slug);
+    let mut manifest = read_manifest(gid, store).await;
+    manifest.title = next.trim().to_string();
+    if from == to {
+        write_manifest(gid, store, &manifest).await;
+        return Ok(());
+    }
+    if to.exists() {
+        return Err("同名 store 已存在".into());
+    }
+    tokio::fs::rename(&from, &to)
+        .await
+        .map_err(|e| format!("重命名失败：{e}"))?;
+    write_manifest(gid, &slug, &manifest).await;
+    Ok(())
+}
+
+/// GET /gstore?g={gid}&s={store}&f={name} —— store 内图片（immutable 缓存）。
+/// 用 query 而非路径段：图名 / store 名可能含非 ASCII，matchit 对路径段
+/// 的未编码非 ASCII 匹配会失败并落到 SPA（非 GET 方法显 405）。
+#[derive(Deserialize)]
+pub struct StoreFileQuery {
+    g: String,
+    s: String,
+    f: String,
+}
+
+pub async fn serve_store_file(Query(q): Query<StoreFileQuery>) -> Response {
+    if safe_store_file(&q.f).as_deref() != Some(q.f.as_str()) {
+        return (StatusCode::BAD_REQUEST, "bad file name").into_response();
+    }
+    let Some(slug) = safe_store_name(&q.s) else {
+        return (StatusCode::BAD_REQUEST, "bad store name").into_response();
+    };
+    if slug != q.s {
+        // 展示名被 slug 化过：直接寻址必须用 slug
+        return (StatusCode::NOT_FOUND, "store not found").into_response();
+    }
+    if !store_dir(&q.g, &slug).join("manifest.json").exists() {
+        return (StatusCode::NOT_FOUND, "store not found").into_response();
+    }
+    match tokio::fs::read(store_dir(&q.g, &slug).join(&q.f)).await {
+        Ok(bytes) => {
+            let mime = match q
+                .f
+                .rsplit_once('.')
+                .map(|(_, e)| e.to_ascii_lowercase())
+                .as_deref()
+            {
+                Some("png") => "image/png",
+                Some("jpg") => "image/jpeg",
+                Some("webp") => "image/webp",
+                Some("gif") => "image/gif",
+                _ => "application/octet-stream",
+            };
+            (
+                [
+                    (header::CONTENT_TYPE, mime.to_string()),
+                    (
+                        header::CACHE_CONTROL,
+                        "public, max-age=31536000, immutable".into(),
+                    ),
+                ],
+                bytes,
+            )
+                .into_response()
+        }
+        Err(_) => (StatusCode::NOT_FOUND, "file not found").into_response(),
+    }
+}
+
+#[cfg(test)]
+mod store_tests {
+    use super::*;
+
+    fn tmp_root(tag: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("atelier-store-test-{tag}"));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn safe_names_reject_traversal_and_bad_ext() {
+        // ASCII 直通；空格折叠为 '-'
+        assert_eq!(safe_store_name("lib").as_deref(), Some("lib"));
+        assert_eq!(safe_store_name("ref images").as_deref(), Some("ref-images"));
+        // ".." 被折叠为空 → 走摘要兜底（不为 None，且不含 '.'
+        // 保证目录/URL 安全）；纯空白输入仍拒绝
+        let dots = safe_store_name("..").unwrap();
+        assert!(dots.starts_with("s-") && !dots.contains('.'));
+        assert!(safe_store_name("  ").is_none());
+        // 纯非 ASCII 名 → hex 摘要兜底，且 URL/目录安全
+        let cn = safe_store_name("参考图").unwrap();
+        assert!(cn.starts_with("s-"));
+        assert!(cn.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
+        // 混合：ASCII 段 + 折叠
+        assert_eq!(safe_store_name("my 图库").as_deref(), Some("my"));
+        assert_eq!(safe_store_file("a.PNG").as_deref(), Some("a.png"));
+        assert_eq!(safe_store_file("x.jpeg").as_deref(), Some("x.jpg"));
+        assert!(safe_store_file("../evil.png").is_none());
+        assert!(safe_store_file("no-ext").is_none());
+        assert!(safe_store_file("a.svg").is_none());
+    }
+
+    #[tokio::test]
+    async fn store_asset_roundtrip_and_delete() {
+        // 1x1 PNG
+        let png: Vec<u8> = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0x0D, 0x49, 0x48, 0x44, 0x52,
+            0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0x1F, 0x15, 0xC4, 0x89,
+        ];
+        let gid = "unit-test-graph";
+        let manifest = save_store_asset(gid, "图库", "a.png", &png).await.unwrap();
+        assert_eq!(manifest.name, "a.png");
+        assert_eq!(manifest.w, Some(1));
+        let list = read_manifest(gid, "图库").await;
+        assert!(list.files.contains_key("a.png"));
+        delete_store_asset(gid, "图库", "a.png").await.unwrap();
+        assert!(read_manifest(gid, "图库").await.files.is_empty());
+        assert!(safe_store_file("a.svg").is_none());
+        let _ = tmp_root("unused");
+    }
 }

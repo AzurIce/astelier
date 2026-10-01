@@ -27,6 +27,7 @@ async fn main() {
 
     let app = axum::Router::new()
         .route("/asset/{name}", get(store::serve_asset))
+        .route("/gstore", get(store::serve_store_file))
         .nest("/api", api::router())
         // 先注册完路由再套 body limit（layer 只作用于此前注册的路由）
         .fallback_service(spa)

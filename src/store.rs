@@ -14,7 +14,6 @@
 
 use crate::model::{AssetRef, Config, Graph, GraphGroup, GraphView, Run};
 use axum::http::{header, StatusCode};
-use axum::extract::Query;
 use axum::response::{IntoResponse, Response};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -446,48 +445,29 @@ pub struct StoreManifest {
     pub title: String,
 }
 
-/// URL / 目录段安全名（store slug）：ASCII 保留，其余折叠为 '-'；
-/// 折叠后为空（纯非 ASCII 名）或含穿越残留時，用展示名的小写 hex
-/// 摘要兜底，保证任何语言输入都能得到 URL 安全、目录安全的标识。
-/// 只作标识用；人类可读名走 manifest.title。
+/// store 名 = 目录名 = 显示名：仅替换文件系统真正非法的字符，
+/// 去首尾空白与点号；拒绝空 / 穿越残留 / 超长。
+/// 非 ASCII（中文等）原样保留——浏览器 fetch 会把路径段 percent-encode，
+/// matchit 匹配编码后字节，与既有 /api/graphs/{中文图名} 同构。
 pub fn safe_store_name(name: &str) -> Option<String> {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
+    let cleaned: String = name
+        .trim()
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => '-',
+            c if (c as u32) < 0x20 => '-',
+            _ => c,
+        })
+        .collect();
+    let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let s = collapsed.trim().trim_matches('.').to_string();
+    if s.is_empty() || s == "." || s == ".." || s.contains('/') || s.contains('\\') {
         return None;
     }
-    let mut out = String::new();
-    for c in trimmed.chars() {
-        match c {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => out.push(c),
-            // '.' 等特殊字符一律折叠，杜绝 '..' 穿越与点号名
-            _ => {
-                if !out.ends_with('-') {
-                    out.push('-')
-                }
-            }
-        }
-    }
-    let slug = out.trim_matches('-').to_string();
-    if slug.is_empty() || slug == "." || slug == ".." || slug.contains('/') || slug.contains('\\') {
-        // 兜底：展示名摘要（ASCII hex），避开 '.' 与 '/' 等特殊字符
-        let mut hex = String::new();
-        for b in trimmed.as_bytes() {
-            hex.push_str(&format!("{b:02x}"));
-        }
-        let digest: String = hex.chars().take(24).collect();
-        if digest.is_empty() {
-            return None;
-        }
-        let out = format!("s-{digest}");
-        if out.len() > 64 {
-            return None;
-        }
-        return Some(out);
-    }
-    if slug.len() > 64 {
+    if s.chars().count() > 64 {
         return None;
     }
-    Some(slug)
+    Some(s)
 }
 
 /// store 内文件名：单段 + 扩展名白名单
@@ -625,43 +605,32 @@ pub async fn rename_store(gid: &str, store: &str, next: &str) -> Result<(), Stri
     Ok(())
 }
 
-/// GET /gstore?g={gid}&s={store}&f={name} —— store 内图片（immutable 缓存）。
-/// 用 query 而非路径段：图名 / store 名可能含非 ASCII，matchit 对路径段
-/// 的未编码非 ASCII 匹配会失败并落到 SPA（非 GET 方法显 405）。
-#[derive(Deserialize)]
-pub struct StoreFileQuery {
-    g: String,
-    s: String,
-    f: String,
-}
-
-pub async fn serve_store_file(Query(q): Query<StoreFileQuery>) -> Response {
-    if safe_store_file(&q.f).as_deref() != Some(q.f.as_str()) {
+/// GET /gstore/{gid}/{store}/{name} —— store 内图片（immutable 缓存）。
+/// 图名 / store 名可含非 ASCII：浏览器端 fetch 会 percent-encode 路径段，
+/// 与既有 /api/graphs/{中文图名} 行为一致；服务端只认同形编码字节。
+pub async fn serve_store_file(
+    axum::extract::Path((gid, store, name)): axum::extract::Path<(String, String, String)>,
+) -> Response {
+    if safe_store_file(&name).as_deref() != Some(name.as_str()) {
         return (StatusCode::BAD_REQUEST, "bad file name").into_response();
     }
-    let Some(slug) = safe_store_name(&q.s) else {
+    if safe_store_name(&store).as_deref() != Some(store.as_str()) {
         return (StatusCode::BAD_REQUEST, "bad store name").into_response();
-    };
-    if slug != q.s {
-        // 展示名被 slug 化过：直接寻址必须用 slug
+    }
+    if !store_dir(&gid, &store).join("manifest.json").exists() {
         return (StatusCode::NOT_FOUND, "store not found").into_response();
     }
-    if !store_dir(&q.g, &slug).join("manifest.json").exists() {
-        return (StatusCode::NOT_FOUND, "store not found").into_response();
-    }
-    match tokio::fs::read(store_dir(&q.g, &slug).join(&q.f)).await {
+    match tokio::fs::read(store_dir(&gid, &store).join(&name)).await {
         Ok(bytes) => {
-            let mime = match q
-                .f
-                .rsplit_once('.')
-                .map(|(_, e)| e.to_ascii_lowercase())
-                .as_deref()
-            {
-                Some("png") => "image/png",
-                Some("jpg") => "image/jpeg",
-                Some("webp") => "image/webp",
-                Some("gif") => "image/gif",
-                _ => "application/octet-stream",
+            let mime = match name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()) {
+                Some(e) => match e.as_str() {
+                    "png" => "image/png",
+                    "jpg" => "image/jpeg",
+                    "webp" => "image/webp",
+                    "gif" => "image/gif",
+                    _ => "application/octet-stream",
+                },
+                None => "application/octet-stream",
             };
             (
                 [
@@ -692,24 +661,22 @@ mod store_tests {
 
     #[test]
     fn safe_names_reject_traversal_and_bad_ext() {
-        // ASCII 直通；空格折叠为 '-'
+        // 目录名 = 显示名：中文原样保留
+        assert_eq!(safe_store_name("参考图").as_deref(), Some("参考图"));
         assert_eq!(safe_store_name("lib").as_deref(), Some("lib"));
-        assert_eq!(safe_store_name("ref images").as_deref(), Some("ref-images"));
-        // ".." 被折叠为空 → 走摘要兜底（不为 None，且不含 '.'
-        // 保证目录/URL 安全）；纯空白输入仍拒绝
-        let dots = safe_store_name("..").unwrap();
-        assert!(dots.starts_with("s-") && !dots.contains('.'));
+        assert_eq!(safe_store_name("my refs").as_deref(), Some("my refs"));
+        // 非法字符替换
+        assert_eq!(safe_store_name("a/b").as_deref(), Some("a-b"));
+        assert_eq!(safe_store_name("a:b*c").as_deref(), Some("a-b-c"));
+        // 穿越 / 空拒绝
+        assert!(safe_store_name("..").is_none());
         assert!(safe_store_name("  ").is_none());
-        // 纯非 ASCII 名 → hex 摘要兜底，且 URL/目录安全
-        let cn = safe_store_name("参考图").unwrap();
-        assert!(cn.starts_with("s-"));
-        assert!(cn.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
-        // 混合：ASCII 段 + 折叠
-        assert_eq!(safe_store_name("my 图库").as_deref(), Some("my"));
-        assert_eq!(safe_store_file("a.PNG").as_deref(), Some("a.png"));
+        assert!(safe_store_name("a\0b").is_some());
+        assert!(!safe_store_name("a\0b").unwrap().contains('\0'));
+        // 文件名单段 + 扩展名白名单
+        assert_eq!(safe_store_file("猫.PNG").as_deref(), Some("猫.png"));
         assert_eq!(safe_store_file("x.jpeg").as_deref(), Some("x.jpg"));
         assert!(safe_store_file("../evil.png").is_none());
-        assert!(safe_store_file("no-ext").is_none());
         assert!(safe_store_file("a.svg").is_none());
     }
 

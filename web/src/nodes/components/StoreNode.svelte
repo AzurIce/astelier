@@ -51,17 +51,16 @@
 	let lastSnapshot = ''
 
 	async function refresh(force = false) {
-		const gid = activeGraphId()
-		if (!gid) return
-		// 只有首次/强制才显示 loading——轮询静默，避免「加载中」闪烁
+		// loading 只在首次/强制时显示——轮询静默，避免「加载中」闪烁
 		if (stores.length === 0 || force) loading = true
-		loadError = null
 		try {
+			const gid = activeGraphId()
+			// gid 未就绪（图未载入）时拿到空列表，不报错、直接结束
+			if (!gid) return
 			const next = await fetchStores(gid)
-			// 内容没变就不替换 state：轮询不应触发重渲染（否则节点「时不时会闪」）
+			// 内容没变就不替换 state：轮询不应触发重渲染
 			const snapshot = JSON.stringify(next)
-			const changed = snapshot !== lastSnapshot
-			if (changed || force) {
+			if (snapshot !== lastSnapshot || force) {
 				lastSnapshot = snapshot
 				stores = next
 			}
@@ -77,8 +76,11 @@
 			}
 		} catch (e) {
 			loadError = e instanceof Error ? e.message : String(e)
+		} finally {
+			// finally 保证提前 return / 抛错等任何路径都归位，
+			// 「加载中…」不会永久卡住
+			loading = false
 		}
-		loading = false
 	}
 
 	$effect(() => {

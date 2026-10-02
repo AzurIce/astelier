@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte'
 	import NodeFrame from './NodeFrame.svelte'
 	import Icon from '../../components/Icon.svelte'
 	import { rt } from '../../runtime'
@@ -43,10 +44,8 @@
 		}
 	})
 
-	// 节点当前绑定的 store；变化即时保存
-	$effect(() => {
-		if (data.store && data.store !== activeStore) activeStore = data.store
-	})
+	// 注意：不要在 effect 里同步 data.store ↔ activeStore——写 data.store 会让
+	// 节点参数变「脏」并触发重渲染/保存，与 refresh 形成环
 
 	let lastSnapshot = ''
 
@@ -83,14 +82,12 @@
 		}
 	}
 
-	$effect(() => {
-		if (!data.id) return
-		refresh(true)
-		const timer = setInterval(() => {
-			if (document.hidden) return
-			void refresh()
-		}, 5000)
-		return () => clearInterval(timer)
+	// 挂载时拉一次即可。显式变更（上传/删除/改名/拖入保存）后各自 refresh(true)，
+	// 不做轮询。必须用 onMount 而不是 $effect：$effect 会追踪 refresh 内部读到的
+	// 信号（data.store / activeStore / stores），refresh 又写 data.store，
+	// 写回反触发 effect → 无限请求循环（实测 3 秒 4500 次）
+	onMount(() => {
+		void refresh(true)
 	})
 
 	function active(): StoreInfo | undefined {

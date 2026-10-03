@@ -7,7 +7,6 @@
 //!   （内部同样走 Run，等它完成再返回）。
 
 use crate::model::*;
-use crate::store::StoreManifest;
 use crate::util::now_ms;
 use axum::extract::{Path, Query};
 use axum::http::StatusCode;
@@ -70,22 +69,23 @@ pub fn router() -> Router {
         .route("/groups/{id}/parent", patch(move_group))
         // 资产
         .route("/assets", post(upload_asset))
-        // image store（图内资产库）
+        // 全局库（data/stores/，平铺）
         .route(
-            "/graphs/{id}/stores",
-            get(list_stores).post(create_store),
+            "/stores",
+            get(list_global_store).post(upload_global_store),
         )
         .route(
-            "/graphs/{id}/stores/{store}",
-            patch(rename_store).delete(delete_store),
+            "/stores/{name}",
+            axum::routing::delete(delete_global_store_file),
+        )
+        // 图私有 store（graphs/{gid}/store/，内联感知）
+        .route(
+            "/graphs/{id}/store",
+            get(list_graph_store).post(upload_graph_store),
         )
         .route(
-            "/graphs/{id}/stores/{store}/assets",
-            get(list_store_files).post(upload_store_asset),
-        )
-        .route(
-            "/graphs/{id}/stores/{store}/assets/{name}",
-            axum::routing::delete(delete_store_file),
+            "/graphs/{id}/store/{name}",
+            axum::routing::delete(delete_graph_store_file),
         )
         // 批次
         .route("/runs", get(list_runs).post(start_run))
@@ -481,57 +481,11 @@ async fn upload_asset_inner(filename: String, bytes: &[u8]) -> ApiResult<AssetRe
         .map_err(bad)
 }
 
-// ---------- image store（图内资产库） ----------
+// ---------- image store（两层：全局库 + 图私有） ----------
 
-async fn list_stores(Path(id): Path<String>) -> Json<Vec<serde_json::Value>> {
-    let stores = crate::store::list_stores(&id).await;
-    Json(
-        stores
-            .into_iter()
-            .map(|(name, manifest)| {
-                json!({
-                    "name": name,
-                    "title": if manifest.title.is_empty() { name.clone() } else { manifest.title.clone() },
-                    "files": manifest.files.values().cloned().collect::<Vec<_>>()
-                })
-            })
-            .collect(),
-    )
-}
-
-async fn list_store_files(Path((id, store)): Path<(String, String)>) -> Json<StoreManifest> {
-    Json(crate::store::read_manifest(&id, &store).await)
-}
-
-#[derive(Deserialize)]
-struct StoreNameBody {
-    name: String,
-}
-
-async fn create_store(Path(id): Path<String>, Json(body): Json<StoreNameBody>) -> ApiResult<Json<serde_json::Value>> {
-    if crate::store::get_graph(&id).await.is_none() {
-        return Err(bad("图不存在"));
-    }
-    let Some(slug) = crate::store::safe_store_name(&body.name) else {
-        return Err(bad("store 名称不合法"));
-    };
-    crate::store::create_store_dir(&id, &slug, &body.name)
-        .await
-        .map_err(bad)?;
-    Ok(Json(json!({ "name": slug, "title": body.name.trim() })))
-}
-
-async fn rename_store(
-    Path((id, store)): Path<(String, String)>,
-    Json(body): Json<StoreNameBody>,
-) -> ApiResult<()> {
-    crate::store::rename_store(&id, &store, &body.name)
-        .await
-        .map_err(bad)
-}
-
-async fn delete_store(Path((id, store)): Path<(String, String)>) -> ApiResult<()> {
-    crate::store::delete_store(&id, &store).await.map_err(bad)
+/// 全局库列表（data/stores/）
+async fn list_global_store() -> Json<Vec<crate::store::StoreFile>> {
+    Json(crate::store::list_global_store().await)
 }
 
 #[derive(Deserialize)]
@@ -539,24 +493,48 @@ struct StoreUploadQuery {
     filename: String,
 }
 
-async fn upload_store_asset(
-    Path((id, store)): Path<(String, String)>,
+/// 上传到全局库（result 图拖入收藏 / 手动上传）
+async fn upload_global_store(
+    Query(q): Query<StoreUploadQuery>,
+    body: axum::body::Bytes,
+) -> ApiResult<Json<crate::store::StoreFile>> {
+    crate::store::save_global_store_file(&q.filename, &body)
+        .await
+        .map(Json)
+        .map_err(bad)
+}
+
+async fn delete_global_store_file(Path(name): Path<String>) -> ApiResult<()> {
+    crate::store::delete_global_store_file(&name)
+        .await
+        .map_err(bad)
+}
+
+/// 图私有 store 列表（graphs/{gid}/store/）
+async fn list_graph_store(Path(id): Path<String>) -> ApiResult<Json<Vec<crate::store::StoreFile>>> {
+    if crate::store::get_graph(&id).await.is_none() {
+        return Err(bad("图不存在"));
+    }
+    Ok(Json(crate::store::list_graph_store(&id).await))
+}
+
+/// 上传到图私有 store（LoadImage 上传 / 从库拖入时复制进来）
+async fn upload_graph_store(
+    Path(id): Path<String>,
     Query(q): Query<StoreUploadQuery>,
     body: axum::body::Bytes,
 ) -> ApiResult<Json<crate::store::StoreFile>> {
     if crate::store::get_graph(&id).await.is_none() {
         return Err(bad("图不存在"));
     }
-    crate::store::save_store_asset(&id, &store, &q.filename, &body)
+    crate::store::save_graph_store_file(&id, &q.filename, &body)
         .await
         .map(Json)
         .map_err(bad)
 }
 
-async fn delete_store_file(
-    Path((id, store, name)): Path<(String, String, String)>,
-) -> ApiResult<()> {
-    crate::store::delete_store_asset(&id, &store, &name)
+async fn delete_graph_store_file(Path((id, name)): Path<(String, String)>) -> ApiResult<()> {
+    crate::store::delete_graph_store_file(&id, &name)
         .await
         .map_err(bad)
 }

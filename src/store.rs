@@ -468,11 +468,6 @@ pub fn safe_store_file(name: &str) -> Option<String> {
     Some(format!("{clean_stem}.{ext}"))
 }
 
-/// 全局库的根目录（平铺，无子目录）
-fn stores_root() -> std::path::PathBuf {
-    sub_dir(&["stores"])
-}
-
 fn graph_store_dir(gid: &str) -> std::path::PathBuf {
     sub_dir(&["graphs", gid, "store"])
 }
@@ -551,29 +546,357 @@ pub async fn list_store_files(root: &std::path::Path) -> Vec<StoreFile> {
     out
 }
 
-// ---------- 全局库（data/stores/） ----------
+// ---------- 全局库（data/stores/，层级：任意深度子目录） ----------
+//
+// 单个根 manifest.json（key = 相对路径，如 "角色/猫.png"）只提供 w/h 覆盖；
+// 目录与文件以递归走磁盘为准（外部直接放入的文件也能被拾取）。
 
-pub async fn list_global_store() -> Vec<StoreFile> {
-    list_store_files(&stores_root()).await
+/// 库条目：目录或图片（前端据此建树 + 网格）
+#[derive(Serialize, Clone, Debug)]
+pub struct StoreTree {
+    pub dirs: Vec<String>,
+    pub files: Vec<StoreFileEntry>,
 }
 
-pub async fn save_global_store_file(filename: &str, bytes: &[u8]) -> Result<StoreFile, String> {
-    put_store_file(&stores_root(), filename, bytes).await
+/// 带相对路径的图片条目
+#[derive(Serialize, Clone, Debug)]
+pub struct StoreFileEntry {
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub w: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub h: Option<u32>,
+    pub bytes: u64,
 }
 
-pub async fn delete_global_store_file(name: &str) -> Result<(), String> {
-    remove_store_file(&stores_root(), name).await
+/// 全局库的根目录
+fn stores_root() -> std::path::PathBuf {
+    sub_dir(&["stores"])
 }
 
-/// GET /store/{name} —— 全局库图片（immutable 缓存）
-pub async fn serve_global_store_file(
-    axum::extract::Path(name): axum::extract::Path<String>,
-) -> Response {
-    if safe_store_file(&name).as_deref() != Some(name.as_str()) {
-        return (StatusCode::BAD_REQUEST, "bad file name").into_response();
+/// 相对路径安全化：按 '/' 分段校验。目录段容忍任意可见字符（中文原样），
+/// 文件段额外要求扩展名白名单。禁绝对路径/穿越/超深。
+pub fn safe_store_path(path: &str) -> Option<String> {
+    let path = path.trim();
+    if path.is_empty() || path.len() > 240 {
+        return None;
     }
-    match tokio::fs::read(stores_root().join(&name)).await {
-        Ok(bytes) => image_response(&name, bytes),
+    let segs: Vec<&str> = path.split('/').collect();
+    if segs.len() > 8 {
+        return None;
+    }
+    let mut out: Vec<String> = Vec::with_capacity(segs.len());
+    for (i, seg) in segs.iter().enumerate() {
+        let seg = seg.trim();
+        if seg.is_empty() || seg == "." || seg == ".." {
+            return None;
+        }
+        if seg.contains('\\') || seg.contains(':') || seg.contains('*') || seg.contains('?')
+            || seg.contains('"')
+            || seg.contains('<')
+            || seg.contains('>')
+            || seg.contains('|')
+        {
+            return None;
+        }
+        if i + 1 == segs.len() {
+            // 末段 = 文件：扩展名白名单
+            let name = safe_store_file(seg)?;
+            out.push(name);
+        } else {
+            out.push(seg.to_string());
+        }
+    }
+    // 解析结果必须仍落在库根内（双重保险）
+    let joined = out.join("/");
+    let real = stores_root().join(&joined);
+    if !real.starts_with(stores_root()) {
+        return None;
+    }
+    Some(joined)
+}
+
+/// 列全树：递归磁盘 + manifest 的 w/h 覆盖
+pub async fn list_global_store() -> StoreTree {
+    let root = stores_root();
+    let manifest = read_manifest_at(&root).await;
+    let mut dirs: Vec<String> = Vec::new();
+    let mut files: Vec<StoreFileEntry> = Vec::new();
+    collect_tree(&root, "", &mut dirs, &mut files).await;
+    for f in files.iter_mut() {
+        if let Some(m) = manifest.files.get(&f.path) {
+            f.w = m.w;
+            f.h = m.h;
+            if f.bytes == 0 {
+                f.bytes = m.bytes;
+            }
+        }
+    }
+    dirs.sort();
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    StoreTree { dirs, files }
+}
+
+/// 递归收集（相对路径用 '/' 连接；深度与总量上限防失控）
+async fn collect_tree(
+    dir: &std::path::Path,
+    rel: &str,
+    dirs: &mut Vec<String>,
+    files: &mut Vec<StoreFileEntry>,
+) {
+    if dirs.len() + files.len() > 5000 {
+        return;
+    }
+    let Ok(mut rd) = tokio::fs::read_dir(dir).await else {
+        return;
+    };
+    while let Ok(Some(entry)) = rd.next_entry().await {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == "manifest.json" {
+            continue;
+        }
+        let child_rel = if rel.is_empty() {
+            name.clone()
+        } else {
+            format!("{rel}/{name}")
+        };
+        let Ok(ft) = entry.file_type().await else { continue };
+        if ft.is_dir() {
+            dirs.push(child_rel.clone());
+            Box::pin(collect_tree(&entry.path(), &child_rel, dirs, files)).await;
+        } else if safe_store_file(&name).is_some() {
+            let bytes = entry.metadata().await.map(|m| m.len()).unwrap_or(0);
+            files.push(StoreFileEntry {
+                path: child_rel,
+                w: None,
+                h: None,
+                bytes,
+            });
+        }
+    }
+}
+
+/// 上传到指定子目录（dir 空 = 根）；同名覆盖。返回带相对路径的条目。
+pub async fn save_global_store_file(
+    dir: &str,
+    filename: &str,
+    bytes: &[u8],
+) -> Result<StoreFileEntry, String> {
+    let dir = if dir.trim().is_empty() {
+        String::new()
+    } else {
+        resolve_store_dir_path(dir).ok_or("目标目录不合法")?
+    };
+    let rel = if dir.is_empty() {
+        safe_store_file(filename).ok_or("文件名不合法")?
+    } else {
+        format!("{dir}/{}", safe_store_file(filename).ok_or("文件名不合法")?)
+    };
+    if bytes.is_empty() {
+        return Err("空文件".into());
+    }
+    let abs = stores_root().join(&rel);
+    if let Some(parent) = abs.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("创建目录失败：{e}"))?;
+    }
+    tokio::fs::write(&abs, bytes)
+        .await
+        .map_err(|e| format!("写文件失败：{e}"))?;
+    let (w, h) = sniff_dimensions(bytes);
+    let mut manifest = read_manifest_at(&stores_root()).await;
+    manifest.files.insert(
+        rel.clone(),
+        StoreFile {
+            name: rel.clone(),
+            w,
+            h,
+            bytes: bytes.len() as u64,
+        },
+    );
+    write_manifest_at(&stores_root(), &manifest).await;
+    Ok(StoreFileEntry {
+        path: rel,
+        w,
+        h,
+        bytes: bytes.len() as u64,
+    })
+}
+
+/// 新建文件夹（可多级，如 "角色/猫"）
+pub async fn make_global_store_dir(path: &str) -> Result<(), String> {
+    // 目录路径不带扩展名，逐段按目录名校验
+    let segs: Vec<&str> = path.trim().split('/').collect();
+    if segs.is_empty() || segs.len() > 8 {
+        return Err("目录路径不合法".into());
+    }
+    let mut norm: Vec<String> = Vec::with_capacity(segs.len());
+    for seg in segs {
+        let seg = seg.trim();
+        if seg.is_empty() || seg == "." || seg == ".." {
+            return Err("目录路径不合法".into());
+        }
+        if seg.contains('\\')
+            || seg.contains('/')
+            || seg.contains(':')
+            || seg.contains('*')
+            || seg.contains('?')
+            || seg.contains('"')
+            || seg.contains('<')
+            || seg.contains('>')
+            || seg.contains('|')
+        {
+            return Err("目录路径不合法".into());
+        }
+        norm.push(seg.to_string());
+    }
+    let joined = norm.join("/");
+    let abs = stores_root().join(&joined);
+    if !abs.starts_with(stores_root()) {
+        return Err("目录路径不合法".into());
+    }
+    tokio::fs::create_dir_all(&abs)
+        .await
+        .map_err(|e| format!("创建目录失败：{e}"))?;
+    Ok(())
+}
+
+/// 重命名 / 移动：文件或目录整体搬到新相对路径。manifest 同步改 key。
+pub async fn move_global_store_path(from: &str, to: &str) -> Result<(), String> {
+    let from = resolve_store_dir_path(from).ok_or("源路径不合法")?;
+    let to = resolve_store_dir_path(to).ok_or("目标路径不合法")?;
+    if from == to {
+        return Ok(());
+    }
+    if to.starts_with(&format!("{from}/")) {
+        return Err("不能移动到自己的子目录".into());
+    }
+    let src = stores_root().join(&from);
+    let dst = stores_root().join(&to);
+    if !dst.starts_with(stores_root()) {
+        return Err("目标路径不合法".into());
+    }
+    if let Some(parent) = dst.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("创建目录失败：{e}"))?;
+    }
+    tokio::fs::rename(&src, &dst)
+        .await
+        .map_err(|e| format!("移动失败：{e}"))?;
+    // manifest：命中前缀的整体改 key（目录移动时子文件一起搬）
+    let mut manifest = read_manifest_at(&stores_root()).await;
+    let from_prefix = format!("{from}/");
+    let to_prefix = format!("{to}/");
+    let mut moved: Vec<(String, StoreFile)> = Vec::new();
+    let keys: Vec<String> = manifest.files.keys().cloned().collect();
+    for k in keys {
+        if k == from {
+            if let Some(mut m) = manifest.files.remove(&k) {
+                m.name = to.clone();
+                moved.push((to.clone(), m));
+            }
+        } else if k.starts_with(&from_prefix) {
+            if let Some(mut m) = manifest.files.remove(&k) {
+                m.name = format!("{to_prefix}{}", &k[from_prefix.len()..]);
+                moved.push((m.name.clone(), m));
+            }
+        }
+    }
+    for (k, m) in moved {
+        manifest.files.insert(k, m);
+    }
+    write_manifest_at(&stores_root(), &manifest).await;
+    Ok(())
+}
+
+/// 目录路径（末段也按目录名规则，不带扩展名）
+fn resolve_store_dir_path(path: &str) -> Option<String> {
+    let path = path.trim();
+    if path.is_empty() || path.len() > 240 {
+        return None;
+    }
+    let segs: Vec<&str> = path.split('/').collect();
+    if segs.len() > 8 {
+        return None;
+    }
+    let mut out: Vec<String> = Vec::with_capacity(segs.len());
+    for seg in segs {
+        let seg = seg.trim();
+        if seg.is_empty()
+            || seg == "."
+            || seg == ".."
+            || seg.contains('\\')
+            || seg.contains(':')
+            || seg.contains('*')
+            || seg.contains('?')
+            || seg.contains('"')
+            || seg.contains('<')
+            || seg.contains('>')
+            || seg.contains('|')
+        {
+            return None;
+        }
+        out.push(seg.to_string());
+    }
+    Some(out.join("/"))
+}
+
+/// 删除文件或目录（目录递归）；manifest 同步清理（含子文件前缀）。
+pub async fn delete_global_store_file(name: &str) -> Result<(), String> {
+    // 文件路径（带扩展名）或目录路径都接受
+    let rel = if safe_store_path(name).is_some() {
+        safe_store_path(name).unwrap()
+    } else {
+        resolve_store_dir_path(name).ok_or("路径不合法")?
+    };
+    let abs = stores_root().join(&rel);
+    if !abs.starts_with(stores_root()) {
+        return Err("路径不合法".into());
+    }
+    let meta = tokio::fs::metadata(&abs).await;
+    match meta {
+        Ok(m) if m.is_dir() => {
+            tokio::fs::remove_dir_all(&abs)
+                .await
+                .map_err(|e| format!("删除目录失败：{e}"))?;
+        }
+        Ok(_) => {
+            tokio::fs::remove_file(&abs)
+                .await
+                .map_err(|e| format!("删除文件失败：{e}"))?;
+        }
+        Err(_) => {
+            // 磁盘上已不存在：可能是 manifest 残留，继续清 manifest
+        }
+    }
+    let mut manifest = read_manifest_at(&stores_root()).await;
+    let prefix = format!("{rel}/");
+    let keys: Vec<String> = manifest.files.keys().cloned().collect();
+    let mut changed = false;
+    for k in keys {
+        if k == rel || k.starts_with(&prefix) {
+            manifest.files.remove(&k);
+            changed = true;
+        }
+    }
+    if changed {
+        write_manifest_at(&stores_root(), &manifest).await;
+    }
+    Ok(())
+}
+
+/// GET /store/*path —— 全局库图片（immutable 缓存）
+pub async fn serve_global_store_file(
+    axum::extract::Path(path): axum::extract::Path<String>,
+) -> Response {
+    let rel = match safe_store_path(&path) {
+        Some(r) => r,
+        None => return (StatusCode::BAD_REQUEST, "bad path").into_response(),
+    };
+    match tokio::fs::read(stores_root().join(&rel)).await {
+        Ok(bytes) => image_response(&rel, bytes),
         Err(_) => (StatusCode::NOT_FOUND, "file not found").into_response(),
     }
 }
@@ -695,54 +1018,125 @@ fn image_response(name: &str, bytes: Vec<u8>) -> Response {
 mod store_tests {
     use super::*;
 
-    #[test]
-    fn sniff_reads_png_ihdr() {
-        // 60 字节最小 PNG：IHDR width/height = 2x2
-        let png: Vec<u8> = vec![
-            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0x0D, 0x49, 0x48, 0x44, 0x52,
-            0, 0, 0, 2, 0, 0, 0, 2, 8, 6, 0, 0, 0, 0x1F, 0x15, 0xC4, 0x89,
-        ];
-        assert_eq!(sniff_dimensions(&png), (Some(2), Some(2)));
+    /// 测试全部走独立数据目录，绝不碰真实 data/。
+    /// ATELIER_DATA_DIR 是进程级环境变量、多个 #[tokio::test] 并行跑会互相踩，
+    /// 故用全局锁串行化（曾出现「这轮失败下轮又过」的灵异现象，根因就在此）。
+    /// 返回的 guard 必须活到测试结束（`let (p, _g) = use_tmp(..)`）：一旦提前松手，
+    /// 后来的测试会永远排在锁上，整个 cargo test 挂住。
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn use_tmp(tag: &str) -> (std::path::PathBuf, std::sync::MutexGuard<'static, ()>) {
+        let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let p = std::env::temp_dir().join(format!("atelier-store-{}-{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        unsafe { std::env::set_var("ATELIER_DATA_DIR", &p) };
+        (p, guard)
+    }
+
+    /// 真实 1580×996 PNG（尺寸断言用）；读不到退化为最小合法 PNG
+    fn sample_png() -> Vec<u8> {
+        std::fs::read("/home/azurice/Files/art-canvas/data/assets/01a9897a64b74403bef0a6edfecb499f.png")
+            .unwrap_or_else(|_| {
+                vec![
+                    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0x0D, 0x49, 0x48, 0x44,
+                    0x52, 0, 0, 0, 2, 0, 0, 0, 2, 8, 6, 0, 0, 0, 0x1F, 0x15, 0xC4, 0x89,
+                ]
+            })
     }
 
     #[test]
     fn safe_file_names_allow_unicode_and_reject_traversal() {
-        // 中文文件名原样保留（目录名 = 显示名）
         assert_eq!(safe_store_file("猫.png").as_deref(), Some("猫.png"));
         assert_eq!(safe_store_file("x.PNG").as_deref(), Some("x.png"));
         assert_eq!(safe_store_file("x.jpeg").as_deref(), Some("x.jpg"));
-        // 穿越 / 缺扩展名 / 非图片扩展名拒绝
         assert!(safe_store_file("../evil.png").is_none());
         assert!(safe_store_file("a/b.png").is_none());
         assert!(safe_store_file("no-ext").is_none());
         assert!(safe_store_file("a.svg").is_none());
-        assert!(safe_store_file("..").is_none());
+    }
+
+    #[test]
+    fn safe_paths_allow_nested_dirs_and_reject_escape() {
+        // 层级路径：中文目录名原样保留
+        assert_eq!(safe_store_path("角色/猫.png").as_deref(), Some("角色/猫.png"));
+        assert_eq!(safe_store_path("a/b/c.png").as_deref(), Some("a/b/c.png"));
+        assert_eq!(safe_store_path("猫.png").as_deref(), Some("猫.png"));
+        // 穿越 / 绝对路径 / 空段 / 超深 / 坏扩展名
+        assert!(safe_store_path("../x.png").is_none());
+        assert!(safe_store_path("a/../x.png").is_none());
+        assert!(safe_store_path("/abs/x.png").is_none());
+        assert!(safe_store_path("a//x.png").is_none());
+        assert!(safe_store_path("a/b/c/d/e/f/g/h/i.png").is_none());
+        assert!(safe_store_path("a/x.svg").is_none());
+        assert!(safe_store_path("").is_none());
+    }
+
+    #[tokio::test]
+    async fn global_tree_roundtrip() {
+        let (tmp, _g) = use_tmp("tree");
+        let png = sample_png();
+        // 建目录 → 上传根与子目录各一张
+        make_global_store_dir("角色/猫").await.unwrap();
+        let a = save_global_store_file("", "root.png", &png).await.unwrap();
+        let b = save_global_store_file("角色", "a.png", &png).await.unwrap();
+        let c = save_global_store_file("角色/猫", "b.png", &png).await.unwrap();
+
+        let tree = list_global_store().await;
+        assert!(tree.dirs.contains(&"角色".to_string()));
+        assert!(tree.dirs.contains(&"角色/猫".to_string()));
+        assert_eq!(a.path, "root.png");
+        assert_eq!(b.path, "角色/a.png");
+        assert_eq!(c.path, "角色/猫/b.png");
+        let b_entry = tree.files.iter().find(|f| f.path == "角色/a.png").unwrap();
+        assert_eq!((b_entry.w, b_entry.h), (Some(1580), Some(996)));
+
+        // 移动文件到另一目录
+        move_global_store_path("角色/a.png", "场景/a.png").await.unwrap();
+        // 移动整个目录
+        move_global_store_path("角色/猫", "猫").await.unwrap();
+        let t2 = list_global_store().await;
+        assert!(t2.files.iter().any(|f| f.path == "场景/a.png"));
+        assert!(!t2.files.iter().any(|f| f.path == "角色/a.png"));
+        assert!(t2.files.iter().any(|f| f.path == "猫/b.png"));
+        assert!(t2.dirs.contains(&"猫".to_string()));
+
+        // 禁移入自身子目录
+        assert!(move_global_store_path("猫", "猫/子").await.is_err());
+
+        // 删目录递归（同时清 manifest 前缀）
+        delete_global_store_file("猫").await.unwrap();
+        let t3 = list_global_store().await;
+        assert!(!t3.files.iter().any(|f| f.path.starts_with("猫/")));
+
+        // 删单文件
+        delete_global_store_file("场景/a.png").await.unwrap();
+        let t4 = list_global_store().await;
+        assert!(!t4.files.iter().any(|f| f.path == "场景/a.png"));
+        assert!(t4.files.iter().any(|f| f.path == "root.png"));
+
+        // 外置文件（磁盘有、manifest 无）也要被拾取
+        std::fs::create_dir_all(tmp.join("stores/外部")).unwrap();
+        std::fs::write(tmp.join("stores/外部/x.png"), &png).unwrap();
+        let t5 = list_global_store().await;
+        assert!(t5.files.iter().any(|f| f.path == "外部/x.png"));
+
+        // 静态服务：层级路径 + 缓存头
+        let resp = serve_global_store_file(axum::extract::Path("外部/x.png".to_string())).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bad = serve_global_store_file(axum::extract::Path("../x.png".to_string())).await;
+        assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[tokio::test]
     async fn two_layer_roundtrip() {
-        // 测试走独立数据目录，绝不碰真实 data/（此前测试曾污染用户数据）
-        let tmp = std::env::temp_dir().join(format!("atelier-store-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
-        unsafe { std::env::set_var("ATELIER_DATA_DIR", &tmp) };
-        // 1x1 PNG
-        let png: Vec<u8> = vec![
-            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0x0D, 0x49, 0x48, 0x44, 0x52,
-            0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0x1F, 0x15, 0xC4, 0x89,
-        ];
-        // 全局库
-        let g = save_global_store_file("test.png", &png).await.unwrap();
-        assert_eq!(g.name, "test.png");
-        assert_eq!(g.w, Some(1));
-        assert!(list_global_store().await.iter().any(|f| f.name == "test.png"));
-        // 图私有（两层互不影响）
-        let gr = save_graph_store_file("unit-test-graph", "inner.png", &png).await.unwrap();
-        assert_eq!(gr.name, "inner.png");
-        assert!(list_graph_store("unit-test-graph").await.iter().any(|f| f.name == "inner.png"));
-        // 删全局不影响图私有
-        delete_global_store_file("test.png").await.unwrap();
-        assert!(!list_global_store().await.iter().any(|f| f.name == "test.png"));
+        // 图私有层：两层互不影响
+        let (tmp, _g) = use_tmp("graph");
+        let png = sample_png();
+        let g = save_graph_store_file("unit-test-graph", "inner.png", &png).await.unwrap();
+        assert_eq!(g.name, "inner.png");
         assert!(list_graph_store("unit-test-graph").await.iter().any(|f| f.name == "inner.png"));
         delete_graph_store_file("unit-test-graph", "inner.png").await.unwrap();
         assert!(list_graph_store("unit-test-graph").await.is_empty());
@@ -774,5 +1168,4 @@ mod store_tests {
         assert_eq!(tokio::fs::read(root.join("dup.png")).await.unwrap(), first);
         let _ = std::fs::remove_dir_all(&root);
     }
-
 }

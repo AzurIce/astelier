@@ -69,14 +69,15 @@ pub fn router() -> Router {
         .route("/groups/{id}/parent", patch(move_group))
         // 资产
         .route("/assets", post(upload_asset))
-        // 全局库（data/stores/，平铺）
+        // 全局库（data/stores/，层级）
         .route(
             "/stores",
             get(list_global_store).post(upload_global_store),
         )
+        .route("/stores/dirs", post(make_store_dir))
         .route(
-            "/stores/{name}",
-            axum::routing::delete(delete_global_store_file),
+            "/stores/{*path}",
+            axum::routing::patch(move_store_path).delete(delete_store_path),
         )
         // 图私有 store（graphs/{gid}/store/，内联感知）
         .route(
@@ -483,29 +484,59 @@ async fn upload_asset_inner(filename: String, bytes: &[u8]) -> ApiResult<AssetRe
 
 // ---------- image store（两层：全局库 + 图私有） ----------
 
-/// 全局库列表（data/stores/）
-async fn list_global_store() -> Json<Vec<crate::store::StoreFile>> {
+/// 全局库全树（data/stores/，层级）
+async fn list_global_store() -> Json<crate::store::StoreTree> {
     Json(crate::store::list_global_store().await)
 }
 
 #[derive(Deserialize)]
 struct StoreUploadQuery {
     filename: String,
+    #[serde(default)]
+    dir: String,
 }
 
-/// 上传到全局库（result 图拖入收藏 / 手动上传）
+/// 上传到全局库指定子目录（result 图拖入收藏 / 手动上传）
 async fn upload_global_store(
     Query(q): Query<StoreUploadQuery>,
     body: axum::body::Bytes,
-) -> ApiResult<Json<crate::store::StoreFile>> {
-    crate::store::save_global_store_file(&q.filename, &body)
+) -> ApiResult<Json<crate::store::StoreFileEntry>> {
+    crate::store::save_global_store_file(&q.dir, &q.filename, &body)
         .await
         .map(Json)
         .map_err(bad)
 }
 
-async fn delete_global_store_file(Path(name): Path<String>) -> ApiResult<()> {
-    crate::store::delete_global_store_file(&name)
+#[derive(Deserialize)]
+struct StoreDirBody {
+    path: String,
+}
+
+/// 新建文件夹（可多级 "角色/猫"）
+async fn make_store_dir(Json(b): Json<StoreDirBody>) -> ApiResult<()> {
+    crate::store::make_global_store_dir(&b.path)
+        .await
+        .map_err(bad)
+}
+
+#[derive(Deserialize)]
+struct StoreMoveBody {
+    to: String,
+}
+
+/// 重命名 / 移动（文件或目录；path 为相对路径）
+async fn move_store_path(
+    Path(path): Path<String>,
+    Json(b): Json<StoreMoveBody>,
+) -> ApiResult<()> {
+    crate::store::move_global_store_path(&path, &b.to)
+        .await
+        .map_err(bad)
+}
+
+/// 删除文件或目录（目录递归；path 为相对路径）
+async fn delete_store_path(Path(path): Path<String>) -> ApiResult<()> {
+    crate::store::delete_global_store_file(&path)
         .await
         .map_err(bad)
 }

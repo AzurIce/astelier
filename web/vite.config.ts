@@ -24,6 +24,8 @@ export default defineConfig({
 			'/asset': backend,
 			// image store 静态寻址（dev 下同样代理到后端，否则落 SPA 返回 HTML 导致裂图）
 			'/gstore': backend,
+			// 全局库静态寻址（同 gstore，dev 下必须代理）
+			'/store': backend,
 		},
 	},
 })

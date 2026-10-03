@@ -589,11 +589,65 @@ pub async fn save_graph_store_file(
     filename: &str,
     bytes: &[u8],
 ) -> Result<StoreFile, String> {
-    put_store_file(&graph_store_dir(gid), filename, bytes).await
+    let root = graph_store_dir(gid);
+    let name = safe_store_file(filename).ok_or("文件名不合法")?;
+    // 同名同内容 → 保持原名（幂等，重复上传不涨数）；
+    // 同名不同内容 → 加序号另存，绝不能互相覆盖（一个节点可引用多张图）
+    let name = match tokio::fs::read(root.join(&name)).await {
+        Ok(existing) if existing == bytes => name,
+        Ok(_) => free_store_name(&root, &name).await,
+        Err(_) => name,
+    };
+    put_store_file(&root, &name, bytes).await
+}
+
+/// 取一个未被占用（磁盘 + manifest 都没这个名）的 store 文件名：`x.png` → `x-2.png`
+async fn free_store_name(root: &std::path::Path, name: &str) -> String {
+    let manifest = read_manifest_at(root).await;
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) => (s.to_string(), format!(".{e}")),
+        None => (name.to_string(), String::new()),
+    };
+    for n in 2..1000 {
+        let cand = format!("{stem}-{n}{ext}");
+        if !manifest.files.contains_key(&cand) && !root.join(&cand).exists() {
+            return cand;
+        }
+    }
+    format!("{stem}-{}{ext}", new_asset_id())
 }
 
 pub async fn delete_graph_store_file(gid: &str, name: &str) -> Result<(), String> {
     remove_store_file(&graph_store_dir(gid), name).await
+}
+
+/// 读图私有 store 里的图片字节（执行引用时用）
+pub async fn read_graph_store_file(gid: &str, name: &str) -> Result<Vec<u8>, String> {
+    let name = safe_store_file(name).ok_or("文件名不合法")?;
+    let dir = graph_store_dir(gid);
+    if !dir.join("manifest.json").exists() {
+        return Err("图 store 不存在".into());
+    }
+    tokio::fs::read(dir.join(name))
+        .await
+        .map_err(|_| "图 store 里没有这个文件".into())
+}
+
+/// 图私有 store 里某个文件的元信息（manifest 优先，磁盘兜底）
+pub async fn graph_store_file_meta(gid: &str, name: &str) -> Option<StoreFile> {
+    let name = safe_store_file(name)?;
+    let manifest = read_manifest_at(&graph_store_dir(gid)).await;
+    if let Some(f) = manifest.files.get(&name) {
+        return Some(f.clone());
+    }
+    let bytes = tokio::fs::read(graph_store_dir(gid).join(&name)).await.ok()?;
+    let (w, h) = sniff_dimensions(&bytes);
+    Some(StoreFile {
+        name,
+        w,
+        h,
+        bytes: bytes.len() as u64,
+    })
 }
 
 /// GET /gstore/{gid}/{name} —— 图私有 store 图片（immutable 缓存）
@@ -694,4 +748,31 @@ mod store_tests {
         assert!(list_graph_store("unit-test-graph").await.is_empty());
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    #[tokio::test]
+    async fn graph_store_same_name_never_overwrites() {
+        // 只测「同名不互相覆盖」的判定（显式 root，不碰 data/：
+        // 不设 ATELIER_DATA_DIR，免得和其他测试抢进程级环境变量）
+        let root = std::env::temp_dir().join(format!("atelier-gstore-collide-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let first = b"first".to_vec();
+        let second = b"second".to_vec();
+
+        // 还没有 dup.png：落原名
+        put_store_file(&root, "dup.png", &first).await.unwrap();
+        // 已存在 → 让位 dup-2.png（manifest 与磁盘都算占用）
+        assert_eq!(free_store_name(&root, "dup.png").await, "dup-2.png");
+        put_store_file(&root, "dup-2.png", &second).await.unwrap();
+        put_store_file(&root, "dup-3.png", &second).await.unwrap();
+
+        let mut names: Vec<String> =
+            list_store_files(&root).await.into_iter().map(|f| f.name).collect();
+        names.sort();
+        assert_eq!(names, vec!["dup-2.png", "dup-3.png", "dup.png"]);
+        // 原文件内容没被后来的同名上传覆盖
+        assert_eq!(tokio::fs::read(root.join("dup.png")).await.unwrap(), first);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
 }

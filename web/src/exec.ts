@@ -3,7 +3,7 @@
 import { apiGenerate } from './api'
 import { toDoc, type GraphDoc } from './graphDoc'
 import { rt, runningNodes } from './runtime'
-import { scheduleViewSave } from './graphStore'
+import { scheduleViewSave, activeGraphId, graphStoreUrl } from './graphStore'
 
 type Outputs = Record<string, unknown>
 
@@ -53,6 +53,16 @@ export async function runPipeline(): Promise<number> {
 	return generated
 }
 
+/**
+ * 展平输入值取字符串：一张 Image 节点的输出本身是数组（多图），
+ * 多条连线汇入同一输入也是数组，嵌套一律拍平，顺序不变。
+ */
+function collectStrings(v: unknown): string[] {
+	if (v === undefined || v === null) return []
+	if (Array.isArray(v)) return v.flatMap(collectStrings)
+	return typeof v === 'string' && v.length > 0 ? [v] : []
+}
+
 function joinValues(v: unknown): string | undefined {
 	if (v === undefined || v === null) return undefined
 	const arr = Array.isArray(v) ? v : [v]
@@ -78,14 +88,19 @@ async function runNode(
 		return { text: String(node.params.text ?? '') }
 	}
 	if (node.type === 'image') {
-		// assetUrl 对两种模式都成立：inline 由组件上传时同步写入 data URL，
-		// store 引用为 /gstore/…（组件解析）；服务端 url_to_asset 均支持。
-		const url = String(node.params.assetUrl ?? '')
-		if (!url) throw new Error('Image 节点未上传图片')
-		return { image: url }
+		// 图内 store 引用：相对路径 /gstore/{gid}/{file}（服务端 url_to_asset 支持）。
+		// 多张参考图 → 一个端口出数组，顺序即节点内的排列顺序。
+		const files = Array.isArray(node.params.images)
+			? (node.params.images as { file?: unknown }[])
+					.map((i) => (i && typeof i.file === 'string' ? i.file : ''))
+					.filter(Boolean)
+			: []
+		if (!files.length) throw new Error('Image 节点未上传图片')
+		const gid = activeGraphId()
+		return { image: files.map((f) => graphStoreUrl(gid, f)) }
 	}
 	if (node.type === 'preview') {
-		const img = Array.isArray(inputs.image) ? inputs.image[0] : inputs.image
+		const img = collectStrings(inputs.image)[0]
 		const { PreviewNode } = await import('./nodes/classes')
 		if (live instanceof PreviewNode) {
 			live.displayUrl = typeof img === 'string' ? img : null
@@ -100,9 +115,7 @@ async function runNode(
 		if (typeof model !== 'string') throw new Error('Generate 未连接 model')
 		const prompt = joinValues(inputs.prompt)
 		if (!prompt) throw new Error('Generate 未连接 prompt（或 prompt 为空）')
-		const refs = (Array.isArray(inputs.image) ? inputs.image : [inputs.image]).filter(
-			(v): v is string => typeof v === 'string',
-		)
+		const refs = collectStrings(inputs.image)
 
 		const gen = live instanceof GenerateNode ? live : null
 		if (gen) {

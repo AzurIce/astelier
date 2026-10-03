@@ -11,6 +11,7 @@
 // 注册信号，让 DOMSocketPosition 重算、位置监听者（连线）跟上。
 import { rt } from '../runtime'
 import { connKeys } from './conn'
+import { imageRefsOf } from './classes'
 import { scheduleSave, activeGraphId } from '../graphStore'
 
 /**
@@ -23,9 +24,8 @@ export async function removeNodeCascade(nodeId: string): Promise<void> {
 	const editor = rt.editor
 	if (!editor) return
 	// 删除前抓被删节点的图内引用（removeNode 后实例就被销毁了）
-	const target = editor.getNode(nodeId) as unknown as { refFile?: string | null } | undefined
-	const orphanRefs = new Set<string>()
-	if (target?.refFile) orphanRefs.add(target.refFile)
+	const target = editor.getNode(nodeId)
+	const orphanRefs = new Set<string>(imageRefsOf(target))
 
 	for (const conn of editor.getConnections()) {
 		const k = connKeys(conn as unknown as Record<string, unknown>)
@@ -45,8 +45,7 @@ async function cleanupGraphStoreRefs(refs: Set<string>): Promise<void> {
 	if (!gid || !editor) return
 	// 图内其余节点的现役引用
 	for (const n of editor.getNodes()) {
-		const l = n as unknown as { refFile?: string | null }
-		if (l.refFile) refs.delete(l.refFile)
+		for (const f of imageRefsOf(n)) refs.delete(f)
 	}
 	for (const name of refs) {
 		try {

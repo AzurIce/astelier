@@ -772,6 +772,28 @@ async fn url_to_asset(url: &str) -> ApiResult<AssetRef> {
             h: None,
         });
     }
+    // 图私有 store 引用（画布节点上传的图）：按 {gid}/{file} 取出字节，
+    // 复制进全局 assets 再引用 —— 图可删、可重命名，批次档案仍可重放。
+    if let Some(rest) = url.strip_prefix("/gstore/") {
+        let (gid, file) = rest
+            .split_once('/')
+            .ok_or_else(|| bad("图 store URL 格式不对"))?;
+        let bytes = crate::store::read_graph_store_file(gid, file)
+            .await
+            .map_err(bad)?;
+        let ext = file.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
+        let ext = match ext.as_deref() {
+            Some("jpeg") => "jpg".to_string(),
+            Some(e) => e.to_string(),
+            None => "png".to_string(),
+        };
+        let mut asset = crate::store::save_asset(&bytes, &ext).await.map_err(bad)?;
+        if let Some(m) = crate::store::graph_store_file_meta(gid, file).await {
+            asset.w = m.w;
+            asset.h = m.h;
+        }
+        return Ok(asset);
+    }
     if let Some(rest) = url.strip_prefix("data:") {
         let (meta, b64) = rest.split_once(',').ok_or_else(|| bad("data URL 格式不对"))?;
         let ext = meta

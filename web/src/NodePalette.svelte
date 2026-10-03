@@ -18,7 +18,7 @@
 	const CATALOG: NodeDef[] = [
 		{ type: 'model', label: 'Model', desc: '选择 Provider 与模型', icon: 'model', group: '输入' },
 		{ type: 'prompt', label: 'Prompt', desc: '输入提示词', icon: 'prompt', group: '输入' },
-		{ type: 'image', label: 'Image', desc: '上传参考图 / 垫图', icon: 'image', group: '输入' },
+		{ type: 'image', label: 'Image', desc: '上传多张参考图 / 垫图', icon: 'image', group: '输入' },
 		{ type: 'generate', label: 'Generate', desc: '按协议参数调用模型', icon: 'generate', group: '生成' },
 		{ type: 'preview', label: 'Preview', desc: '展示生成结果', icon: 'preview', group: '输出' },
 	]

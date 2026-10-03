@@ -27,17 +27,36 @@ export class PromptNode extends ClassicPreset.Node {
 	}
 }
 
-export class LoadImageNode extends ClassicPreset.Node {
-	static type = 'image' as const
-	fileName = ''
-	/** 图内 store 文件名（内联感知：UI 只认「这张图」，引用是实现细节） */
-	refFile: string | null = null
+/** 节点引用的一张图：图内 store 文件名（内联感知：UI 只认「这张图」） */
+export interface ImageRef {
+	/** 图内 store 文件名（即引用） */
+	file: string
+	/** 展示名（默认同 file） */
+	name: string
 	/** 展示用尺寸（store 引用时来自 manifest） */
 	w?: number
 	h?: number
+}
+
+export class LoadImageNode extends ClassicPreset.Node {
+	static type = 'image' as const
+	/** 多张参考图；顺序即发送给上游的 image[] 顺序 */
+	images: ImageRef[] = []
 	constructor() {
 		super('Image')
 		this.addOutput('image', new ClassicPreset.Output(sockets.image))
+	}
+
+	/** 追加（同名去重），返回是否真的加进去了 */
+	addImage(ref: ImageRef): boolean {
+		if (!ref.file) return false
+		if (this.images.some((i) => i.file === ref.file)) return false
+		this.images = [...this.images, ref]
+		return true
+	}
+
+	removeImage(file: string): void {
+		this.images = this.images.filter((i) => i.file !== file)
 	}
 }
 
@@ -106,13 +125,7 @@ export function nodeParams(node: NodeTypes): Record<string, string | number | bo
 	if (node instanceof ModelNode)
 		return { provider: node.provider, modelId: node.modelId }
 	if (node instanceof PromptNode) return { text: node.text }
-	if (node instanceof LoadImageNode)
-		return {
-		fileName: node.fileName,
-		refFile: node.refFile,
-		...(node.w != null ? { w: node.w } : {}),
-		...(node.h != null ? { h: node.h } : {}),
-	}
+	if (node instanceof LoadImageNode) return { images: node.images.map((i) => ({ ...i })) }
 	if (node instanceof GenerateNode) return { ...node.params }
 	return {}
 }
@@ -124,21 +137,47 @@ export function applyParams(node: NodeTypes, params: Record<string, unknown>) {
 	} else if (node instanceof PromptNode) {
 		node.text = String(params.text ?? '')
 	} else if (node instanceof LoadImageNode) {
-		let refFile = typeof params.refFile === 'string' ? params.refFile : null
-		// 过渡：旧文档存 /gstore/{gid}/{store}/{file}、{store,file} 引用或 inline data URL。
-		// data URL（base64 内联）不再支持 → 视为空引用，需重新上传
-		if (!refFile) {
-			const ref = params.ref as { file?: unknown } | undefined
-			if (ref && typeof ref.file === 'string' && ref.file) {
-				refFile = decodeURIComponent(ref.file)
-			} else if (typeof params.assetUrl === 'string' && (params.assetUrl as string).startsWith('/gstore/')) {
-				refFile = decodeURIComponent((params.assetUrl as string).split('/').pop() ?? '') || null
-			}
+		const list: ImageRef[] = []
+		const push = (file: string, name?: string, w?: number, h?: number) => {
+			const f = file?.trim()
+			if (!f || list.some((i) => i.file === f)) return
+			list.push({
+				file: f,
+				name: (name && name.trim()) || f,
+				...(w != null ? { w } : {}),
+				...(h != null ? { h } : {}),
+			})
 		}
-		node.fileName = (String(params.fileName ?? '') || refFile) ?? ''
-		node.refFile = refFile
-		node.w = typeof params.w === 'number' ? params.w : undefined
-		node.h = typeof params.h === 'number' ? params.h : undefined
+		for (const it of Array.isArray(params.images) ? params.images : []) {
+			if (!it || typeof it !== 'object') continue
+			const r = it as Record<string, unknown>
+			push(
+				String(r.file ?? ''),
+				typeof r.name === 'string' ? r.name : undefined,
+				typeof r.w === 'number' ? r.w : undefined,
+				typeof r.h === 'number' ? r.h : undefined,
+			)
+		}
+		// 过渡：旧文档存的 fileName / refFile / {store,file} / /gstore/… 引用
+		// 一律折叠成 images[0]。data URL（base64 内联）不再支持 → 视为空引用。
+		if (!list.length) {
+			const ref = params.ref as { file?: unknown } | undefined
+			const legacy =
+				(typeof params.refFile === 'string' ? params.refFile : '') ||
+				(ref && typeof ref.file === 'string' ? decodeURIComponent(ref.file) : '') ||
+				(typeof params.assetUrl === 'string' &&
+				(params.assetUrl as string).startsWith('/gstore/')
+					? decodeURIComponent((params.assetUrl as string).split('/').pop() ?? '')
+					: '')
+			const name = typeof params.fileName === 'string' ? params.fileName : ''
+			push(
+				legacy,
+				name || legacy,
+				typeof params.w === 'number' ? params.w : undefined,
+				typeof params.h === 'number' ? params.h : undefined,
+			)
+		}
+		node.images = list
 	} else if (node instanceof GenerateNode) {
 		node.params = {}
 		for (const [k, v] of Object.entries(params)) {
@@ -164,4 +203,23 @@ export function outputOf(node: NodeTypes): string | null {
 export function applyOutput(node: NodeTypes, url: string | null) {
 	if (node instanceof GenerateNode) node.resultUrl = url
 	else if (node instanceof PreviewNode) node.displayUrl = url
+}
+
+/**
+ * 读任意节点的图片引用（不 import 具体类，供回收清理 / 执行引擎用）。
+ * 旧实例（LoadImageNode 的单一 refFile）也兼容。
+ */
+export function imageRefsOf(node: unknown): string[] {
+	const n = node as { images?: unknown; refFile?: unknown } | null | undefined
+	if (!n) return []
+	const out: string[] = []
+	if (Array.isArray(n.images)) {
+		for (const i of n.images) {
+			const file = (i as { file?: unknown })?.file
+			if (typeof file === 'string' && file) out.push(file)
+		}
+		return out
+	}
+	if (typeof n.refFile === 'string' && n.refFile) out.push(n.refFile)
+	return out
 }

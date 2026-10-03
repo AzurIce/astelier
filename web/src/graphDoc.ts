@@ -121,9 +121,8 @@ function defaultPosition(type: NodeType, index: number): { x: number; y: number 
 		model: 60,
 		prompt: 60,
 		image: 60,
-		store: 780,
 		generate: 420,
-		preview: 1120,
+		preview: 780,
 	}
 	return { x: col[type] ?? 60, y: 120 + index * 180 }
 }

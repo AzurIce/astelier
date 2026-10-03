@@ -1,8 +1,8 @@
 // 画布上「接收 store 图片」的共用 Svelte action。
 // 挂在节点的图片输入区域（LoadImage body / Generate / Preview）。
-// - H5 DnD（dragover/drop）：放行 preventDefault，读 rt.dragImage 或 dataTransfer
+// - H5 DnD（dragover/drop）：放行 preventDefault，从 dataTransfer 读图片 URL
 // - 视觉：dragover 期间给宿主加 class
-import { rt, type DragImagePayload } from '../runtime'
+import type { DragImagePayload } from './dragPayload'
 
 /** Svelte action 的最小类型（避免依赖 legacy 导出） */
 type ActionReturn = { destroy?: () => void }
@@ -19,7 +19,6 @@ export const acceptImageDrop: Action<HTMLElement, AcceptImageOptions> = (node, o
 	let inside = 0
 
 	function readPayload(e: DragEvent): DragImagePayload | null {
-		if (rt.dragImage) return rt.dragImage
 		const uri = e.dataTransfer?.getData('text/uri-list') || e.dataTransfer?.getData('text/plain')
 		if (!uri) return null
 		return { kind: 'store', url: uri, store: '', file: uri.split('/').pop() ?? '' }
@@ -62,7 +61,3 @@ export const acceptImageDrop: Action<HTMLElement, AcceptImageOptions> = (node, o
 	}
 }
 
-/** 判断一个 URL 是否 store 引用（用于区分 inline / store 两种节点态） */
-export function isStoreUrl(url: string): boolean {
-	return url.startsWith('/gstore/')
-}

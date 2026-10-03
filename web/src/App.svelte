@@ -7,6 +7,7 @@
 	import Toaster from './components/Toaster.svelte'
 	import ConfirmHost from './components/ConfirmHost.svelte'
 	import LightboxHost from './components/LightboxHost.svelte'
+import LibraryDock from './components/LibraryDock.svelte'
 	import Icon from './components/Icon.svelte'
 	import { toast } from './components/toast.svelte'
 	import { rt } from './runtime'
@@ -19,6 +20,7 @@
 	let saveState = $state<SaveState>('saved')
 	let title = $state('未命名图')
 	let nodeCount = $state(0)
+	let dockOpen = $state(true)
 
 	let sidebar: Sidebar | undefined = $state()
 	let palette: NodePalette | undefined = $state()
@@ -113,6 +115,8 @@
 		</div>
 	</div>
 </div>
+
+<LibraryDock collapsed={!dockOpen} ontoggle={() => (dockOpen = !dockOpen)} />
 
 <NodePalette bind:this={palette} />
 <Toaster />

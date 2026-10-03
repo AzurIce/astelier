@@ -29,13 +29,9 @@ export class PromptNode extends ClassicPreset.Node {
 
 export class LoadImageNode extends ClassicPreset.Node {
 	static type = 'image' as const
-	/** store 引用模式的 URL（/gstore/…）；inline 模式为空 */
-	assetUrl: string | null = null
 	fileName = ''
-	/** inline = 图片数据在浏览器 IndexedDB（不落服务端） */
-	inline = false
-	/** store 引用元信息 { store, file } */
-	ref: { store: string; file: string } | null = null
+	/** 图内 store 文件名（内联感知：UI 只认「这张图」，引用是实现细节） */
+	refFile: string | null = null
 	/** 展示用尺寸（store 引用时来自 manifest） */
 	w?: number
 	h?: number
@@ -62,15 +58,6 @@ export class GenerateNode extends ClassicPreset.Node {
 	}
 }
 
-export class StoreNode extends ClassicPreset.Node {
-	static type = 'store' as const
-	/** 当前绑定的 store 名（目录名 = 显示名） */
-	store = ''
-	constructor() {
-		super('Image Store')
-	}
-}
-
 export class PreviewNode extends ClassicPreset.Node {
 	static type = 'preview' as const
 	displayUrl: string | null = null
@@ -85,7 +72,6 @@ export type NodeTypes =
 	| PromptNode
 	| LoadImageNode
 	| GenerateNode
-	| StoreNode
 	| PreviewNode
 
 export const nodeFactories: Record<string, () => NodeTypes> = {
@@ -93,11 +79,10 @@ export const nodeFactories: Record<string, () => NodeTypes> = {
 	Prompt: () => new PromptNode(),
 	Image: () => new LoadImageNode(),
 	Generate: () => new GenerateNode(),
-	Store: () => new StoreNode(),
 	Preview: () => new PreviewNode(),
 }
 
-export type NodeType = 'model' | 'prompt' | 'image' | 'generate' | 'store' | 'preview'
+export type NodeType = 'model' | 'prompt' | 'image' | 'generate' | 'preview'
 
 /** 节点种类 → 工厂（文档 type 字符串与类一一对应） */
 export const factoriesByType: Record<NodeType, () => NodeTypes> = {
@@ -105,7 +90,6 @@ export const factoriesByType: Record<NodeType, () => NodeTypes> = {
 	prompt: () => new PromptNode(),
 	image: () => new LoadImageNode(),
 	generate: () => new GenerateNode(),
-	store: () => new StoreNode(),
 	preview: () => new PreviewNode(),
 }
 
@@ -114,7 +98,6 @@ export function typeOf(node: NodeTypes): NodeType {
 	if (node instanceof PromptNode) return 'prompt'
 	if (node instanceof LoadImageNode) return 'image'
 	if (node instanceof GenerateNode) return 'generate'
-	if (node instanceof StoreNode) return 'store'
 	return 'preview'
 }
 
@@ -125,13 +108,12 @@ export function nodeParams(node: NodeTypes): Record<string, string | number | bo
 	if (node instanceof PromptNode) return { text: node.text }
 	if (node instanceof LoadImageNode)
 		return {
-			assetUrl: node.assetUrl ?? '',
-			fileName: node.fileName,
-			inline: node.inline,
-			ref: node.ref,
-		}
+		fileName: node.fileName,
+		refFile: node.refFile,
+		...(node.w != null ? { w: node.w } : {}),
+		...(node.h != null ? { h: node.h } : {}),
+	}
 	if (node instanceof GenerateNode) return { ...node.params }
-	if (node instanceof StoreNode) return { store: node.store }
 	return {}
 }
 
@@ -142,18 +124,21 @@ export function applyParams(node: NodeTypes, params: Record<string, unknown>) {
 	} else if (node instanceof PromptNode) {
 		node.text = String(params.text ?? '')
 	} else if (node instanceof LoadImageNode) {
-		node.assetUrl = params.assetUrl ? String(params.assetUrl) : null
-		node.fileName = String(params.fileName ?? '')
-		node.inline = Boolean(params.inline)
-		node.ref =
-			params.ref && typeof params.ref === 'object'
-				? {
-						store: String((params.ref as { store?: unknown }).store ?? ''),
-						file: String((params.ref as { file?: unknown }).file ?? ''),
-					}
-				: null
-	} else if (node instanceof StoreNode) {
-		node.store = String(params.store ?? '')
+		let refFile = typeof params.refFile === 'string' ? params.refFile : null
+		// 过渡：旧文档存 /gstore/{gid}/{store}/{file}、{store,file} 引用或 inline data URL。
+		// data URL（base64 内联）不再支持 → 视为空引用，需重新上传
+		if (!refFile) {
+			const ref = params.ref as { file?: unknown } | undefined
+			if (ref && typeof ref.file === 'string' && ref.file) {
+				refFile = decodeURIComponent(ref.file)
+			} else if (typeof params.assetUrl === 'string' && (params.assetUrl as string).startsWith('/gstore/')) {
+				refFile = decodeURIComponent((params.assetUrl as string).split('/').pop() ?? '') || null
+			}
+		}
+		node.fileName = (String(params.fileName ?? '') || refFile) ?? ''
+		node.refFile = refFile
+		node.w = typeof params.w === 'number' ? params.w : undefined
+		node.h = typeof params.h === 'number' ? params.h : undefined
 	} else if (node instanceof GenerateNode) {
 		node.params = {}
 		for (const [k, v] of Object.entries(params)) {

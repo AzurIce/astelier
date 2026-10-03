@@ -1866,7 +1866,7 @@ body {
 	background: var(--ui-accent-weak);
 }
 
-/* 可拖拽图片（生成结果 / 预览）—— 拖入 Image Store 保存 */
+/* 可拖拽图片（生成结果 / 预览）—— 拖入底部「库」收藏 */
 .draggable-img {
 	cursor: grab;
 }

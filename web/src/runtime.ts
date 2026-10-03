@@ -8,19 +8,7 @@ import type { Schemes, AreaExtra } from './nodes/types'
 /** 正在执行生成的节点 id 集合（连线流动动画用） */
 export const runningNodes = new Set<string>()
 
-/** 跨节点拖拽载荷：从 image store 拖出的图片引用 */
-export interface DragImagePayload {
-	kind: 'store'
-	url: string
-	store: string
-	file: string
-	w?: number
-	h?: number
-}
-
 export const rt: {
-	/** 当前拖拽中的图片载荷（StoreNode → LoadImage / 画布） */
-	dragImage?: DragImagePayload | null
 	editor?: NodeEditor<Schemes>
 	area?: AreaPlugin<Schemes, AreaExtra>
 	providers: { id: string; name: string; models: string[] }[]

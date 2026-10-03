@@ -28,7 +28,7 @@
 			<button
 				type="button"
 				class="img-btn draggable-img"
-				title="点击查看大图 · 拖入 Image Store 保存"
+				title="点击查看大图 · 拖入底部「库」收藏"
 				draggable="true"
 				ondragstart={(e) => {
 					if (!e.dataTransfer || !data.displayUrl) return

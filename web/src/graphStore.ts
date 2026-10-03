@@ -133,3 +133,39 @@ async function flushView() {
 		console.error('保存画布视图失败', e)
 	}
 }
+
+// ---------- 图私有 image store（内联感知：UI 不可见） ----------
+
+export interface GraphStoreFileMeta {
+	name: string
+	w?: number
+	h?: number
+	bytes?: number
+}
+
+/** 图内 store 文件列表 */
+export async function fetchGraphStore(gid: string): Promise<GraphStoreFileMeta[]> {
+	const res = await fetch(`/api/graphs/${encodeURIComponent(gid)}/store`)
+	if (!res.ok) throw new Error(`读取图 store 失败（${res.status}）`)
+	return res.json()
+}
+
+/** 上传 / 复制进图内 store（文件名即引用） */
+export async function uploadGraphStoreFile(
+	gid: string,
+	name: string,
+	blob: Blob,
+): Promise<GraphStoreFileMeta> {
+	const res = await fetch(
+		`/api/graphs/${encodeURIComponent(gid)}/store?filename=${encodeURIComponent(name)}`,
+		{ method: 'POST', body: blob },
+	)
+	const body = await res.json().catch(() => null)
+	if (!res.ok) throw new Error(body?.error ?? `上传失败（${res.status}）`)
+	return body as GraphStoreFileMeta
+}
+
+/** 图内 store 静态 URL */
+export function graphStoreUrl(gid: string, name: string): string {
+	return `/gstore/${encodeURIComponent(gid)}/${encodeURIComponent(name)}`
+}

@@ -11,12 +11,22 @@
 // 注册信号，让 DOMSocketPosition 重算、位置监听者（连线）跟上。
 import { rt } from '../runtime'
 import { connKeys } from './conn'
-import { scheduleSave } from '../graphStore'
+import { scheduleSave, activeGraphId } from '../graphStore'
 
-/** 删除节点并级联清理相邻连线 */
+/**
+ * 删除节点并级联清理相邻连线。
+ * LoadImage 节点额外回收图内 store 文件：先记下被删节点引用的文件，删完
+ * 再扫其余节点的现役引用，只删「图内已无任何引用」的那些——删一个 LoadImage
+ * 不会误伤被其他节点共享的文件。
+ */
 export async function removeNodeCascade(nodeId: string): Promise<void> {
 	const editor = rt.editor
 	if (!editor) return
+	// 删除前抓被删节点的图内引用（removeNode 后实例就被销毁了）
+	const target = editor.getNode(nodeId) as unknown as { refFile?: string | null } | undefined
+	const orphanRefs = new Set<string>()
+	if (target?.refFile) orphanRefs.add(target.refFile)
+
 	for (const conn of editor.getConnections()) {
 		const k = connKeys(conn as unknown as Record<string, unknown>)
 		if (k.source === nodeId || k.target === nodeId) {
@@ -24,6 +34,30 @@ export async function removeNodeCascade(nodeId: string): Promise<void> {
 		}
 	}
 	await editor.removeNode(nodeId)
+
+	if (orphanRefs.size) await cleanupGraphStoreRefs(orphanRefs)
+}
+
+/** 删除一组图内引用文件（跳过仍被其他节点引用的） */
+async function cleanupGraphStoreRefs(refs: Set<string>): Promise<void> {
+	const gid = activeGraphId()
+	const editor = rt.editor
+	if (!gid || !editor) return
+	// 图内其余节点的现役引用
+	for (const n of editor.getNodes()) {
+		const l = n as unknown as { refFile?: string | null }
+		if (l.refFile) refs.delete(l.refFile)
+	}
+	for (const name of refs) {
+		try {
+			await fetch(
+				`/api/graphs/${encodeURIComponent(gid)}/store/${encodeURIComponent(name)}`,
+				{ method: 'DELETE' },
+			)
+		} catch {
+			// 后台回收失败无碍：文件只是残留磁盘，下次删图会跟着清
+		}
+	}
 }
 
 /** 触发节点组件重渲染（rete 的 svelte:component prop 更新路径）+ 节流落盘 */

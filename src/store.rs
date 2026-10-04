@@ -440,12 +440,6 @@ pub struct StoreFile {
     pub bytes: u64,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub struct StoreManifest {
-    #[serde(default)]
-    pub files: std::collections::BTreeMap<String, StoreFile>,
-}
-
 /// 图片文件名：单段 + 扩展名白名单（jpeg 归一为 jpg）
 pub fn safe_store_file(name: &str) -> Option<String> {
     if name.contains('/') || name.contains('\\') || name.contains("..") {
@@ -472,15 +466,7 @@ fn graph_store_dir(gid: &str) -> std::path::PathBuf {
     sub_dir(&["graphs", gid, "store"])
 }
 
-async fn read_manifest_at(root: &std::path::Path) -> StoreManifest {
-    read_json_at(&root.join("manifest.json")).await.unwrap_or_default()
-}
-
-async fn write_manifest_at(root: &std::path::Path, manifest: &StoreManifest) {
-    write_json_at(&root.join("manifest.json"), manifest).await;
-}
-
-/// 存入一张图（写文件 + 更新 manifest）；已存在同名则覆盖。返回元信息。
+/// 存入一张图（写文件，sniff 尺寸）；已存在同名则覆盖。返回元信息。
 async fn put_store_file(
     root: &std::path::Path,
     filename: &str,
@@ -497,53 +483,57 @@ async fn put_store_file(
         .await
         .map_err(|e| format!("写文件失败：{e}"))?;
     let (w, h) = sniff_dimensions(bytes);
-    let meta = StoreFile {
-        name: name.clone(),
+    Ok(StoreFile {
+        name,
         w,
         h,
         bytes: bytes.len() as u64,
-    };
-    let mut manifest = read_manifest_at(root).await;
-    manifest.files.insert(name, meta.clone());
-    write_manifest_at(root, &manifest).await;
-    Ok(meta)
+    })
 }
 
 async fn remove_store_file(root: &std::path::Path, name: &str) -> Result<(), String> {
     let name = safe_store_file(name).ok_or("文件名不合法")?;
-    let _ = tokio::fs::remove_file(root.join(&name)).await;
-    let mut manifest = read_manifest_at(root).await;
-    if manifest.files.remove(&name).is_some() {
-        write_manifest_at(root, &manifest).await;
-    }
+    tokio::fs::remove_file(root.join(&name))
+        .await
+        .map_err(|e| format!("删除文件失败：{e}"))?;
     Ok(())
 }
 
-/// 列出目录下全部图片（manifest 与磁盘并集，按名排序）
+/// 列出目录下全部图片（磁盘即唯一真相：逐文件读头 sniff 尺寸，按名排序）
 pub async fn list_store_files(root: &std::path::Path) -> Vec<StoreFile> {
-    let manifest = read_manifest_at(root).await;
-    let mut out: Vec<StoreFile> = manifest.files.values().cloned().collect();
+    drop_legacy_manifest(root).await;
+    let mut out: Vec<StoreFile> = Vec::new();
     if let Ok(mut rd) = tokio::fs::read_dir(root).await {
         while let Ok(Some(entry)) = rd.next_entry().await {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name == "manifest.json" || safe_store_file(&name).is_none() {
+            if safe_store_file(&name).is_none() {
                 continue;
             }
-            if out.iter().any(|f| f.name == name) {
-                continue;
-            }
-            // 磁盘上有、manifest 没有（旧数据/外部放入）：补一条
+            let path = entry.path();
             let bytes = entry.metadata().await.map(|m| m.len()).unwrap_or(0);
-            out.push(StoreFile {
-                name: name.clone(),
-                w: None,
-                h: None,
-                bytes,
-            });
+            let (w, h) = sniff_dimensions_file(&path).await;
+            out.push(StoreFile { name, w, h, bytes });
         }
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
+}
+
+/// 读文件头部 sniff 尺寸（≤256KB：覆盖 EXIF 抢占的 JPEG SOF；PNG/WebP 只需 30B）
+async fn sniff_dimensions_file(path: &std::path::Path) -> (Option<u32>, Option<u32>) {
+    use tokio::io::AsyncReadExt;
+    let Ok(mut f) = tokio::fs::File::open(path).await else {
+        return (None, None);
+    };
+    let mut buf = vec![0u8; 256 * 1024];
+    let n = f.read(&mut buf).await.unwrap_or(0);
+    sniff_dimensions(&buf[..n])
+}
+
+/// 一次性清理 legacy manifest.json：早期版本库有独立的 manifest，造成
+/// 「磁盘改了名 manifest 还是旧 key」的双事实来源；现在磁盘即真相，见到就删。
+async fn drop_legacy_manifest(root: &std::path::Path) {
+    let _ = tokio::fs::remove_file(root.join("manifest.json")).await;
 }
 
 // ---------- 全局库（data/stores/，层级：任意深度子目录） ----------
@@ -616,22 +606,13 @@ pub fn safe_store_path(path: &str) -> Option<String> {
     Some(joined)
 }
 
-/// 列全树：递归磁盘 + manifest 的 w/h 覆盖
+/// 列全树：磁盘即唯一真相（逐文件 sniff 尺寸）
 pub async fn list_global_store() -> StoreTree {
     let root = stores_root();
-    let manifest = read_manifest_at(&root).await;
+    drop_legacy_manifest(&root).await;
     let mut dirs: Vec<String> = Vec::new();
     let mut files: Vec<StoreFileEntry> = Vec::new();
     collect_tree(&root, "", &mut dirs, &mut files).await;
-    for f in files.iter_mut() {
-        if let Some(m) = manifest.files.get(&f.path) {
-            f.w = m.w;
-            f.h = m.h;
-            if f.bytes == 0 {
-                f.bytes = m.bytes;
-            }
-        }
-    }
     dirs.sort();
     files.sort_by(|a, b| a.path.cmp(&b.path));
     StoreTree { dirs, files }
@@ -666,10 +647,11 @@ async fn collect_tree(
             Box::pin(collect_tree(&entry.path(), &child_rel, dirs, files)).await;
         } else if safe_store_file(&name).is_some() {
             let bytes = entry.metadata().await.map(|m| m.len()).unwrap_or(0);
+            let (w, h) = sniff_dimensions_file(&entry.path()).await;
             files.push(StoreFileEntry {
                 path: child_rel,
-                w: None,
-                h: None,
+                w,
+                h,
                 bytes,
             });
         }
@@ -705,17 +687,6 @@ pub async fn save_global_store_file(
         .await
         .map_err(|e| format!("写文件失败：{e}"))?;
     let (w, h) = sniff_dimensions(bytes);
-    let mut manifest = read_manifest_at(&stores_root()).await;
-    manifest.files.insert(
-        rel.clone(),
-        StoreFile {
-            name: rel.clone(),
-            w,
-            h,
-            bytes: bytes.len() as u64,
-        },
-    );
-    write_manifest_at(&stores_root(), &manifest).await;
     Ok(StoreFileEntry {
         path: rel,
         w,
@@ -785,29 +756,7 @@ pub async fn move_global_store_path(from: &str, to: &str) -> Result<(), String> 
     tokio::fs::rename(&src, &dst)
         .await
         .map_err(|e| format!("移动失败：{e}"))?;
-    // manifest：命中前缀的整体改 key（目录移动时子文件一起搬）
-    let mut manifest = read_manifest_at(&stores_root()).await;
-    let from_prefix = format!("{from}/");
-    let to_prefix = format!("{to}/");
-    let mut moved: Vec<(String, StoreFile)> = Vec::new();
-    let keys: Vec<String> = manifest.files.keys().cloned().collect();
-    for k in keys {
-        if k == from {
-            if let Some(mut m) = manifest.files.remove(&k) {
-                m.name = to.clone();
-                moved.push((to.clone(), m));
-            }
-        } else if k.starts_with(&from_prefix) {
-            if let Some(mut m) = manifest.files.remove(&k) {
-                m.name = format!("{to_prefix}{}", &k[from_prefix.len()..]);
-                moved.push((m.name.clone(), m));
-            }
-        }
-    }
-    for (k, m) in moved {
-        manifest.files.insert(k, m);
-    }
-    write_manifest_at(&stores_root(), &manifest).await;
+    // 磁盘即真相：renaming 后无需同步任何索引
     Ok(())
 }
 
@@ -871,19 +820,6 @@ pub async fn delete_global_store_file(name: &str) -> Result<(), String> {
             // 磁盘上已不存在：可能是 manifest 残留，继续清 manifest
         }
     }
-    let mut manifest = read_manifest_at(&stores_root()).await;
-    let prefix = format!("{rel}/");
-    let keys: Vec<String> = manifest.files.keys().cloned().collect();
-    let mut changed = false;
-    for k in keys {
-        if k == rel || k.starts_with(&prefix) {
-            manifest.files.remove(&k);
-            changed = true;
-        }
-    }
-    if changed {
-        write_manifest_at(&stores_root(), &manifest).await;
-    }
     Ok(())
 }
 
@@ -924,16 +860,15 @@ pub async fn save_graph_store_file(
     put_store_file(&root, &name, bytes).await
 }
 
-/// 取一个未被占用（磁盘 + manifest 都没这个名）的 store 文件名：`x.png` → `x-2.png`
+/// 取一个磁盘上未被占用的 store 文件名：`x.png` → `x-2.png`
 async fn free_store_name(root: &std::path::Path, name: &str) -> String {
-    let manifest = read_manifest_at(root).await;
     let (stem, ext) = match name.rsplit_once('.') {
         Some((s, e)) => (s.to_string(), format!(".{e}")),
         None => (name.to_string(), String::new()),
     };
     for n in 2..1000 {
         let cand = format!("{stem}-{n}{ext}");
-        if !manifest.files.contains_key(&cand) && !root.join(&cand).exists() {
+        if !root.join(&cand).exists() {
             return cand;
         }
     }
@@ -948,22 +883,16 @@ pub async fn delete_graph_store_file(gid: &str, name: &str) -> Result<(), String
 pub async fn read_graph_store_file(gid: &str, name: &str) -> Result<Vec<u8>, String> {
     let name = safe_store_file(name).ok_or("文件名不合法")?;
     let dir = graph_store_dir(gid);
-    if !dir.join("manifest.json").exists() {
-        return Err("图 store 不存在".into());
-    }
     tokio::fs::read(dir.join(name))
         .await
         .map_err(|_| "图 store 里没有这个文件".into())
 }
 
-/// 图私有 store 里某个文件的元信息（manifest 优先，磁盘兜底）
+/// 图私有 store 里某个文件的元信息（读文件 sniff）
 pub async fn graph_store_file_meta(gid: &str, name: &str) -> Option<StoreFile> {
     let name = safe_store_file(name)?;
-    let manifest = read_manifest_at(&graph_store_dir(gid)).await;
-    if let Some(f) = manifest.files.get(&name) {
-        return Some(f.clone());
-    }
-    let bytes = tokio::fs::read(graph_store_dir(gid).join(&name)).await.ok()?;
+    let path = graph_store_dir(gid).join(&name);
+    let bytes = tokio::fs::read(&path).await.ok()?;
     let (w, h) = sniff_dimensions(&bytes);
     Some(StoreFile {
         name,
@@ -1115,15 +1044,39 @@ mod store_tests {
         assert!(!t4.files.iter().any(|f| f.path == "场景/a.png"));
         assert!(t4.files.iter().any(|f| f.path == "root.png"));
 
-        // 外置文件（磁盘有、manifest 无）也要被拾取
+        // 外置文件（用户直接从文件管理器放入）立即被拾取
         std::fs::create_dir_all(tmp.join("stores/外部")).unwrap();
         std::fs::write(tmp.join("stores/外部/x.png"), &png).unwrap();
         let t5 = list_global_store().await;
         assert!(t5.files.iter().any(|f| f.path == "外部/x.png"));
+        let ext = t5.files.iter().find(|f| f.path == "外部/x.png").unwrap();
+        assert_eq!((ext.w, ext.h), (Some(1580), Some(996)));
 
-        // 静态服务：层级路径 + 缓存头
-        let resp = serve_global_store_file(axum::extract::Path("外部/x.png".to_string())).await;
+        // 外部改名：磁盘是唯一真相，list 立即反映（无需同步任何索引）
+        std::fs::rename(
+            tmp.join("stores/外部/x.png"),
+            tmp.join("stores/外部/改名后.png"),
+        )
+        .unwrap();
+        let t6 = list_global_store().await;
+        assert!(t6.files.iter().any(|f| f.path == "外部/改名后.png"));
+        assert!(!t6.files.iter().any(|f| f.path == "外部/x.png"));
+
+        // legacy manifest.json：一次性清理（双事实来源时代的残留）
+        std::fs::write(
+            tmp.join("stores/manifest.json"),
+            r#"{"files":{"幽灵.png":{"name":"幽灵.png","bytes":1}}}"#,
+        )
+        .unwrap();
+        let t7 = list_global_store().await;
+        assert!(!t7.files.iter().any(|f| f.path == "幽灵.png"), "manifest 不得再作为数据来源");
+        assert!(!tmp.join("stores/manifest.json").exists(), "legacy manifest 应被清理");
+
+        // 静态服务：层级路径（改名后的新路径）+ 缓存头；旧路径 404
+        let resp = serve_global_store_file(axum::extract::Path("外部/改名后.png".to_string())).await;
         assert_eq!(resp.status(), StatusCode::OK);
+        let gone = serve_global_store_file(axum::extract::Path("外部/x.png".to_string())).await;
+        assert_eq!(gone.status(), StatusCode::NOT_FOUND);
         let bad = serve_global_store_file(axum::extract::Path("../x.png".to_string())).await;
         assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
 

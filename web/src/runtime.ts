@@ -1,12 +1,13 @@
 // 运行时共享单例：组件与执行器都要拿 editor/area 实例，
 // 用独立模块承载避免 editor ↔ components 循环依赖。
-// （普通 .ts：跨模块可变状态经函数/回调通信，不依赖响应式。）
+// Rete 实例保持普通对象，运行节点集合使用 Svelte 响应式集合。
+import { SvelteSet } from 'svelte/reactivity'
 import type { NodeEditor } from 'rete'
 import type { AreaPlugin } from 'rete-area-plugin'
 import type { Schemes, AreaExtra } from './nodes/types'
 
 /** 正在执行生成的节点 id 集合（连线流动动画用） */
-export const runningNodes = new Set<string>()
+export const runningNodes = new SvelteSet<string>()
 
 export const rt: {
 	editor?: NodeEditor<Schemes>

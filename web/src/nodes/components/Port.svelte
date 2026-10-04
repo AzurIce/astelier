@@ -2,7 +2,7 @@
 	import { Ref } from 'rete-svelte-plugin/5'
 	import type { AreaExtra } from '../types'
 	import type { ClassicPreset } from 'rete'
-	import type { NodeTypes } from '../classes'
+	import type { NodeTypes } from '../classes.svelte'
 
 	// 端口行：socket 圆点骑在节点左右边框上，标签贴在圆点内侧。
 	// 输入（左列）：圆点在左边缘；输出（右列）：圆点在右边缘。

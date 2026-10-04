@@ -2,7 +2,7 @@
 	import Icon from '../../components/Icon.svelte'
 	import type { IconName } from '../../design/icons'
 	import type { Snippet } from 'svelte'
-	import type { NodeType } from '../classes'
+	import type { NodeType } from '../classes.svelte'
 
 	// 节点外框：标题栏 + 左右端口列（输入左 / 输出右）+ 中列内容。
 	// 端口圆点骑在节点边框上（负半边），连线端点即圆点中心。

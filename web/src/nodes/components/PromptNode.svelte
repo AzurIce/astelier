@@ -6,7 +6,7 @@
 	import { editNode, removeNodeCascade } from '../actions'
 	import { noNodeDrag } from '../noNodeDrag'
 	import { noCanvasWheel } from '../../noCanvasWheel'
-	import type { PromptNode } from '../classes'
+	import type { PromptNode } from '../classes.svelte'
 
 	let { data, emit }: { data: PromptNode; emit: (p: AreaExtra) => void } = $props()
 

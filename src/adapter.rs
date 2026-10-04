@@ -4,16 +4,21 @@
 //! 转换为具体 API 调用。Phase 1 实现 OpenAI Images 兼容协议；
 //! 未来 seeddream / nano banana 等各加一个分支，UI 无感知。
 
-use crate::model::{AssetRef, ModelProfile, ParamMap, ParamValue, Provider, RunStatus, Usage};
-use crate::store;
+use crate::model::{ModelProfile, ParamMap, Provider, Usage};
+use base64::Engine;
+
+/// 本次调用的参考图字节；不复制到永久资产目录。
+pub struct InputImage {
+    pub bytes: Vec<u8>,
+    pub ext: String,
+}
 
 /// 渲染后的执行请求：prompt 已填好变量，图片已按发送顺序排列
 pub struct ExecRequest<'a> {
     pub prompt: &'a str,
     pub params: &'a ParamMap,
     /// 固定参考图在前、槽位图在后，顺序即 image[] 顺序
-    pub images: &'a [AssetRef],
-    pub mask: Option<&'a AssetRef>,
+    pub images: &'a [InputImage],
     pub model_id: &'a str,
     pub profile: &'a ModelProfile,
 }
@@ -47,12 +52,12 @@ fn normalize_base(base: &str) -> String {
 /// 2. `env:变量名` 显式引用
 /// 3. 纯大写+下划线的值（如 OPENAI_API_KEY）自动当作环境变量名读取
 /// 均在请求时从服务端进程的环境变量解析，密钥本身不落在配置文件里。
-fn resolve_api_key(stored: &str) -> Result<String, (RunStatus, String)> {
+fn resolve_api_key(stored: &str) -> Result<String, String> {
     let stored = stored.trim();
     if let Some(var) = stored.strip_prefix("env:") {
         let var = var.trim();
         if var.is_empty() {
-            return Err((RunStatus::Error, "env: 后缺少变量名".into()));
+            return Err("env: 后缺少变量名".into());
         }
         read_env_var(var)
     } else if is_env_name(stored) {
@@ -70,29 +75,26 @@ fn is_env_name(s: &str) -> bool {
         && s.chars().any(|c| c.is_ascii_alphabetic())
 }
 
-fn read_env_var(var: &str) -> Result<String, (RunStatus, String)> {
+fn read_env_var(var: &str) -> Result<String, String> {
     match std::env::var(var) {
         Ok(v) if !v.trim().is_empty() => Ok(v.trim().to_string()),
-        Ok(_) => Err((RunStatus::Error, format!("环境变量 {var} 的值为空"))),
-        Err(_) => Err((RunStatus::Error, format!(
+        Ok(_) => Err(format!("环境变量 {var} 的值为空")),
+        Err(_) => Err(format!(
             "环境变量 {var} 未设置（后端进程看不到它；若想直接填密钥，请用 sk-… 这样的字面值）"
-        ))),
+        )),
     }
 }
 
 pub struct GenOutcome {
-    pub images: Vec<AssetRef>,
+    pub image_urls: Vec<String>,
     pub usage: Option<Usage>,
 }
 
 /// 执行一次生成。图片非空走 edits（multipart），否则走 generations（JSON）。
-pub async fn execute(
-    provider: &Provider,
-    req: ExecRequest<'_>,
-) -> Result<GenOutcome, (RunStatus, String)> {
+pub async fn execute(provider: &Provider, req: ExecRequest<'_>) -> Result<GenOutcome, String> {
     let base = normalize_base(&provider.base_url);
     if base.is_empty() {
-        return Err((RunStatus::Error, "Provider 未配置 Base URL".into()));
+        return Err("Provider 未配置 Base URL".into());
     }
 
     let api_key = resolve_api_key(&provider.api_key)?;
@@ -100,10 +102,15 @@ pub async fn execute(
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(600))
         .build()
-        .map_err(|e| (RunStatus::Error, format!("HTTP client 初始化失败：{e}")))?;
+        .map_err(|e| format!("HTTP client 初始化失败：{e}"))?;
 
+    let endpoint = if req.images.is_empty() {
+        "generations"
+    } else {
+        "edits"
+    };
     let mut request = client
-        .post(format!("{base}/images/generations"))
+        .post(format!("{base}/images/{endpoint}"))
         .header("Authorization", format!("Bearer {}", api_key));
 
     if req.images.is_empty() {
@@ -124,68 +131,40 @@ pub async fn execute(
             .text("prompt", req.prompt.to_string());
 
         let multi = req.images.len() > 1;
-        for (i, r#ref) in req.images.iter().enumerate() {
-            let bytes = store::read_asset(r#ref)
-                .await
-                .map_err(|e| (RunStatus::Error, e))?;
-            let part = reqwest::multipart::Part::bytes(bytes)
-                .file_name(format!("image-{i}.{}", r#ref.ext));
-            form = if multi {
-                form.part("image[]", part)
-            } else {
-                form.part("image", part)
-            };
+        for (i, image) in req.images.iter().enumerate() {
+            let mime = image_mime(&image.ext);
+            let part = reqwest::multipart::Part::bytes(image.bytes.clone())
+                .file_name(format!("image-{i}.{}", image.ext))
+                .mime_str(mime)
+                .map_err(|e| format!("图片类型不合法：{e}"))?;
+            form = form.part(if multi { "image[]" } else { "image" }, part);
         }
-
-        if let Some(mask) = &req.mask {
-            let bytes = store::read_asset(mask)
-                .await
-                .map_err(|e| (RunStatus::Error, e))?;
-            form = form.part(
-                "mask",
-                reqwest::multipart::Part::bytes(bytes).file_name("mask.png"),
-            );
-        }
-
-        for (key, value) in req.params {
-            if value.is_unset() {
-                continue;
+        if let serde_json::Value::Object(extra) = params_to_body(req.profile, req.params) {
+            for (key, value) in extra {
+                let text = match value {
+                    serde_json::Value::String(s) => s,
+                    v => v.to_string(),
+                };
+                form = form.text(key, text);
             }
-            let Some(def) = req.profile.find_param(key) else { continue };
-            let api_key = def.api_key().to_string();
-            let text = match value {
-                ParamValue::Number(n) => {
-                    if n.fract() == 0.0 {
-                        format!("{}", *n as i64)
-                    } else {
-                        format!("{n}")
-                    }
-                }
-                ParamValue::Text(s) | ParamValue::Size(s) => s.clone(),
-                ParamValue::Unset => continue,
-            };
-            form = form.text(api_key, text);
         }
 
         request = request.multipart(form);
     }
 
-    let resp = request
-        .send()
-        .await
-        .map_err(|e| (RunStatus::Error, format!("请求失败：{e}")))?;
+    let resp = request.send().await.map_err(|e| format!("请求失败：{e}"))?;
 
     let status = resp.status();
     let bytes = resp
         .bytes()
         .await
-        .map_err(|e| (RunStatus::Error, format!("读取响应失败：{e}")))?;
+        .map_err(|e| format!("读取响应失败：{e}"))?;
 
     let json: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| {
         let text = String::from_utf8_lossy(&bytes);
-        (
-            RunStatus::Error,
-            format!("HTTP {status} · 响应不是 JSON：{}", &text[..text.len().min(300)]),
+        format!(
+            "HTTP {status} · 响应不是 JSON：{}",
+            text.chars().take(300).collect::<String>()
         )
     })?;
 
@@ -195,44 +174,41 @@ pub async fn execute(
             .and_then(|v| v.as_str())
             .map(str::to_string)
             .unwrap_or_else(|| format!("HTTP {status}"));
-        return Err((RunStatus::Error, msg));
+        return Err(msg);
     }
 
-    // 解析 data[]：b64_json 或 url
-    let mut images = vec![];
+    // 所有结果只留在响应内存中；前端显式收藏才持久化。
+    let mut image_urls = vec![];
     if let Some(items) = json.get("data").and_then(|v| v.as_array()) {
         for item in items {
-            if let Some(b64) = item.get("b64_json").and_then(|v| v.as_str()) {
-                use base64::Engine;
-                let bytes = base64::engine::general_purpose::STANDARD
+            let bytes = if let Some(b64) = item.get("b64_json").and_then(|v| v.as_str()) {
+                base64::engine::general_purpose::STANDARD
                     .decode(b64)
-                    .map_err(|e| (RunStatus::Error, format!("b64 解码失败：{e}")))?;
-                let ext = sniff_ext(&bytes);
-                let asset = store::save_asset(&bytes, ext)
-                    .await
-                    .map_err(|e| (RunStatus::Error, e))?;
-                images.push(asset);
+                    .map_err(|e| format!("b64 解码失败：{e}"))?
             } else if let Some(url) = item.get("url").and_then(|v| v.as_str()) {
-                let img = client
+                client
                     .get(url)
                     .send()
                     .await
-                    .map_err(|e| (RunStatus::Error, format!("拉取结果图失败：{e}")))?;
-                let bytes = img
+                    .map_err(|e| format!("拉取结果图失败：{e}"))?
+                    .error_for_status()
+                    .map_err(|e| format!("拉取结果图失败：{e}"))?
                     .bytes()
                     .await
-                    .map_err(|e| (RunStatus::Error, format!("拉取结果图失败：{e}")))?;
-                let ext = sniff_ext(&bytes);
-                let asset = store::save_asset(&bytes, ext)
-                    .await
-                    .map_err(|e| (RunStatus::Error, e))?;
-                images.push(asset);
-            }
+                    .map_err(|e| format!("拉取结果图失败：{e}"))?
+                    .to_vec()
+            } else {
+                continue;
+            };
+            let mime = image_mime(sniff_ext(&bytes));
+            image_urls.push(format!(
+                "data:{mime};base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(bytes)
+            ));
         }
     }
-
-    if images.is_empty() {
-        return Err((RunStatus::Error, "响应中没有图片数据".into()));
+    if image_urls.is_empty() {
+        return Err("响应中没有图片数据".into());
     }
 
     let usage = json.get("usage").map(|u| Usage {
@@ -244,7 +220,7 @@ pub async fn execute(
             .and_then(|v| v.as_u64()),
     });
 
-    Ok(GenOutcome { images, usage })
+    Ok(GenOutcome { image_urls, usage })
 }
 
 fn sniff_ext(bytes: &[u8]) -> &'static str {
@@ -258,5 +234,14 @@ fn sniff_ext(bytes: &[u8]) -> &'static str {
         "gif"
     } else {
         "png"
+    }
+}
+
+fn image_mime(ext: &str) -> &'static str {
+    match ext {
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        _ => "image/png",
     }
 }

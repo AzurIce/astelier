@@ -13,13 +13,12 @@
 		fetchGraphs,
 		fetchGroups,
 		moveGroup,
-		renameGraph,
 		renameGroup,
 		setGraphGroup,
 		type GraphGroup,
 		type GraphSummary,
 	} from './api'
-	import { activeGraphId, openGraph, setActiveGraphId } from './graphStore'
+	import { graphSession, openGraph, renameGraphAndSync } from './graphStore.svelte'
 
 	interface Row {
 		kind: 'dir' | 'graph'
@@ -31,7 +30,7 @@
 
 	let dirs: GraphGroup[] = $state([])
 	let graphs: GraphSummary[] = $state([])
-	let activeId = $state('')
+	let activeId = $derived(graphSession.id)
 	let expanded: Record<string, boolean> = $state({})
 	let loadError: string | null = $state(null)
 
@@ -130,7 +129,6 @@
 	async function refresh() {
 		try {
 			;[dirs, graphs] = await Promise.all([fetchGroups(), fetchGraphs()])
-			activeId = activeGraphId()
 			loadError = null
 		} catch (e) {
 			loadError = e instanceof Error ? e.message : String(e)
@@ -147,9 +145,6 @@
 	function open(row: Row) {
 		if (row.kind !== 'graph') return
 		openGraph(row.id)
-			.then(() => {
-				activeId = row.id
-			})
 			.catch((e) => toast({ kind: 'err', title: '打开失败', msg: String(e) }))
 	}
 
@@ -200,8 +195,7 @@
 			} else {
 				// 重命名会迁移图目录（目录名=图名），返回新 id；
 				// 改的是当前打开的图时同步本地活动记录
-				const { id: newId } = await renameGraph(id, name.trim())
-				if (id === activeId) setActiveGraphId(newId)
+				await renameGraphAndSync(id, name.trim())
 			}
 			await refresh()
 		} catch (e) {

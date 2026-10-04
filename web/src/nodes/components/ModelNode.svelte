@@ -5,7 +5,7 @@
 	import { rt } from '../../runtime'
 	import { editNode, removeNodeCascade } from '../actions'
 	import { noNodeDrag } from '../noNodeDrag'
-	import type { ModelNode } from '../classes'
+	import type { ModelNode } from '../classes.svelte'
 
 	let { data, emit }: { data: ModelNode; emit: (p: AreaExtra) => void } = $props()
 

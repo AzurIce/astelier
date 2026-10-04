@@ -4,8 +4,8 @@
 	import Icon from './components/Icon.svelte'
 	import type { IconName } from './design/icons'
 	import { rt } from './runtime'
-	import { scheduleSave } from './graphStore'
-	import { factoriesByType, type NodeType } from './nodes/classes'
+	import { graphSession, scheduleSave } from './graphStore.svelte'
+	import { factoriesByType, type NodeType } from './nodes/classes.svelte'
 
 	interface NodeDef {
 		type: NodeType
@@ -75,7 +75,7 @@
 		const area = rt.area
 		const el = document.getElementById('rete')
 		const factory = factoriesByType[def.type]
-		if (!editor || !area || !el || !factory) return
+		if (graphSession.loading || !editor || !area || !el || !factory) return
 		const rect = el.getBoundingClientRect()
 		const t = area.area.transform
 		const node = factory()

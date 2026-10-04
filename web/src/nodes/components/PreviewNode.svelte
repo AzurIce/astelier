@@ -5,7 +5,7 @@
 	import { openLightbox } from '../../components/lightbox.svelte'
 	import { removeNodeCascade } from '../actions'
 	import type { AreaExtra } from '../types'
-	import type { PreviewNode } from '../classes'
+	import type { PreviewNode } from '../classes.svelte'
 
 	let { data, emit }: { data: PreviewNode; emit: (p: AreaExtra) => void } = $props()
 </script>

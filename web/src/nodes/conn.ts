@@ -2,7 +2,7 @@
 // 独立小模块：editor.ts、exec、节点组件都要用，避免经 editor.ts 成环
 // （runtime 只有类型导入，这里引它不会产生运行时循环）。
 import { rt } from '../runtime'
-import { ModelNode } from './classes'
+import { ModelNode } from './classes.svelte'
 
 export function connKeys(c: Record<string, unknown>) {
 	const nodeId = (v: unknown) =>

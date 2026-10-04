@@ -6,13 +6,13 @@
 	import type { AreaExtra } from '../types'
 	import { toast } from '../../components/toast.svelte'
 	import { openLightbox } from '../../components/lightbox.svelte'
-	import { editNode, refreshNodeSockets, releaseGraphStoreFiles, removeNodeCascade } from '../actions'
+	import { editNode, releaseGraphStoreFiles, removeNodeCascade } from '../actions'
 	import { noNodeDrag } from '../noNodeDrag'
 	import { noCanvasWheel } from '../../noCanvasWheel'
 	import { acceptImageDrop } from '../acceptImageDrop'
-	import { activeGraphId, uploadGraphStoreFile, graphStoreUrl } from '../../graphStore'
+	import { activeGraphId, graphSession, uploadGraphStoreFile, graphStoreUrl } from '../../graphStore.svelte'
 	import { rt } from '../../runtime'
-	import { LoadImageNode, type ImageRef } from '../classes'
+	import { LoadImageNode, type ImageRef } from '../classes.svelte'
 	import { IMAGE_ORDER_MIME, writeImageDrag, type DragImagePayload } from '../dragPayload'
 	import { createImageImporter, type ImportProgress, type ImportReport, type ImageSource } from '../imageImport'
 
@@ -34,7 +34,7 @@
 			const node = rt.editor?.getNode(data.id)
 			return {
 				graphId,
-				isActive: () => activeGraphId() === graphId && node instanceof LoadImageNode && rt.editor?.getNode(node.id) === node,
+				isActive: () => !graphSession.loading && activeGraphId() === graphId && node instanceof LoadImageNode && rt.editor?.getNode(node.id) === node,
 				images: () => node instanceof LoadImageNode ? node.images : [],
 				append: (image) => {
 					let added = false
@@ -63,12 +63,13 @@
 		enqueue(images.map((image) => ({ kind: 'url', image })))
 	}
 	function remove(file: string) {
+		const persistent = !images.find((image) => image.file === file)?.dataUrl
 		editNode<LoadImageNode>(data.id, (node) => node.removeImage(file))
-		void releaseGraphStoreFiles([file])
+		if (persistent) void releaseGraphStoreFiles([file])
 		broken = new Set([...broken].filter((name) => name !== file))
 	}
 	function clearAll() {
-		const files = images.map((image) => image.file)
+		const files = images.filter((image) => !image.dataUrl).map((image) => image.file)
 		editNode<LoadImageNode>(data.id, (node) => { node.images = [] })
 		void releaseGraphStoreFiles(files)
 		report = null
@@ -103,8 +104,11 @@
 	}
 	function dragImage(e: DragEvent, image: ImageRef) {
 		if (!e.dataTransfer) return
-		writeImageDrag(e.dataTransfer, [{ kind: 'store', url: graphStoreUrl(activeGraphId(), image.file), store: activeGraphId(), file: image.file, w: image.w, h: image.h }])
+		writeImageDrag(e.dataTransfer, [{ kind: 'store', url: imageUrl(image), store: activeGraphId(), file: image.dataUrl ? image.name : image.file, w: image.w, h: image.h }])
 		e.dataTransfer.effectAllowed = 'copy'
+	}
+	function imageUrl(image: ImageRef): string {
+		return image.dataUrl ?? graphStoreUrl(activeGraphId(), image.file)
 	}
 
 	// 原生监听先于画布层执行，排序不会进入外部图片导入入口。
@@ -143,20 +147,11 @@
 			},
 		}
 	}
-	function observeSize(node: HTMLElement) {
-		let frame = 0
-		const observer = new ResizeObserver(() => {
-			cancelAnimationFrame(frame)
-			frame = requestAnimationFrame(() => refreshNodeSockets(data.id))
-		})
-		observer.observe(node)
-		return { destroy() { observer.disconnect(); cancelAnimationFrame(frame) } }
-	}
 </script>
 
 <NodeFrame nodeId={data.id} type="image" icon="image" name="Image" {title} {busy} selected={data.selected} ondelete={() => void removeNodeCascade(data.id)}>
 	{#snippet body()}
-		<div class="image-editor" use:noNodeDrag use:observeSize use:acceptImageDrop={{ onDrop: addUrls, onFiles: addFiles, onActiveChange: (active) => { over = active } }}>
+		<div class="image-editor" use:noNodeDrag use:acceptImageDrop={{ onDrop: addUrls, onFiles: addFiles, onActiveChange: (active) => { over = active } }}>
 			<input bind:this={input} class="file-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif" multiple aria-label="添加参考图片" onchange={(e) => {
 				addFiles(Array.from(e.currentTarget.files ?? []))
 				e.currentTarget.value = ''
@@ -172,11 +167,11 @@
 						{#each images as image, index (image.file)}
 							<li class="image-card" class:sorting={dragging === image.file} class:sort-target={sortOver === image.file} use:sortTarget={{ file: image.file, index }}>
 								<div class="image-preview">
-									<button type="button" class="preview-button" aria-label={`预览 ${image.name}`} title="点击预览 · 拖到其他 Image 节点或图片库" draggable="true" ondragstart={(e) => dragImage(e, image)} onclick={() => openLightbox(graphStoreUrl(activeGraphId(), image.file))}>
+									<button type="button" class="preview-button" aria-label={`预览 ${image.name}`} title="点击预览 · 拖到其他 Image 节点或图片库" draggable="true" ondragstart={(e) => dragImage(e, image)} onclick={() => openLightbox(imageUrl(image))}>
 										{#if broken.has(image.file)}
 											<span class="missing-image"><Icon name="alert" size={22} />图片不可用</span>
 										{:else}
-											<img src={graphStoreUrl(activeGraphId(), image.file)} alt={image.name} draggable="false" onerror={() => { broken = new Set([...broken, image.file]) }} />
+											<img src={imageUrl(image)} alt={image.name} draggable="false" onerror={() => { broken = new Set([...broken, image.file]) }} />
 										{/if}
 									</button>
 									<button type="button" class="order-handle" draggable="true" aria-label={`调整 ${image.name} 的顺序，当前位置 ${index + 1}`} title="拖动排序 · 聚焦后用方向键移动" ondragstart={(e) => startSort(e, image.file)} ondragend={endSort} onkeydown={(e) => sortKey(e, image.file, index)}>

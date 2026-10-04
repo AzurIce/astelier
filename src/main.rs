@@ -23,7 +23,8 @@ async fn main() {
     }
 
     // SPA：静态文件优先，其余路径回退 index.html（前端路由）
-    let spa = ServeDir::new(WEB_DIST).not_found_service(ServeFile::new(format!("{WEB_DIST}/index.html")));
+    let spa =
+        ServeDir::new(WEB_DIST).not_found_service(ServeFile::new(format!("{WEB_DIST}/index.html")));
 
     let app = axum::Router::new()
         .route("/asset/{name}", get(store::serve_asset))

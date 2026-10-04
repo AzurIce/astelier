@@ -7,18 +7,16 @@
 	import Toaster from './components/Toaster.svelte'
 	import ConfirmHost from './components/ConfirmHost.svelte'
 	import LightboxHost from './components/LightboxHost.svelte'
-import LibraryDock from './components/LibraryDock.svelte'
+	import LibraryDock from './components/LibraryDock.svelte'
 	import Icon from './components/Icon.svelte'
 	import { toast } from './components/toast.svelte'
 	import { rt } from './runtime'
-	import { fetchConfig, renameGraph, type ProviderInfo } from './api'
-	import { activeGraphId, ensureGraphAndLoad, onSaveState, setActiveGraphId, type SaveState } from './graphStore'
+	import { fetchConfig, type ProviderInfo } from './api'
+	import { activeGraphId, ensureGraphAndLoad, graphSession, renameGraphAndSync } from './graphStore.svelte'
 	import { createEditor, fitView } from './editor'
 
 	let ready = $state(false)
 	let running = $state(false)
-	let saveState = $state<SaveState>('saved')
-	let title = $state('未命名图')
 	let nodeCount = $state(0)
 	let dockOpen = $state(true)
 
@@ -30,7 +28,7 @@ import LibraryDock from './components/LibraryDock.svelte'
 	}
 
 	async function run() {
-		if (running) return
+		if (running || graphSession.loading) return
 		running = true
 		try {
 			const { runPipeline } = await import('./exec')
@@ -52,10 +50,7 @@ import LibraryDock from './components/LibraryDock.svelte'
 
 	async function renameTitle(next: string) {
 		try {
-			const { id } = await renameGraph(activeGraphId(), next)
-			title = next
-			// 重命名可能改变图 id（= 目录名）
-			if (id !== activeGraphId()) setActiveGraphId(id)
+			await renameGraphAndSync(activeGraphId(), next)
 			await sidebar?.refreshAndKeepActive()
 		} catch (e) {
 			toast({ kind: 'err', title: '重命名失败', msg: e instanceof Error ? e.message : String(e) })
@@ -75,11 +70,9 @@ import LibraryDock from './components/LibraryDock.svelte'
 		rt.onCanvasContextMenu = (cx, cy) => void palette?.openAt(cx, cy)
 		rt.onRunRequested = () => void run()
 		rt.onStructureChange = refreshStructure
-		onSaveState((s) => (saveState = s))
 
 		try {
-			const doc = await ensureGraphAndLoad()
-			title = doc?.title ?? '未命名图'
+			await ensureGraphAndLoad()
 			// 侧栏的 onMount 早于此处（子组件先挂载），当时图还没载入、
 			// activeId 读为空；载入后刷新一次才能高亮当前图
 			await sidebar?.refreshAndKeepActive()
@@ -96,8 +89,8 @@ import LibraryDock from './components/LibraryDock.svelte'
 <div class="shell">
 	<Sidebar bind:this={sidebar} />
 	<div class="main">
-		<Topbar {title} {saveState} {running} {ready} onRename={renameTitle} onRun={run} />
-		<div class="canvas-layer">
+		<Topbar title={graphSession.title} saveState={graphSession.saveState} {running} ready={ready && !graphSession.loading} onRename={renameTitle} onRun={run} />
+		<div class="canvas-layer" inert={graphSession.loading}>
 			<div id="rete"></div>
 			{#if ready && nodeCount === 0}
 				<div class="empty-canvas">

@@ -6,9 +6,7 @@
 //! （视图辅助 badges 等：React 前端接回模型选择 UI 前暂无调用方）
 #![allow(dead_code)]
 
-use crate::model::{
-    ApiKind, ModelProfile, ParamDef, ParamKind, ParamValue, RatioPreset, SizeRule,
-};
+use crate::model::{ApiKind, ModelProfile, ParamDef, ParamKind, ParamValue, RatioPreset, SizeRule};
 
 fn param(key: &str, label: &str, kind: ParamKind) -> ParamDef {
     ParamDef {
@@ -60,12 +58,18 @@ fn advanced(mut p: ParamDef) -> ParamDef {
 
 pub fn quality_def(opts: &[&str]) -> ParamDef {
     // 默认 = options 第一项（协议默认档）
-    first_option(with_options(param("quality", "画质", ParamKind::Select), opts))
+    first_option(with_options(
+        param("quality", "画质", ParamKind::Select),
+        opts,
+    ))
 }
 
 pub fn size_def(presets: &[&str], _custom_rule: Option<SizeRule>) -> ParamDef {
     // 自定义规则存放在 ModelProfile.size_rule，控件读取同一处
-    first_option(with_options(param("size", "尺寸", ParamKind::Size), presets))
+    first_option(with_options(
+        param("size", "尺寸", ParamKind::Size),
+        presets,
+    ))
 }
 
 pub fn n_def(max: f64) -> ParamDef {
@@ -83,7 +87,10 @@ pub fn background_def() -> ParamDef {
 
 pub fn moderation_def() -> ParamDef {
     first_option(advanced(in_group(
-        with_options(param("moderation", "审核", ParamKind::Select), &["auto", "low"]),
+        with_options(
+            param("moderation", "审核", ParamKind::Select),
+            &["auto", "low"],
+        ),
         "safety",
     )))
 }
@@ -100,7 +107,10 @@ pub fn output_format_def() -> ParamDef {
 
 pub fn output_compression_def() -> ParamDef {
     let mut p = advanced(in_group(
-        with_max(param("output_compression", "压缩率", ParamKind::Number), 100.0),
+        with_max(
+            param("output_compression", "压缩率", ParamKind::Number),
+            100.0,
+        ),
         "output",
     ));
     p.default_value = Some(ParamValue::Number(100.0));

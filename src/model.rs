@@ -3,14 +3,8 @@
 //! 核心思想：
 //! - 模型能力以 `ModelProfile`（含 params schema）元数据描述，请求使用统一的
 //!   `ParamKey → ParamValue` 表示；
-//! - **Run 不依赖任何模板**：run 就是把一套装配好的请求（`ResolvedRequest`）
-//!   发给 API。节点图上的生图节点是装配请求的发起入口；历史上以
-//!   「配方 + 输入」装配的批次仍以 `RunRequest` 快照形式保留可读可重放。
-//! - `Graph`（节点图）是创作入口。
-//!
-//! UI 前端已迁移至 web/（React + tldraw）；这里保留的视图辅助方法
-//! （relative_time / usage_text / params_for / compute_mp_size 等）
-//! 待前端 Feed、参数区接回时决定去留或下沉为 API。
+//! - Graph 保存节点结构与参数，GraphView 只保存布局和视口。
+//! - 运行状态与产物由前端节点在会话内持有，不建立运行档案。
 #![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
@@ -146,7 +140,8 @@ impl SizeRule {
             max_h: 2160,
             ratio_min: 1.0 / 3.0,
             ratio_max: 3.0,
-            note: "边长需被 16 整除 · 宽高比 1:3–3:1 · 上限 3840×2160（超 2560×1440 为实验性）".into(),
+            note: "边长需被 16 整除 · 宽高比 1:3–3:1 · 上限 3840×2160（超 2560×1440 为实验性）"
+                .into(),
         }
     }
 
@@ -234,9 +229,7 @@ impl ModelProfile {
         let fh = (pixels / r).sqrt();
         let mut s = 1.0f64;
         if let Some(rule) = &self.size_rule {
-            s = s
-                .min(rule.max_w as f64 / fw)
-                .min(rule.max_h as f64 / fh);
+            s = s.min(rule.max_w as f64 / fw).min(rule.max_h as f64 / fh);
         }
         let snap = |v: f64| -> u32 {
             let n = ((v / step as f64).round() as u64).max(1);
@@ -360,15 +353,13 @@ pub struct Graph {
     pub updated_at: u64,
 }
 
-/// 表现文档：布局 / 视口 / 最近产物缓存。可丢可重建，保存不推进 updated_at。
+/// 表现文档：布局 / 视口。可丢可重建，保存不推进 updated_at。
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct GraphView {
     #[serde(default)]
     pub positions: BTreeMap<String, Position>,
     #[serde(default)]
     pub viewport: Option<Viewport>,
-    #[serde(default)]
-    pub outputs: BTreeMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -386,20 +377,9 @@ pub struct Viewport {
 
 // ---------- 请求与校验 ----------
 
-/// 装配完成的最终请求 = 实际发送的内容。Run 的本质就是把它发给 API。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct ResolvedRequest {
-    pub prompt: String,
-    pub params: ParamMap,
-    /// 发送图片序列
-    pub images: Vec<AssetRef>,
-    pub mask: Option<AssetRef>,
-    pub mode: Mode,
-}
-
 /// 请求级校验：模型已选、图片总数上限、参数取值（按 profile 元数据）。
 /// 把缺失的协议参数补齐为档案默认值（「始终完整发送」）。
-/// UI 侧同样会填默认，这里是兜底：老图、直接调 /api/runs、重放的路径
+/// UI 侧同样会填默认，这里是兜底：老图、直接调 /api/generate 的路径
 /// 都保证发出的请求参数完整。text 类（default_value=None）不补。
 pub fn with_defaults(profile: &ModelProfile, params: &ParamMap) -> ParamMap {
     let mut out = params.clone();
@@ -427,7 +407,9 @@ pub fn validate_request(
         return Err(format!("图片总数超过上限 {} 张", profile.max_refs));
     }
     for (key, value) in params {
-        let Some(def) = profile.find_param(key) else { continue };
+        let Some(def) = profile.find_param(key) else {
+            continue;
+        };
         if let (Some(max), ParamValue::Number(n)) = (def.max, value) {
             if *n > max || *n < def.min.unwrap_or(f64::NEG_INFINITY) {
                 return Err(format!("「{}」超出范围", def.label));
@@ -444,15 +426,7 @@ pub fn validate_request(
     Ok(())
 }
 
-// ---------- 批次档案 ----------
-
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum RunStatus {
-    Running,
-    Done,
-    Error,
-}
+// ---------- 本次生成用量 ----------
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Usage {
@@ -464,154 +438,6 @@ pub struct Usage {
     pub total_tokens: Option<u64>,
     #[serde(default)]
     pub image_tokens: Option<u64>,
-}
-
-/// 模板快照：历史批次（配方时代）执行时刻的模板内容。仅作旧档回看，不再产生。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
-pub struct TemplateSnapshot {
-    pub provider_id: String,
-    pub model_id: String,
-    pub version: u32,
-    pub prompt_template: String,
-    pub params: ParamMap,
-    pub refs: Vec<AssetRef>,
-    pub mask: Option<AssetRef>,
-}
-
-/// mask 覆盖（旧档）。字段为 None = 跟随配方；Off = 显式不用；Custom = 用指定 mask。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum MaskOverride {
-    Off,
-    Custom(AssetRef),
-}
-
-/// 输入快照：历史批次（配方时代）执行时刻的输入内容。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
-pub struct InputSnapshot {
-    pub version: u32,
-    pub variables: BTreeMap<String, String>,
-    pub images: BTreeMap<String, AssetRef>,
-    pub extra_refs: Vec<AssetRef>,
-    pub mask_override: Option<MaskOverride>,
-    pub param_overrides: ParamMap,
-}
-
-/// 配方时代的完整快照 = 模板 + 输入 + 最终请求。仅旧批次持有。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct RunRequest {
-    pub template: TemplateSnapshot,
-    pub input: InputSnapshot,
-    pub resolved: ResolvedRequest,
-}
-
-/// 一次生成 = 一个批次。新批次直接归档最终请求（`resolved`）与来源
-/// 节点（`graph_id`/`node_id`）；旧批次归档 `request`（配方快照）或
-/// 仅 legacy 字段。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct Run {
-    pub id: String,
-    /// 旧结构：出自哪个配方（节点图批次为空）
-    #[serde(default)]
-    pub recipe_id: String,
-    /// 旧结构：出自哪个输入
-    #[serde(default)]
-    pub input_id: Option<String>,
-    /// 执行时配方版本号（旧批次）
-    #[serde(default)]
-    pub recipe_version: u32,
-    /// 执行时输入版本号（旧批次）
-    #[serde(default)]
-    pub input_version: u32,
-    pub provider_id: String,
-    pub model_id: String,
-    pub mode: Mode,
-    /// 配方时代快照；None = 非配方批次
-    #[serde(default)]
-    pub request: Option<RunRequest>,
-    /// 出自哪个节点图 / 图上哪个节点（新批次）
-    #[serde(default)]
-    pub graph_id: Option<String>,
-    #[serde(default)]
-    pub node_id: Option<String>,
-    /// 最终请求归档：实际发送的内容（新批次一律有）
-    #[serde(default)]
-    pub resolved: Option<ResolvedRequest>,
-    /// 若本批次是对另一批次的快照重放，记录原批次 id
-    #[serde(default)]
-    pub rerun_of: Option<String>,
-    pub status: RunStatus,
-    #[serde(default)]
-    pub error: Option<String>,
-    #[serde(default)]
-    pub images: Vec<AssetRef>,
-    #[serde(default)]
-    pub usage: Option<Usage>,
-    pub created_at: u64,
-    #[serde(default)]
-    pub duration_ms: Option<u64>,
-    // ---- legacy：旧版批次专用，新批次不再写入 ----
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub prompt: String,
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub params: ParamMap,
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub ref_count: usize,
-}
-
-fn is_zero(n: &usize) -> bool {
-    *n == 0
-}
-
-impl Run {
-    /// 渲染后的完整 prompt（新批次归档 → 配方快照 → legacy 字段）
-    pub fn display_prompt(&self) -> &str {
-        if let Some(req) = &self.request {
-            return &req.resolved.prompt;
-        }
-        if let Some(resolved) = &self.resolved {
-            return &resolved.prompt;
-        }
-        &self.prompt
-    }
-
-    /// 实际发送的图片序列；未知 → None
-    pub fn sent_images(&self) -> Option<&[AssetRef]> {
-        if let Some(req) = &self.request {
-            return Some(req.resolved.images.as_slice());
-        }
-        self.resolved.as_ref().map(|r| r.images.as_slice())
-    }
-
-    /// 实际发送图片数量
-    pub fn image_count(&self) -> usize {
-        self.sent_images().map(|s| s.len()).unwrap_or(self.ref_count)
-    }
-
-    /// 最终生效参数
-    pub fn effective_params(&self) -> &ParamMap {
-        if let Some(req) = &self.request {
-            return &req.resolved.params;
-        }
-        if let Some(resolved) = &self.resolved {
-            return &resolved.params;
-        }
-        &self.params
-    }
-
-    /// 是否出自节点图
-    pub fn from_graph(&self) -> bool {
-        self.graph_id.is_some()
-    }
-}
-
-fn truncate_label(s: &str) -> String {
-    if s.chars().count() > 42 {
-        let head: String = s.chars().take(42).collect();
-        format!("{head}…")
-    } else {
-        s.to_string()
-    }
 }
 
 #[cfg(test)]
@@ -631,9 +457,18 @@ mod tests {
         // 具体默认值抽查
         assert_eq!(full.get("quality"), Some(&ParamValue::Text("auto".into())));
         assert_eq!(full.get("size"), Some(&ParamValue::Text("auto".into())));
-        assert_eq!(full.get("background"), Some(&ParamValue::Text("auto".into())));
-        assert_eq!(full.get("output_format"), Some(&ParamValue::Text("png".into())));
-        assert_eq!(full.get("input_fidelity"), Some(&ParamValue::Text("low".into())));
+        assert_eq!(
+            full.get("background"),
+            Some(&ParamValue::Text("auto".into()))
+        );
+        assert_eq!(
+            full.get("output_format"),
+            Some(&ParamValue::Text("png".into()))
+        );
+        assert_eq!(
+            full.get("input_fidelity"),
+            Some(&ParamValue::Text("low".into()))
+        );
         assert_eq!(full.get("n"), Some(&ParamValue::Number(1.0)));
         assert_eq!(
             full.get("output_compression"),
@@ -645,28 +480,10 @@ mod tests {
         // 显式值不被默认覆盖
         let with_size = with_defaults(&profile, &full);
         assert_eq!(with_size.get("quality"), full.get("quality"));
-        assert_eq!(with_size.get("size"), Some(&ParamValue::Text("auto".into())));
-    }
-
-    fn asset(id: &str) -> AssetRef {
-        AssetRef {
-            id: id.into(),
-            ext: "png".into(),
-            w: None,
-            h: None,
-        }
-    }
-
-    fn resolved(prompt: &str) -> ResolvedRequest {
-        ResolvedRequest {
-            prompt: prompt.into(),
-            params: [("size".to_string(), ParamValue::Size("1024x1024".into()))]
-                .into_iter()
-                .collect(),
-            images: vec![asset("out1")],
-            mask: None,
-            mode: Mode::Gen,
-        }
+        assert_eq!(
+            with_size.get("size"),
+            Some(&ParamValue::Text("auto".into()))
+        );
     }
 
     #[test]
@@ -724,12 +541,13 @@ mod tests {
     #[test]
     fn graph_view_roundtrip() {
         let mut v = GraphView::default();
-        v.positions.insert(
-            "n1".into(),
-            Position { x: 10.0, y: 20.0 },
-        );
-        v.viewport = Some(Viewport { x: -5.0, y: 0.0, zoom: 1.2 });
-        v.outputs.insert("n2".into(), "/asset/x.png".into());
+        v.positions
+            .insert("n1".into(), Position { x: 10.0, y: 20.0 });
+        v.viewport = Some(Viewport {
+            x: -5.0,
+            y: 0.0,
+            zoom: 1.2,
+        });
         let s = serde_json::to_string(&v).unwrap();
         let back: GraphView = serde_json::from_str(&s).unwrap();
         assert_eq!(back, v);
@@ -753,101 +571,6 @@ mod tests {
             let s = serde_json::to_string(&v).unwrap();
             assert_eq!(serde_json::from_str::<ParamValue>(&s).unwrap(), v);
         }
-    }
-
-    #[test]
-    fn graph_run_json_roundtrip() {
-        let run = Run {
-            id: "x".into(),
-            recipe_id: String::new(),
-            input_id: None,
-            recipe_version: 0,
-            input_version: 0,
-            provider_id: "p1".into(),
-            model_id: "m1".into(),
-            mode: Mode::Gen,
-            request: None,
-            graph_id: Some("g1".into()),
-            node_id: Some("n1".into()),
-            resolved: Some(resolved("一只猫")),
-            rerun_of: None,
-            status: RunStatus::Done,
-            error: None,
-            images: vec![asset("out1")],
-            usage: None,
-            created_at: 1,
-            duration_ms: Some(2),
-            prompt: String::new(),
-            params: Default::default(),
-            ref_count: 0,
-        };
-        let bytes = serde_json::to_vec(&run).unwrap();
-        let text = String::from_utf8(bytes).unwrap();
-        assert!(!text.contains("\"ref_count\""), "新批次不序列化 legacy 字段");
-        let back: Run = serde_json::from_slice(&text.as_bytes()).unwrap();
-        assert_eq!(back.display_prompt(), "一只猫");
-        assert_eq!(back.image_count(), 1);
-        assert!(back.from_graph());
-    }
-
-    #[test]
-    fn legacy_run_json_still_parses() {
-        // 旧版批次文件：没有 request/graph_id/resolved 等字段
-        let old = r#"{
-            "id": "abc",
-            "recipe_id": "r1",
-            "input_id": "i1",
-            "recipe_version": 2,
-            "provider_id": "p1",
-            "model_id": "m1",
-            "mode": "edit",
-            "prompt": "旧 prompt",
-            "params": {"quality": {"t": "unset"}},
-            "ref_count": 3,
-            "status": "done",
-            "images": [],
-            "created_at": 123
-        }"#;
-        let run: Run = serde_json::from_str(old).unwrap();
-        assert!(run.request.is_none());
-        assert!(run.resolved.is_none());
-        assert_eq!(run.display_prompt(), "旧 prompt");
-        assert_eq!(run.image_count(), 3);
-        assert_eq!(run.input_version, 0);
-        assert!(!run.from_graph());
-    }
-
-    #[test]
-    fn recipe_run_json_with_snapshot_still_parses() {
-        // 配方时代批次：request 快照可读，且读接口回退顺序正确
-        let old = r#"{
-            "id": "abc",
-            "recipe_id": "r1",
-            "provider_id": "p1",
-            "model_id": "m1",
-            "mode": "gen",
-            "request": {
-                "template": {
-                    "provider_id": "p1", "model_id": "m1", "version": 3,
-                    "prompt_template": "", "params": {}, "refs": [], "mask": null
-                },
-                "input": {
-                    "version": 1, "variables": {}, "images": {},
-                    "extra_refs": [], "mask_override": null, "param_overrides": {}
-                },
-                "resolved": {
-                    "prompt": "快照 prompt", "params": {}, "images": [],
-                    "mask": null, "mode": "gen"
-                }
-            },
-            "status": "done",
-            "images": [],
-            "created_at": 123,
-            "prompt": "legacy prompt"
-        }"#;
-        let run: Run = serde_json::from_str(old).unwrap();
-        assert_eq!(run.display_prompt(), "快照 prompt");
-        assert!(run.sent_images().is_some());
     }
 }
 

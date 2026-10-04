@@ -8,7 +8,8 @@
 	import type { ParamDef } from '../../profiles'
 	import { editNode, removeNodeCascade } from '../actions'
 	import { noNodeDrag } from '../noNodeDrag'
-	import type { GenerateNode } from '../classes'
+	import type { GenerateNode } from '../classes.svelte'
+	import { writeImageDrag } from '../dragPayload'
 
 	let { data, emit }: { data: GenerateNode; emit: (p: AreaExtra) => void } = $props()
 	let mainParams = $derived(OPENAI_IMAGE_PARAMS.filter((p) => !p.advanced))
@@ -86,17 +87,23 @@
 			</div>
 		{/if}
 
-		{#if data.resultUrl && !data.busy}
+		{#each data.busy ? [] : data.resultUrls as url, index}
 			<button
 				type="button"
 				class="img-btn"
-				title="点击查看大图"
+				title="点击查看大图 · 拖入图片库收藏"
+				draggable="true"
+				ondragstart={(e) => {
+					if (!e.dataTransfer) return
+					writeImageDrag(e.dataTransfer, [{ kind: 'store', url, store: '', file: `generated-${index + 1}.png` }])
+					e.dataTransfer.effectAllowed = 'copy'
+				}}
 				use:noNodeDrag
-				onclick={() => data.resultUrl && openLightbox(data.resultUrl)}
+				onclick={() => openLightbox(url)}
 			>
-				<img class="ui-img thumbnail result-img" src={data.resultUrl} alt="生成结果" />
+				<img class="ui-img thumbnail result-img" src={url} alt={`生成结果 ${index + 1}`} draggable="false" />
 			</button>
-		{/if}
+		{/each}
 	{/snippet}
 
 	{#snippet outputs()}

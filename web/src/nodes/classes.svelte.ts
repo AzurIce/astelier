@@ -10,8 +10,8 @@ export const sockets = {
 
 export class ModelNode extends ClassicPreset.Node {
 	static type = 'model' as const
-	provider = ''
-	modelId = ''
+	provider = $state('')
+	modelId = $state('')
 	constructor() {
 		super('Model')
 		this.addOutput('model', new ClassicPreset.Output(sockets.model))
@@ -20,7 +20,7 @@ export class ModelNode extends ClassicPreset.Node {
 
 export class PromptNode extends ClassicPreset.Node {
 	static type = 'prompt' as const
-	text = ''
+	text = $state('')
 	constructor() {
 		super('Prompt')
 		this.addOutput('text', new ClassicPreset.Output(sockets.text))
@@ -29,6 +29,8 @@ export class PromptNode extends ClassicPreset.Node {
 
 /** 节点引用的一张图：图内 store 文件名（内联感知：UI 只认「这张图」） */
 export interface ImageRef {
+	/** 未收藏产物的会话内图片，不写入图文档。 */
+	dataUrl?: string
 	/** 图内 store 文件名（即引用） */
 	file: string
 	/** 展示名（默认同 file） */
@@ -43,7 +45,7 @@ export interface ImageRef {
 export class LoadImageNode extends ClassicPreset.Node {
 	static type = 'image' as const
 	/** 多张参考图；顺序即发送给上游的 image[] 顺序 */
-	images: ImageRef[] = []
+	images = $state<ImageRef[]>([])
 	constructor() {
 		super('Image')
 		this.addOutput('image', new ClassicPreset.Output(sockets.image))
@@ -80,10 +82,10 @@ export class LoadImageNode extends ClassicPreset.Node {
 export class GenerateNode extends ClassicPreset.Node {
 	static type = 'generate' as const
 	/** 已设置的参数（统一键 → 值）；缺失键 = 默认（不随请求发送） */
-	params: Record<string, string | number | boolean | object | null> = {}
-	resultUrl: string | null = null
-	busy = false
-	error: string | null = null
+	params = $state<Record<string, string | number | boolean | object | null>>({})
+	resultUrls = $state<string[]>([])
+	busy = $state(false)
+	error = $state<string | null>(null)
 	constructor() {
 		super('Generate')
 		this.addInput('model', new ClassicPreset.Input(sockets.model, 'model'))
@@ -96,7 +98,7 @@ export class GenerateNode extends ClassicPreset.Node {
 
 export class PreviewNode extends ClassicPreset.Node {
 	static type = 'preview' as const
-	displayUrl: string | null = null
+	displayUrl = $state<string | null>(null)
 	constructor() {
 		super('Preview')
 		this.addInput('image', new ClassicPreset.Input(sockets.image, 'image'))
@@ -142,8 +144,8 @@ export function nodeParams(node: NodeTypes): Record<string, string | number | bo
 	if (node instanceof ModelNode)
 		return { provider: node.provider, modelId: node.modelId }
 	if (node instanceof PromptNode) return { text: node.text }
-	if (node instanceof LoadImageNode) return { images: node.images.map((i) => ({ ...i })) }
-	if (node instanceof GenerateNode) return { ...node.params }
+	if (node instanceof LoadImageNode) return { images: node.images.filter((i) => !i.dataUrl).map((i) => ({ ...i })) }
+	if (node instanceof GenerateNode) return $state.snapshot(node.params)
 	return {}
 }
 
@@ -204,24 +206,12 @@ export function applyParams(node: NodeTypes, params: Record<string, unknown>) {
 			node.params[k] = typeof v === 'number' ? v : String(v)
 		}
 		// 始终完整发送：缺失的协议参数按档案默认补齐（老图 / 直连接口兜底，
-		// 与后端 launch_run 的归一化同规则）
+		// 与后端生成请求的归一化同规则）
 		for (const p of OPENAI_IMAGE_PARAMS) {
 			if (p.key in node.params) continue
 			node.params[p.key] = typeof p.def === 'number' ? p.def : String(p.def ?? '')
 		}
 	}
-}
-
-/** 最近产物缓存（表现信息）：generate 结果 / preview 展示 */
-export function outputOf(node: NodeTypes): string | null {
-	if (node instanceof GenerateNode) return node.resultUrl
-	if (node instanceof PreviewNode) return node.displayUrl
-	return null
-}
-
-export function applyOutput(node: NodeTypes, url: string | null) {
-	if (node instanceof GenerateNode) node.resultUrl = url
-	else if (node instanceof PreviewNode) node.displayUrl = url
 }
 
 /**
@@ -234,6 +224,7 @@ export function imageRefsOf(node: unknown): string[] {
 	const out: string[] = []
 	if (Array.isArray(n.images)) {
 		for (const i of n.images) {
+			if ((i as { dataUrl?: unknown })?.dataUrl) continue
 			const file = (i as { file?: unknown })?.file
 			if (typeof file === 'string' && file) out.push(file)
 		}

@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createImageImporter, sourceName, type ImageSource, type ImportReport } from './imageImport.ts'
 import { IMAGE_DRAG_MIME, readImageDrag, writeImageDrag } from './dragPayload.ts'
-import type { ImageRef } from './classes'
+import type { ImageRef } from './classes.svelte'
 import { createHash } from 'node:crypto'
 import { sha256Fallback } from './imageHash.ts'
 
@@ -106,4 +106,14 @@ test('URI 名字移除查询串并解码；坏百分号不会使批量导入崩�
 	assert.equal(sourceName({ kind: 'url', image: { kind: 'store', url: 'https://example.test/%E7%8C%AB.png?token=123', store: '', file: '' } }), '猫.png')
 	assert.equal(sourceName({ kind: 'url', image: { kind: 'store', url: '/store/bad%name.png', store: '', file: '' } }), 'bad%name.png')
 	assert.equal(sourceName({ kind: 'url', image: { kind: 'store', url: 'data:image/png;base64,AAAA', store: '', file: '' } }), 'image.png')
+})
+
+test('生成结果拖入 Image 节点只创建会话引用，不上传或自动归档', async () => {
+	const s = setup()
+	const url = 'data:image/png;base64,iVBORw0KGgoB'
+	await s.importer.enqueue([{ kind: 'url', image: { kind: 'store', url, file: 'generated.png', store: '' } }])
+	assert.deepEqual(s.uploads, [])
+	assert.equal(s.images.length, 1)
+	assert.equal(s.images[0].dataUrl, url)
+	assert.equal(s.reports[0].added, 1)
 })

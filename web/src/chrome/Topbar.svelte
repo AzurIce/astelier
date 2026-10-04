@@ -3,7 +3,7 @@
 	import IconButton from '../components/IconButton.svelte'
 	import SkinSwitcher from './SkinSwitcher.svelte'
 	import { design } from '../design/store.svelte'
-	import type { SaveState } from '../graphStore'
+	import type { SaveState } from '../graphStore.svelte'
 
 	// 顶栏：品牌 / 图名（内联改名）/ 保存状态 / 皮肤切换 / 明暗 / Run
 	let {
@@ -40,6 +40,7 @@
 		saved: '已保存',
 		dirty: '未保存',
 		saving: '保存中',
+		error: '保存失败',
 	}
 </script>
 
@@ -61,7 +62,7 @@
 			onblur={() => void commit()}
 		/>
 	{:else}
-		<button type="button" class="graph-title" onclick={startEdit} title="点击重命名">
+		<button type="button" class="graph-title" onclick={startEdit} disabled={!ready} title="点击重命名">
 			<Icon name="graph" size={14} />
 			<span class="name">{title}</span>
 			<Icon name="pencil" size={12} />
@@ -103,6 +104,9 @@
 </div>
 
 <style>
+	.save-dot.error .dot {
+		background: var(--ui-danger);
+	}
 	.rename {
 		height: 26px;
 		padding: 0 8px;

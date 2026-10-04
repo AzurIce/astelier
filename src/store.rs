@@ -4,15 +4,17 @@
 //! data/
 //! ├── config.json            Provider 配置
 //! ├── groups.json            节点图分组（文件夹）
-//! ├── assets/{id}.{ext}      全部图片资产（统一池，被各方按 id 引用）
+//! ├── assets/{id}.{ext}      显式上传的独立图片（生成不写入）
 //! ├── graphs/{gid}/
-//! │   └── graph.json         节点图：节点（种类/位置/装配内容）+ 连线
-//! └── runs/{run_id}.json     批次档案：状态 + 最终请求归档（旧批次为配方快照）
+//! │   ├── graph.json         节点图：节点（种类/参数）+ 连线
+//! │   ├── view.json          布局和视口
+//! │   └── store/             图内导入的参考图
+//! └── stores/               用户显式收藏的图片库
 //! ```
 //!
 //! 单用户本地工具，JSON 落盘足够；写入用 tmp+rename 原子替换。
 
-use crate::model::{AssetRef, Config, Graph, GraphGroup, GraphView, Run};
+use crate::model::{AssetRef, Config, Graph, GraphGroup, GraphView};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::de::DeserializeOwned;
@@ -25,7 +27,7 @@ const DATA_DIR: &str = "data";
 static STORE_LOCK: Mutex<()> = Mutex::const_new(());
 
 /// 数据根目录。可用 ATELIER_DATA_DIR 覆盖（多实例隔离 / 测试用），
-/// 默认 data/。注意多个实例共用同一目录时互相对彼此的图、批次可见。
+/// 默认 data/。注意多个实例共用同一目录时互相对彼此的图和图片库可见。
 fn dir() -> PathBuf {
     let root = std::env::var("ATELIER_DATA_DIR").unwrap_or_else(|_| DATA_DIR.to_string());
     Path::new(&root).to_path_buf()
@@ -51,25 +53,30 @@ async fn read_json<T: DeserializeOwned>(rel: &[&str]) -> Option<T> {
 }
 
 /// 无锁内部写。仅供已持有 STORE_LOCK 的调用方使用。
-async fn write_json_at_unlocked<T: serde::Serialize>(path: &Path, value: &T) {
+async fn write_json_at_unlocked<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        let _ = tokio::fs::create_dir_all(parent).await;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("创建保存目录失败：{e}"))?;
     }
+    let bytes = serde_json::to_vec_pretty(value).map_err(|e| format!("序列化失败：{e}"))?;
     let tmp = path.with_extension("tmp");
-    if let Ok(bytes) = serde_json::to_vec_pretty(value) {
-        if tokio::fs::write(&tmp, &bytes).await.is_ok() {
-            let _ = tokio::fs::rename(&tmp, &path).await;
-        }
-    }
+    tokio::fs::write(&tmp, &bytes)
+        .await
+        .map_err(|e| format!("写入失败：{e}"))?;
+    tokio::fs::rename(&tmp, path)
+        .await
+        .map_err(|e| format!("替换保存文件失败：{e}"))?;
+    Ok(())
 }
 
-async fn write_json_at<T: serde::Serialize>(path: &Path, value: &T) {
+async fn write_json_at<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), String> {
     let _guard = STORE_LOCK.lock().await;
-    write_json_at_unlocked(path, value).await;
+    write_json_at_unlocked(path, value).await
 }
 
-async fn write_json<T: serde::Serialize>(rel: &[&str], value: &T) {
-    write_json_at(&sub_dir(rel), value).await;
+async fn write_json<T: serde::Serialize>(rel: &[&str], value: &T) -> Result<(), String> {
+    write_json_at(&sub_dir(rel), value).await
 }
 
 // ---------- config ----------
@@ -116,7 +123,7 @@ fn default_config() -> Config {
 }
 
 pub async fn save_config(cfg: &Config) {
-    write_json(&["config.json"], cfg).await;
+    let _ = write_json(&["config.json"], cfg).await;
 }
 
 // ---------- groups（节点图分组）----------
@@ -134,11 +141,11 @@ pub async fn save_group(group: &GraphGroup) {
     } else {
         v.push(group.clone());
     }
-    write_json(&["groups.json"], &v).await;
+    let _ = write_json(&["groups.json"], &v).await;
 }
 
 pub async fn write_groups(groups: &[GraphGroup]) {
-    write_json(&["groups.json"], &groups).await;
+    let _ = write_json(&["groups.json"], &groups).await;
 }
 
 /// 删除目录及其全部子目录（递归）；其中的图回到未分组（图是资产，不连带删）。
@@ -169,17 +176,17 @@ pub async fn delete_group(id: &str) {
         {
             let mut g = graph;
             g.group_id = None;
-            write_json(&["graphs", &g.id, "graph.json"], &g).await;
+            let _ = write_json(&["graphs", &g.id, "graph.json"], &g).await;
         }
     }
 }
 
-pub async fn set_graph_group(graph_id: &str, group_id: Option<String>) {
+pub async fn set_graph_group(graph_id: &str, group_id: Option<String>) -> Result<(), String> {
     let Some(mut graph) = get_graph(graph_id).await else {
-        return;
+        return Err("图不存在".into());
     };
     graph.group_id = group_id;
-    save_graph(&graph).await;
+    save_graph(&graph).await
 }
 
 // ---------- graphs ----------
@@ -208,8 +215,8 @@ pub async fn get_graph(id: &str) -> Option<Graph> {
     read_json(&["graphs", id, "graph.json"]).await
 }
 
-pub async fn save_graph(graph: &Graph) {
-    write_json(&["graphs", &graph.id, "graph.json"], graph).await;
+pub async fn save_graph(graph: &Graph) -> Result<(), String> {
+    write_json(&["graphs", &graph.id, "graph.json"], graph).await
 }
 
 pub async fn delete_graph(id: &str) {
@@ -249,58 +256,15 @@ pub fn unique_graph_dir(base: &str) -> String {
     unreachable!()
 }
 
-/// 图目录改名后，把 runs 档案里对旧图 id 的引用改指新 id
-pub async fn retarget_runs_graph(old_id: &str, new_id: &str) {
-    for mut run in list_runs(usize::MAX).await {
-        if run.graph_id.as_deref() == Some(old_id) {
-            run.graph_id = Some(new_id.to_string());
-            save_run(&run).await;
-        }
-    }
-}
-
-// ---------- graph view（表现文档：布局/视口/最近产物缓存） ----------
+// ---------- graph view（表现文档：布局/视口） ----------
 
 pub async fn get_view(id: &str) -> Option<GraphView> {
     read_json(&["graphs", id, "view.json"]).await
 }
 
 /// 保存表现文档。与结构文档分离：高频保存不推进图 updated_at。
-pub async fn save_view(id: &str, view: &GraphView) {
-    write_json(&["graphs", id, "view.json"], view).await;
-}
-
-// ---------- runs ----------
-
-pub async fn list_runs(limit: usize) -> Vec<Run> {
-    let mut out: Vec<Run> = vec![];
-    let root = sub_dir(&["runs"]);
-    if let Ok(mut rd) = tokio::fs::read_dir(&root).await {
-        while let Ok(Some(entry)) = rd.next_entry().await {
-            if entry.file_type().await.map(|t| t.is_file()).unwrap_or(false) {
-                if let Some(run) = read_json_at::<Run>(&entry.path()).await {
-                    if !run.id.is_empty() {
-                        out.push(run);
-                    }
-                }
-            }
-        }
-    }
-    out.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-    out.truncate(limit);
-    out
-}
-
-pub async fn get_run(id: &str) -> Option<Run> {
-    read_json(&["runs", &format!("{id}.json")]).await
-}
-
-pub async fn save_run(run: &Run) {
-    write_json(&["runs", &format!("{}.json", run.id)], run).await;
-}
-
-pub async fn delete_run(id: &str) {
-    let _ = tokio::fs::remove_file(sub_dir(&["runs", &format!("{id}.json")])).await;
+pub async fn save_view(id: &str, view: &GraphView) -> Result<(), String> {
+    write_json(&["graphs", id, "view.json"], view).await
 }
 
 // ---------- assets ----------
@@ -333,16 +297,16 @@ async fn write_asset_file(id: &str, bytes: &[u8], ext: &str) -> Result<(), Strin
 }
 
 pub async fn read_asset(asset: &AssetRef) -> Result<Vec<u8>, String> {
-    let path = dir().join("assets").join(format!("{}.{}", asset.id, asset.ext));
+    let path = dir()
+        .join("assets")
+        .join(format!("{}.{}", asset.id, asset.ext));
     tokio::fs::read(&path)
         .await
         .map_err(|e| format!("读资产失败：{e}"))
 }
 
 /// GET /asset/{name} —— name 形如 {uuid}.{ext}
-pub async fn serve_asset(
-    axum::extract::Path(name): axum::extract::Path<String>,
-) -> Response {
+pub async fn serve_asset(axum::extract::Path(name): axum::extract::Path<String>) -> Response {
     let Some((id, ext)) = name.rsplit_once('.') else {
         return (StatusCode::BAD_REQUEST, "bad asset name").into_response();
     };
@@ -395,10 +359,7 @@ fn sniff_dimensions(bytes: &[u8]) -> (Option<u32>, Option<u32>) {
             }
             let marker = bytes[i + 1];
             let len = u16::from_be_bytes([bytes[i + 2], bytes[i + 3]]) as usize;
-            if (0xC0..=0xCF).contains(&marker)
-                && marker != 0xC4
-                && marker != 0xC8
-                && marker != 0xCC
+            if (0xC0..=0xCF).contains(&marker) && marker != 0xC4 && marker != 0xC8 && marker != 0xCC
             {
                 if i + 9 <= bytes.len() {
                     let h = u16::from_be_bytes([bytes[i + 5], bytes[i + 6]]) as u32;
@@ -450,7 +411,11 @@ pub fn safe_store_file(name: &str) -> Option<String> {
     if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif") {
         return None;
     }
-    let ext = if ext == "jpeg" { "jpg".to_string() } else { ext };
+    let ext = if ext == "jpeg" {
+        "jpg".to_string()
+    } else {
+        ext
+    };
     let clean_stem: String = stem
         .chars()
         .filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
@@ -581,7 +546,10 @@ pub fn safe_store_path(path: &str) -> Option<String> {
         if seg.is_empty() || seg == "." || seg == ".." {
             return None;
         }
-        if seg.contains('\\') || seg.contains(':') || seg.contains('*') || seg.contains('?')
+        if seg.contains('\\')
+            || seg.contains(':')
+            || seg.contains('*')
+            || seg.contains('?')
             || seg.contains('"')
             || seg.contains('<')
             || seg.contains('>')
@@ -641,7 +609,9 @@ async fn collect_tree(
         } else {
             format!("{rel}/{name}")
         };
-        let Ok(ft) = entry.file_type().await else { continue };
+        let Ok(ft) = entry.file_type().await else {
+            continue;
+        };
         if ft.is_dir() {
             dirs.push(child_rel.clone());
             Box::pin(collect_tree(&entry.path(), &child_rel, dirs, files)).await;
@@ -888,20 +858,6 @@ pub async fn read_graph_store_file(gid: &str, name: &str) -> Result<Vec<u8>, Str
         .map_err(|_| "图 store 里没有这个文件".into())
 }
 
-/// 图私有 store 里某个文件的元信息（读文件 sniff）
-pub async fn graph_store_file_meta(gid: &str, name: &str) -> Option<StoreFile> {
-    let name = safe_store_file(name)?;
-    let path = graph_store_dir(gid).join(&name);
-    let bytes = tokio::fs::read(&path).await.ok()?;
-    let (w, h) = sniff_dimensions(&bytes);
-    Some(StoreFile {
-        name,
-        w,
-        h,
-        bytes: bytes.len() as u64,
-    })
-}
-
 /// GET /gstore/{gid}/{name} —— 图私有 store 图片（immutable 缓存）
 pub async fn serve_graph_store_file(
     axum::extract::Path((gid, name)): axum::extract::Path<(String, String)>,
@@ -941,7 +897,7 @@ fn image_response(name: &str, bytes: Vec<u8>) -> Response {
 }
 
 #[cfg(test)]
-mod store_tests {
+pub(crate) mod store_tests {
     use super::*;
 
     /// 测试全部走独立数据目录，绝不碰真实 data/。
@@ -951,7 +907,7 @@ mod store_tests {
     /// 后来的测试会永远排在锁上，整个 cargo test 挂住。
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    fn use_tmp(tag: &str) -> (std::path::PathBuf, std::sync::MutexGuard<'static, ()>) {
+    pub(crate) fn use_tmp(tag: &str) -> (std::path::PathBuf, std::sync::MutexGuard<'static, ()>) {
         let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let p = std::env::temp_dir().join(format!("atelier-store-{}-{}", tag, std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
@@ -960,15 +916,13 @@ mod store_tests {
         (p, guard)
     }
 
-    /// 真实 1580×996 PNG（尺寸断言用）；读不到退化为最小合法 PNG
+    /// 尺寸检测只需 PNG IHDR 头，fixture 不依赖真实用户文件。
     fn sample_png() -> Vec<u8> {
-        std::fs::read("/home/azurice/Files/art-canvas/data/assets/01a9897a64b74403bef0a6edfecb499f.png")
-            .unwrap_or_else(|_| {
-                vec![
-                    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0x0D, 0x49, 0x48, 0x44,
-                    0x52, 0, 0, 0, 2, 0, 0, 0, 2, 8, 6, 0, 0, 0, 0x1F, 0x15, 0xC4, 0x89,
-                ]
-            })
+        let mut header = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+        header.extend_from_slice(&1580u32.to_be_bytes());
+        header.extend_from_slice(&996u32.to_be_bytes());
+        header.extend_from_slice(&[8, 6, 0, 0, 0]);
+        header
     }
 
     #[test]
@@ -985,7 +939,10 @@ mod store_tests {
     #[test]
     fn safe_paths_allow_nested_dirs_and_reject_escape() {
         // 层级路径：中文目录名原样保留
-        assert_eq!(safe_store_path("角色/猫.png").as_deref(), Some("角色/猫.png"));
+        assert_eq!(
+            safe_store_path("角色/猫.png").as_deref(),
+            Some("角色/猫.png")
+        );
         assert_eq!(safe_store_path("a/b/c.png").as_deref(), Some("a/b/c.png"));
         assert_eq!(safe_store_path("猫.png").as_deref(), Some("猫.png"));
         // 穿越 / 绝对路径 / 空段 / 超深 / 坏扩展名
@@ -1006,7 +963,9 @@ mod store_tests {
         make_global_store_dir("角色/猫").await.unwrap();
         let a = save_global_store_file("", "root.png", &png).await.unwrap();
         let b = save_global_store_file("角色", "a.png", &png).await.unwrap();
-        let c = save_global_store_file("角色/猫", "b.png", &png).await.unwrap();
+        let c = save_global_store_file("角色/猫", "b.png", &png)
+            .await
+            .unwrap();
 
         let tree = list_global_store().await;
         assert!(tree.dirs.contains(&"角色".to_string()));
@@ -1018,7 +977,9 @@ mod store_tests {
         assert_eq!((b_entry.w, b_entry.h), (Some(1580), Some(996)));
 
         // 移动文件到另一目录
-        move_global_store_path("角色/a.png", "场景/a.png").await.unwrap();
+        move_global_store_path("角色/a.png", "场景/a.png")
+            .await
+            .unwrap();
         // 移动整个目录
         move_global_store_path("角色/猫", "猫").await.unwrap();
         let t2 = list_global_store().await;
@@ -1066,11 +1027,18 @@ mod store_tests {
         )
         .unwrap();
         let t7 = list_global_store().await;
-        assert!(!t7.files.iter().any(|f| f.path == "幽灵.png"), "manifest 不得再作为数据来源");
-        assert!(!tmp.join("stores/manifest.json").exists(), "legacy manifest 应被清理");
+        assert!(
+            !t7.files.iter().any(|f| f.path == "幽灵.png"),
+            "manifest 不得再作为数据来源"
+        );
+        assert!(
+            !tmp.join("stores/manifest.json").exists(),
+            "legacy manifest 应被清理"
+        );
 
         // 静态服务：层级路径（改名后的新路径）+ 缓存头；旧路径 404
-        let resp = serve_global_store_file(axum::extract::Path("外部/改名后.png".to_string())).await;
+        let resp =
+            serve_global_store_file(axum::extract::Path("外部/改名后.png".to_string())).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let gone = serve_global_store_file(axum::extract::Path("外部/x.png".to_string())).await;
         assert_eq!(gone.status(), StatusCode::NOT_FOUND);
@@ -1085,22 +1053,37 @@ mod store_tests {
         // 图私有层：两层互不影响
         let (tmp, _g) = use_tmp("graph");
         let png = sample_png();
-        let g = save_graph_store_file("unit-test-graph", "inner.png", &png).await.unwrap();
+        let g = save_graph_store_file("unit-test-graph", "inner.png", &png)
+            .await
+            .unwrap();
         assert_eq!(g.name, "inner.png");
-        assert!(list_graph_store("unit-test-graph").await.iter().any(|f| f.name == "inner.png"));
+        assert!(list_graph_store("unit-test-graph")
+            .await
+            .iter()
+            .any(|f| f.name == "inner.png"));
         // 图 store 已不写 manifest；刚上传的图片必须能直接预览 / 再次拖出。
-        assert!(!graph_store_dir("unit-test-graph").join("manifest.json").exists());
+        assert!(!graph_store_dir("unit-test-graph")
+            .join("manifest.json")
+            .exists());
         let response = serve_graph_store_file(axum::extract::Path((
-            "unit-test-graph".to_string(), "inner.png".to_string(),
-        ))).await;
+            "unit-test-graph".to_string(),
+            "inner.png".to_string(),
+        )))
+        .await;
         assert_eq!(response.status(), StatusCode::OK);
-        let served = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let served = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
         assert_eq!(served.as_ref(), png.as_slice());
-        delete_graph_store_file("unit-test-graph", "inner.png").await.unwrap();
+        delete_graph_store_file("unit-test-graph", "inner.png")
+            .await
+            .unwrap();
         assert!(list_graph_store("unit-test-graph").await.is_empty());
         let missing = serve_graph_store_file(axum::extract::Path((
-            "unit-test-graph".to_string(), "inner.png".to_string(),
-        ))).await;
+            "unit-test-graph".to_string(),
+            "inner.png".to_string(),
+        )))
+        .await;
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -1109,7 +1092,8 @@ mod store_tests {
     async fn graph_store_same_name_never_overwrites() {
         // 只测「同名不互相覆盖」的判定（显式 root，不碰 data/：
         // 不设 ATELIER_DATA_DIR，免得和其他测试抢进程级环境变量）
-        let root = std::env::temp_dir().join(format!("atelier-gstore-collide-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("atelier-gstore-collide-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let first = b"first".to_vec();
@@ -1122,8 +1106,11 @@ mod store_tests {
         put_store_file(&root, "dup-2.png", &second).await.unwrap();
         put_store_file(&root, "dup-3.png", &second).await.unwrap();
 
-        let mut names: Vec<String> =
-            list_store_files(&root).await.into_iter().map(|f| f.name).collect();
+        let mut names: Vec<String> = list_store_files(&root)
+            .await
+            .into_iter()
+            .map(|f| f.name)
+            .collect();
         names.sort();
         assert_eq!(names, vec!["dup-2.png", "dup-3.png", "dup.png"]);
         // 原文件内容没被后来的同名上传覆盖

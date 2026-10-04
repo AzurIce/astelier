@@ -1,7 +1,7 @@
 // editor（rete 实例）↔ 结构/表现文档 的唯一转换点。
 // 结构文档 UI 无关：type/params/端口级连线；执行引擎消费文档快照。
-import type { NodeTypes, NodeType } from './nodes/classes'
-import { applyParams, applyOutput, factoriesByType, nodeParams, outputOf, typeOf } from './nodes/classes'
+import type { NodeTypes, NodeType } from './nodes/classes.svelte'
+import { applyParams, factoriesByType, nodeParams, typeOf } from './nodes/classes.svelte'
 import { connKeys } from './nodes/conn'
 import { connect } from './nodes/types'
 import { rt } from './runtime'
@@ -27,7 +27,6 @@ export interface ViewDoc {
 	version: 1
 	positions: Record<string, { x: number; y: number }>
 	viewport?: { x: number; y: number; zoom: number }
-	outputs: Record<string, string>
 }
 
 /** 编辑器当前状态 → 结构文档 */
@@ -51,30 +50,26 @@ export function toDoc(): GraphDoc {
 	return { version: 1, nodes, edges }
 }
 
-/** 表现文档：位置 / 视口 / 最近产物 */
+/** 表现文档：位置 / 视口。当前执行产物仅属于节点会话状态。 */
 export function toViewDoc(): ViewDoc {
 	const editor = rt.editor!
 	const area = rt.area!
 	const t = area.area.transform
 	const positions: Record<string, { x: number; y: number }> = {}
-	const outputs: Record<string, string> = {}
 	for (const n of editor.getNodes()) {
 		const view = area.nodeViews.get(n.id)
 		positions[n.id] = view
 			? { x: view.position.x, y: view.position.y }
 			: { x: 0, y: 0 }
-		const out = outputOf(n)
-		if (out) outputs[n.id] = out
 	}
 	return {
 		version: 1,
 		positions,
 		viewport: { x: t.x, y: t.y, zoom: t.k },
-		outputs,
 	}
 }
 
-/** 文档 → 编辑器。保留文档节点 id，使 view/outputs/runs 关联跨会话稳定。 */
+/** 文档 → 编辑器。保留文档节点 id，使位置和连线关联跨会话稳定。 */
 export async function loadDoc(doc: GraphDoc, view?: ViewDoc): Promise<void> {
 	const editor = rt.editor!
 	const area = rt.area!
@@ -107,21 +102,6 @@ export async function loadDoc(doc: GraphDoc, view?: ViewDoc): Promise<void> {
 		if (!src.outputs[de.sourcePort] || !dst.inputs[de.targetPort]) continue
 		await editor.addConnection(connect(src, de.sourcePort, dst, de.targetPort))
 	}
-	// 最近产物回填
-	if (view?.outputs) {
-		for (const [id, url] of Object.entries(view.outputs)) {
-			const node = editor.getNode(id)
-			if (node && url) applyOutput(node, url)
-		}
-	}
-
-	// 载入收尾必须重推一次 props。rete-svelte-plugin 的 Root 只认 props 对象的
-	// 重新赋值（见其 compat/svelte5.svelte.js 的 update()），Svelte 5 不感知
-	// 普通类实例的字段变更；而上面的 applyOutput 改的是已挂载实例的字段
-	// （generate 的 resultUrl / preview 的 displayUrl）。不补这一下，产物图
-	// 要等下一次点击选中、nodeselected 触发重渲染才肯显示。
-	// （params 不同：addNode 之前就写好了，首渲染即带图。）
-	for (const dn of doc.nodes) area.update('node', dn.id)
 }
 
 function defaultPosition(type: NodeType, index: number): { x: number; y: number } {

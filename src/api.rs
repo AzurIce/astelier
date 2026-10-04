@@ -1,14 +1,8 @@
-//! REST API（/api/*）—— React 前端（web/）与服务端之间的全部接口。
-//!
-//! 约定：
-//! - JSON in/out；错误统一 `{ "error": "..." }` + 恰当的状态码；
-//! - 生图一律先落 Run 档案再异步执行（`persist_and_execute`），
-//!   `/api/runs` 轮询状态；`/api/generate` 是给节点图前端的同步封装
-//!   （内部同样走 Run，等它完成再返回）。
+//! REST API（/api/*）。生成直接返回会话图片，不归档运行或产物。
 
 use crate::model::*;
 use crate::util::now_ms;
-use axum::extract::{Path, Query};
+use axum::extract::{DefaultBodyLimit, Path, Query};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post, put};
@@ -20,6 +14,7 @@ use std::collections::BTreeMap;
 
 // ---------- 错误 ----------
 
+#[derive(Debug)]
 pub struct ApiError(pub StatusCode, pub String);
 
 impl From<String> for ApiError {
@@ -40,16 +35,17 @@ fn bad(msg: impl Into<String>) -> ApiError {
     ApiError(StatusCode::BAD_REQUEST, msg.into())
 }
 
+fn storage_error(msg: String) -> ApiError {
+    ApiError(StatusCode::INTERNAL_SERVER_ERROR, msg)
+}
+
 // ---------- 路由 ----------
 
 pub fn router() -> Router {
     Router::new()
         // 配置
         .route("/config", get(get_config).put(save_config))
-        .route(
-            "/providers/{provider_id}/profiles",
-            get(resolve_profiles),
-        )
+        .route("/providers/{provider_id}/profiles", get(resolve_profiles))
         .route(
             "/providers/{provider_id}/models/{model_id}/override",
             put(set_model_override),
@@ -60,7 +56,10 @@ pub fn router() -> Router {
             "/graphs/{id}",
             get(get_graph).put(update_graph).delete(delete_graph),
         )
-        .route("/graphs/{id}/view", get(get_graph_view).put(save_graph_view))
+        .route(
+            "/graphs/{id}/view",
+            get(get_graph_view).put(save_graph_view),
+        )
         .route("/graphs/{id}/group", put(set_graph_group))
         .route("/graphs/{id}/title", put(rename_graph))
         // 分组
@@ -70,10 +69,7 @@ pub fn router() -> Router {
         // 资产
         .route("/assets", post(upload_asset))
         // 全局库（data/stores/，层级）
-        .route(
-            "/stores",
-            get(list_global_store).post(upload_global_store),
-        )
+        .route("/stores", get(list_global_store).post(upload_global_store))
         .route("/stores/dirs", post(make_store_dir))
         .route(
             "/stores/{*path}",
@@ -88,15 +84,11 @@ pub fn router() -> Router {
             "/graphs/{id}/store/{name}",
             axum::routing::delete(delete_graph_store_file),
         )
-        // 批次
-        .route("/runs", get(list_runs).post(start_run))
+        // 会话内生成
         .route(
-            "/runs/{id}",
-            get(get_run).delete(delete_run),
+            "/generate",
+            post(generate).layer(DefaultBodyLimit::disable()),
         )
-        .route("/runs/{id}/rerun", post(rerun_run))
-        // 节点图前端（tldraw image-pipeline）的同步端点
-        .route("/generate", post(generate))
         // image-pipeline 模板还有这几个端点；尚未接入，先显式 501
         .route("/upscale", post(unimplemented))
         .route("/ip-adapter", post(unimplemented))
@@ -188,7 +180,11 @@ async fn create_graph(body: Option<Json<CreateGraphBody>>) -> ApiResult<Json<Gra
         .map(|p| (p.id.clone(), p.models.first().cloned().unwrap_or_default()))
         .unwrap_or_default();
     if let Some(gid) = &body.group_id {
-        if crate::store::list_groups().await.iter().all(|g| &g.id != gid) {
+        if crate::store::list_groups()
+            .await
+            .iter()
+            .all(|g| &g.id != gid)
+        {
             return Err(bad("目标目录不存在"));
         }
     }
@@ -275,8 +271,12 @@ async fn create_graph(body: Option<Json<CreateGraphBody>>) -> ApiResult<Json<Gra
         .collect(),
         ..Default::default()
     };
-    crate::store::save_view(&graph.id, &view).await;
-    crate::store::save_graph(&graph).await;
+    crate::store::save_view(&graph.id, &view)
+        .await
+        .map_err(storage_error)?;
+    crate::store::save_graph(&graph)
+        .await
+        .map_err(storage_error)?;
     Ok(Json(graph))
 }
 
@@ -302,7 +302,9 @@ async fn update_graph(
     stored.nodes = graph.nodes;
     stored.edges = graph.edges;
     stored.updated_at = now_ms();
-    crate::store::save_graph(&stored).await;
+    crate::store::save_graph(&stored)
+        .await
+        .map_err(storage_error)?;
     Ok(Json(stored))
 }
 
@@ -321,7 +323,9 @@ async fn save_graph_view(Path(id): Path<String>, Json(view): Json<GraphView>) ->
     if crate::store::get_graph(&id).await.is_none() {
         return Err(bad("图不存在"));
     }
-    crate::store::save_view(&id, &view).await;
+    crate::store::save_view(&id, &view)
+        .await
+        .map_err(storage_error)?;
     Ok(())
 }
 
@@ -331,17 +335,19 @@ struct GroupBody {
 }
 
 async fn set_graph_group(Path(id): Path<String>, Json(body): Json<GroupBody>) -> ApiResult<()> {
-    crate::store::set_graph_group(&id, body.group_id).await;
+    crate::store::set_graph_group(&id, body.group_id)
+        .await
+        .map_err(storage_error)?;
     Ok(())
 }
 
 /// 图重命名 = 目录改名：目录名与图名保持一致；id 随之更新，
-/// runs 档案里的引用同步迁移。返回新 id。
+/// 返回新 id。
 async fn rename_graph(
     Path(id): Path<String>,
     Json(body): Json<NameBody>,
 ) -> ApiResult<Json<serde_json::Value>> {
-    use crate::store::{retarget_runs_graph, sanitize_dir_name, sub_dir, unique_graph_dir};
+    use crate::store::{sanitize_dir_name, sub_dir, unique_graph_dir};
     let Some(mut graph) = crate::store::get_graph(&id).await else {
         return Err(bad("图不存在"));
     };
@@ -356,11 +362,12 @@ async fn rename_graph(
         tokio::fs::rename(sub_dir(&["graphs", &id]), sub_dir(&["graphs", &new_id]))
             .await
             .map_err(|e| bad(format!("目录改名失败：{e}")))?;
-        retarget_runs_graph(&id, &new_id).await;
     }
     graph.id = new_id.clone();
     graph.title = body.name;
-    crate::store::save_graph(&graph).await;
+    crate::store::save_graph(&graph)
+        .await
+        .map_err(storage_error)?;
     Ok(Json(serde_json::json!({ "id": new_id })))
 }
 
@@ -473,13 +480,15 @@ async fn upload_asset_inner(filename: String, bytes: &[u8]) -> ApiResult<AssetRe
     let ext = filename.rsplit('.').next().unwrap_or("png").to_lowercase();
     let ext = match ext.as_str() {
         "png" | "jpg" | "jpeg" | "webp" | "gif" => {
-            if ext == "jpeg" { "jpg".to_string() } else { ext }
+            if ext == "jpeg" {
+                "jpg".to_string()
+            } else {
+                ext
+            }
         }
         _ => "png".to_string(),
     };
-    crate::store::save_asset(bytes, &ext)
-        .await
-        .map_err(bad)
+    crate::store::save_asset(bytes, &ext).await.map_err(bad)
 }
 
 // ---------- image store（两层：全局库 + 图私有） ----------
@@ -525,10 +534,7 @@ struct StoreMoveBody {
 }
 
 /// 重命名 / 移动（文件或目录；path 为相对路径）
-async fn move_store_path(
-    Path(path): Path<String>,
-    Json(b): Json<StoreMoveBody>,
-) -> ApiResult<()> {
+async fn move_store_path(Path(path): Path<String>, Json(b): Json<StoreMoveBody>) -> ApiResult<()> {
     crate::store::move_global_store_path(&path, &b.to)
         .await
         .map_err(bad)
@@ -570,206 +576,9 @@ async fn delete_graph_store_file(Path((id, name)): Path<(String, String)>) -> Ap
         .map_err(bad)
 }
 
-// ---------- 执行（Run 档案 + 异步执行）----------
-/// 落盘批次并异步执行最终请求。
-async fn persist_and_execute(
-    provider: Provider,
-    profile: ModelProfile,
-    resolved: ResolvedRequest,
-    run: Run,
-) -> Run {
-    crate::store::save_run(&run).await;
-    let mut run_task = run.clone();
-    tokio::spawn(async move {
-        let t0 = std::time::Instant::now();
-        match crate::adapter::execute(
-            &provider,
-            crate::adapter::ExecRequest {
-                prompt: &resolved.prompt,
-                params: &resolved.params,
-                images: &resolved.images,
-                mask: resolved.mask.as_ref(),
-                model_id: &run_task.model_id,
-                profile: &profile,
-            },
-        )
-        .await
-        {
-            Ok(outcome) => {
-                run_task.status = RunStatus::Done;
-                run_task.images = outcome.images;
-                run_task.usage = outcome.usage;
-            }
-            Err((status, msg)) => {
-                run_task.status = status;
-                run_task.error = Some(msg);
-            }
-        }
-        run_task.duration_ms = Some(t0.elapsed().as_millis() as u64);
-        crate::store::save_run(&run_task).await;
-    });
-    run
-}
+// ---------- 会话内生成 ----------
 
-fn new_run(
-    provider_id: String,
-    model_id: String,
-    resolved: ResolvedRequest,
-    graph_id: Option<String>,
-    node_id: Option<String>,
-    rerun_of: Option<String>,
-) -> Run {
-    Run {
-        id: uuid::Uuid::new_v4().simple().to_string(),
-        recipe_id: String::new(),
-        input_id: None,
-        recipe_version: 0,
-        input_version: 0,
-        provider_id,
-        model_id,
-        mode: resolved.mode,
-        request: None,
-        graph_id,
-        node_id,
-        resolved: Some(resolved),
-        rerun_of,
-        status: RunStatus::Running,
-        error: None,
-        images: vec![],
-        usage: None,
-        created_at: now_ms(),
-        duration_ms: None,
-        prompt: String::new(),
-        params: Default::default(),
-        ref_count: 0,
-    }
-}
-
-/// 生图请求 = 发给 API 的全部内容（不带 Run 簿记字段）。
-#[derive(Deserialize, Debug)]
-pub struct RunBody {
-    pub provider_id: String,
-    pub model_id: String,
-    pub prompt: String,
-    #[serde(default)]
-    pub params: ParamMap,
-    #[serde(default)]
-    pub images: Vec<AssetRef>,
-    #[serde(default)]
-    pub mask: Option<AssetRef>,
-    #[serde(default)]
-    pub graph_id: Option<String>,
-    #[serde(default)]
-    pub node_id: Option<String>,
-}
-
-/// 组装校验 + 起跑一条 Run（内部供 /api/runs、/api/runs/{id}/rerun 与
-/// /api/generate 共用）。
-async fn launch_run(body: RunBody, rerun_of: Option<String>) -> ApiResult<Run> {
-    let cfg = crate::store::load_config().await;
-    let provider = cfg
-        .providers
-        .iter()
-        .find(|p| p.id == body.provider_id)
-        .cloned()
-        .ok_or_else(|| bad("Provider 不存在"))?;
-    let profile = crate::profiles::merged(&body.model_id, provider.overrides.get(&body.model_id));
-
-    let mode = if body.images.is_empty() { Mode::Gen } else { Mode::Edit };
-    // 始终完整发送：缺失的协议参数按档案默认值补齐（老图 / 直连接口兜底）
-    let params = crate::model::with_defaults(&profile, &body.params);
-    let resolved = ResolvedRequest {
-        prompt: body.prompt,
-        params,
-        images: body.images,
-        mask: body.mask,
-        mode,
-    };
-    if resolved.prompt.trim().is_empty() {
-        return Err(bad("Prompt 为空"));
-    }
-    crate::model::validate_request(&profile, &body.model_id, &resolved.params, resolved.images.len())
-        .map_err(bad)?;
-
-    let run = new_run(
-        provider.id.clone(),
-        body.model_id,
-        resolved.clone(),
-        body.graph_id,
-        body.node_id,
-        rerun_of,
-    );
-    Ok(persist_and_execute(provider, profile, resolved, run).await)
-}
-
-async fn start_run(Json(body): Json<RunBody>) -> ApiResult<Json<Run>> {
-    launch_run(body, None).await.map(Json)
-}
-
-#[derive(Deserialize)]
-struct ListRunsQuery {
-    #[serde(default = "default_run_limit")]
-    limit: usize,
-}
-
-fn default_run_limit() -> usize {
-    50
-}
-
-async fn list_runs(Query(q): Query<ListRunsQuery>) -> Json<Vec<Run>> {
-    Json(crate::store::list_runs(q.limit).await)
-}
-
-async fn get_run(Path(id): Path<String>) -> ApiResult<Json<Run>> {
-    crate::store::get_run(&id).await.map(Json).ok_or_else(|| bad("批次不存在"))
-}
-
-/// 原样重放：按批次归档的最终请求再执行一次。
-async fn rerun_run(Path(id): Path<String>) -> ApiResult<Json<Run>> {
-    let old = crate::store::get_run(&id)
-        .await
-        .ok_or_else(|| bad("批次不存在"))?;
-    // 新批次一律有 resolved；旧配方批次回放其快照里的请求
-    let (resolved, provider_id, model_id, graph_id, node_id) = if let Some(r) = old.resolved {
-        (r, old.provider_id, old.model_id, old.graph_id, old.node_id)
-    } else if let Some(request) = old.request {
-        (
-            request.resolved,
-            request.template.provider_id,
-            request.template.model_id,
-            None,
-            None,
-        )
-    } else {
-        return Err(bad("该批次创建于快照机制之前，没有可重放的请求归档"));
-    };
-    let run = launch_run(
-        RunBody {
-            provider_id,
-            model_id,
-            prompt: resolved.prompt.clone(),
-            params: resolved.params.clone(),
-            images: resolved.images.clone(),
-            mask: resolved.mask.clone(),
-            graph_id,
-            node_id,
-        },
-        Some(old.id),
-    )
-    .await?;
-    Ok(Json(run))
-}
-
-async fn delete_run(Path(id): Path<String>) -> ApiResult<()> {
-    crate::store::delete_run(&id).await;
-    Ok(())
-}
-
-// ---------- /api/generate：tldraw 节点图前端的同步封装 ----------
-
-/// image-pipeline 前端 Generate 节点的请求体（camelCase，与模板一致）。
-/// params 为统一键 → 标量值；服务端按所连模型档案（api_key 映射、
-/// select/范围校验）过滤后发送，未识别键不透传。
+/// Generate 节点请求体。参数为统一键 → 标量值，按模型档案校验和映射。
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct GenerateParams {
@@ -784,62 +593,102 @@ struct GenerateParams {
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GenerateResult {
-    image_url: String,
+    image_urls: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    usage: Option<Usage>,
 }
 
-/// 前端图片值（LoadImage 的 data URL / 本服务生成的 /asset/ 相对路径）→ AssetRef。
-async fn url_to_asset(url: &str) -> ApiResult<AssetRef> {
+/// 读取本次参考图，不创建永久资产副本。
+async fn read_input_image(url: &str) -> ApiResult<crate::adapter::InputImage> {
+    use crate::adapter::InputImage;
+    use percent_encoding::percent_decode_str;
+    let decode = |value: &str| -> ApiResult<String> {
+        percent_decode_str(value)
+            .decode_utf8()
+            .map(|s| s.into_owned())
+            .map_err(|_| bad("图片 URL 编码不合法"))
+    };
+    let ext = |filename: &str| {
+        filename
+            .rsplit_once('.')
+            .map(|(_, e)| e.to_ascii_lowercase())
+            .unwrap_or_else(|| "png".into())
+    };
+    if let Some(rest) = url.strip_prefix("/gstore/") {
+        let (gid, name) = rest
+            .split_once('/')
+            .ok_or_else(|| bad("图 store URL 格式不对"))?;
+        let gid = decode(gid)?;
+        if gid.is_empty() || gid == "." || gid == ".." || gid.contains('/') || gid.contains('\\') {
+            return Err(bad("图 store URL 格式不对"));
+        }
+        let name = decode(name)?;
+        let bytes = crate::store::read_graph_store_file(&gid, &name)
+            .await
+            .map_err(bad)?;
+        return Ok(InputImage {
+            bytes,
+            ext: ext(&name),
+        });
+    }
+    if let Some(rest) = url.strip_prefix("/store/") {
+        let path = decode(rest)?;
+        let path =
+            crate::store::safe_store_path(&path).ok_or_else(|| bad("库图片 URL 格式不对"))?;
+        let bytes = tokio::fs::read(crate::store::sub_dir(&["stores", &path]))
+            .await
+            .map_err(|e| bad(format!("读取库图片失败：{e}")))?;
+        return Ok(InputImage {
+            bytes,
+            ext: ext(&path),
+        });
+    }
+    // 已有用户上传资产仍可作为输入；不在生成时新增资产。
     if let Some(name) = url.strip_prefix("/asset/") {
         let (id, ext) = name
             .rsplit_once('.')
             .ok_or_else(|| bad("资产 URL 格式不对"))?;
-        if !id.chars().all(|c| c.is_ascii_alphanumeric()) || ext.len() > 5 {
+        if id.is_empty()
+            || !id.chars().all(|c| c.is_ascii_alphanumeric())
+            || !["png", "jpg", "jpeg", "webp", "gif"].contains(&ext)
+        {
             return Err(bad("资产 URL 格式不对"));
         }
-        return Ok(AssetRef {
+        let asset = AssetRef {
             id: id.into(),
             ext: ext.into(),
             w: None,
             h: None,
+        };
+        return Ok(InputImage {
+            bytes: crate::store::read_asset(&asset).await.map_err(bad)?,
+            ext: ext.into(),
         });
     }
-    // 图私有 store 引用（画布节点上传的图）：按 {gid}/{file} 取出字节，
-    // 复制进全局 assets 再引用 —— 图可删、可重命名，批次档案仍可重放。
-    if let Some(rest) = url.strip_prefix("/gstore/") {
-        let (gid, file) = rest
-            .split_once('/')
-            .ok_or_else(|| bad("图 store URL 格式不对"))?;
-        let bytes = crate::store::read_graph_store_file(gid, file)
-            .await
-            .map_err(bad)?;
-        let ext = file.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
-        let ext = match ext.as_deref() {
-            Some("jpeg") => "jpg".to_string(),
-            Some(e) => e.to_string(),
-            None => "png".to_string(),
-        };
-        let mut asset = crate::store::save_asset(&bytes, &ext).await.map_err(bad)?;
-        if let Some(m) = crate::store::graph_store_file_meta(gid, file).await {
-            asset.w = m.w;
-            asset.h = m.h;
-        }
-        return Ok(asset);
-    }
     if let Some(rest) = url.strip_prefix("data:") {
-        let (meta, b64) = rest.split_once(',').ok_or_else(|| bad("data URL 格式不对"))?;
-        let ext = meta
-            .strip_prefix("image/")
-            .and_then(|s| s.split(';').next())
-            .map(|s| if s == "jpeg" { "jpg" } else { s })
-            .unwrap_or("png")
-            .to_string();
+        let (meta, b64) = rest
+            .split_once(',')
+            .ok_or_else(|| bad("data URL 格式不对"))?;
+        let mime = meta
+            .strip_suffix(";base64")
+            .ok_or_else(|| bad("参考图需要 base64 data URL"))?;
+        let ext = match mime {
+            "image/png" => "png",
+            "image/jpeg" => "jpg",
+            "image/webp" => "webp",
+            "image/gif" => "gif",
+            _ => return Err(bad("参考图类型不支持")),
+        };
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(b64)
             .map_err(|e| bad(format!("data URL 解码失败：{e}")))?;
-        return crate::store::save_asset(&bytes, &ext).await.map_err(bad);
+        return Ok(InputImage {
+            bytes,
+            ext: ext.into(),
+        });
     }
     Err(bad(
-        "仅支持本服务资产（/asset/…）与 data: 图片；外部 URL 请先用图片节点上传",
+        "仅支持库图片、图内图片、已有资产与 data: 图片；外部 URL 请先用图片节点上传",
     ))
 }
 
@@ -851,20 +700,28 @@ async fn resolve_model(cfg: &Config, model: &str) -> ApiResult<(String, String)>
             return Ok((pid.to_string(), mid.to_string()));
         }
     }
-    let active = cfg.active().ok_or_else(|| bad("没有可用的 Provider，请先在设置里配置"))?;
+    let active = cfg
+        .active()
+        .ok_or_else(|| bad("没有可用的 Provider，请先在设置里配置"))?;
     Ok((active.id.clone(), model.to_string()))
 }
 
-/// 同步生成：内部照样走 Run（可追溯、可重放），轮询直到完成。
-/// 上游生图常需几十秒，client 超时请留足（前端 fetch 默认即可）。
+/// 请求和图片只存活于本次调用；直接等待上游完成。
 async fn generate(Json(p): Json<GenerateParams>) -> ApiResult<Json<GenerateResult>> {
     let cfg = crate::store::load_config().await;
     let (provider_id, model_id) = resolve_model(&cfg, &p.model).await?;
-
+    let provider = cfg
+        .providers
+        .iter()
+        .find(|p| p.id == provider_id)
+        .ok_or_else(|| bad("Provider 不存在"))?;
+    let profile = crate::profiles::merged(&model_id, provider.overrides.get(&model_id));
+    if p.prompt.trim().is_empty() {
+        return Err(bad("Prompt 为空"));
+    }
     let mut params: ParamMap = BTreeMap::new();
     for (key, value) in p.params {
         let v = match value {
-            serde_json::Value::Null => continue,
             serde_json::Value::String(s) => ParamValue::Text(s),
             serde_json::Value::Number(n) => match n.as_f64() {
                 Some(f) => ParamValue::Number(f),
@@ -875,54 +732,280 @@ async fn generate(Json(p): Json<GenerateParams>) -> ApiResult<Json<GenerateResul
         };
         params.insert(key, v);
     }
-
+    let params = with_defaults(&profile, &params);
     let mut images = Vec::new();
     for url in &p.image_urls {
         if !url.is_empty() {
-            images.push(url_to_asset(url).await?);
+            images.push(read_input_image(url).await?);
         }
     }
+    validate_request(&profile, &model_id, &params, images.len()).map_err(bad)?;
+    let outcome = crate::adapter::execute(
+        provider,
+        crate::adapter::ExecRequest {
+            prompt: &p.prompt,
+            params: &params,
+            images: &images,
+            model_id: &model_id,
+            profile: &profile,
+        },
+    )
+    .await
+    .map_err(|e| ApiError(StatusCode::BAD_GATEWAY, e))?;
+    Ok(Json(GenerateResult {
+        image_urls: outcome.image_urls,
+        usage: outcome.usage,
+    }))
+}
 
-    let run = launch_run(RunBody {
-        provider_id,
-        model_id,
-        prompt: p.prompt,
-        params,
-        images,
-        mask: None,
-        graph_id: None,
-        node_id: None,
-    }, None)
-    .await?;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        body::Bytes,
+        http::{HeaderMap, Uri},
+    };
 
-    // 轮询批次完成（adapter 自身有 600s 超时，这里等 300s 足够）
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
-    loop {
-        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-        let run = crate::store::get_run(&run.id)
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\nmock-image";
+
+    async fn mock_provider(
+        response: serde_json::Value,
+        status: StatusCode,
+    ) -> (
+        String,
+        tokio::sync::mpsc::UnboundedReceiver<(String, HeaderMap, Vec<u8>)>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let response = response.to_string().replace("MOCK_BASE", &base);
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let handler = move |uri: Uri, headers: HeaderMap, bytes: Bytes| {
+            let tx = tx.clone();
+            let response = response.clone();
+            async move {
+                tx.send((uri.path().to_string(), headers, bytes.to_vec()))
+                    .unwrap();
+                (status, [("content-type", "application/json")], response)
+            }
+        };
+        let app = Router::new()
+            .route("/images/generations", post(handler.clone()))
+            .route("/images/edits", post(handler))
+            .route(
+                "/image.png",
+                get(|| async { ([("content-type", "image/png")], PNG) }),
+            )
+            .layer(DefaultBodyLimit::disable());
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        (base, rx, task)
+    }
+
+    async fn configure(base: &str) {
+        crate::store::save_config(&Config {
+            active_provider: "mock".into(),
+            providers: vec![Provider {
+                id: "mock".into(),
+                name: "mock".into(),
+                base_url: base.into(),
+                api_key: "sk-local-test".into(),
+                models: vec!["gpt-image-2".into()],
+                overrides: Default::default(),
+            }],
+        })
+        .await;
+    }
+
+    fn request(images: Vec<String>) -> Json<GenerateParams> {
+        Json(GenerateParams {
+            model: "mock:gpt-image-2".into(),
+            prompt: "a cat".into(),
+            params: BTreeMap::new(),
+            image_urls: images,
+        })
+    }
+
+    fn temporary_url() -> String {
+        format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(PNG)
+        )
+    }
+
+    #[tokio::test]
+    async fn generate_returns_all_temporary_results_without_archives() {
+        let (tmp, _guard) = crate::store::store_tests::use_tmp("generate");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(PNG);
+        let (base, mut requests, task) = mock_provider(
+            json!({
+                "data": [{"b64_json": b64}, {"url": "MOCK_BASE/image.png"}],
+                "usage": {"total_tokens": 42}
+            }),
+            StatusCode::OK,
+        )
+        .await;
+        configure(&base).await;
+        let Json(result) = generate(request(vec![])).await.unwrap();
+        assert_eq!(result.image_urls, vec![temporary_url(), temporary_url()]);
+        assert_eq!(result.usage.unwrap().total_tokens, Some(42));
+        let (path, headers, body) = requests.recv().await.unwrap();
+        assert_eq!(path, "/images/generations");
+        assert_eq!(headers["authorization"], "Bearer sk-local-test");
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["prompt"], "a cat");
+        assert_eq!(body["model"], "gpt-image-2");
+        assert!(!tmp.join("runs").exists());
+        assert!(!tmp.join("assets").exists());
+        assert!(!tmp.join("stores").exists());
+        task.abort();
+        std::fs::remove_dir_all(tmp).unwrap();
+    }
+
+    #[tokio::test]
+    async fn edits_reads_encoded_references_and_temporary_results_without_copying() {
+        let (tmp, _guard) = crate::store::store_tests::use_tmp("edits");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(PNG);
+        let (base, mut requests, task) =
+            mock_provider(json!({"data": [{"b64_json": b64}]}), StatusCode::OK).await;
+        configure(&base).await;
+        crate::store::save_graph_store_file("未命名图", "参考.png", PNG)
             .await
-            .ok_or_else(|| bad("批次档案丢失"))?;
-        match run.status {
-            RunStatus::Done => {
-                let url = run
-                    .images
-                    .first()
-                    .map(|a| a.url())
-                    .ok_or_else(|| bad("生成完成但没有产出图片"))?;
-                return Ok(Json(GenerateResult { image_url: url }));
-            }
-            RunStatus::Error => {
-                let msg = run.error.unwrap_or_else(|| "生成失败".into());
-                return Err(ApiError(StatusCode::BAD_GATEWAY, msg));
-            }
-            RunStatus::Running => {
-                if std::time::Instant::now() > deadline {
-                    return Err(ApiError(
-                        StatusCode::GATEWAY_TIMEOUT,
-                        "生成超时（300s）".into(),
-                    ));
-                }
-            }
-        }
+            .unwrap();
+        crate::store::save_global_store_file("库", "猫.png", PNG)
+            .await
+            .unwrap();
+        let images = vec![
+            "/gstore/%E6%9C%AA%E5%91%BD%E5%90%8D%E5%9B%BE/%E5%8F%82%E8%80%83.png".into(),
+            "/store/%E5%BA%93/%E7%8C%AB.png".into(),
+            temporary_url(),
+        ];
+        let Json(result) = generate(request(images)).await.unwrap();
+        assert_eq!(result.image_urls, vec![temporary_url()]);
+        let (path, headers, body) = requests.recv().await.unwrap();
+        assert_eq!(path, "/images/edits");
+        assert!(headers["content-type"]
+            .to_str()
+            .unwrap()
+            .starts_with("multipart/form-data; boundary="));
+        let text = String::from_utf8_lossy(&body);
+        assert_eq!(text.matches("name=\"image[]\"").count(), 3);
+        assert!(body.windows(PNG.len()).any(|w| w == PNG));
+        assert!(!tmp.join("runs").exists());
+        assert!(!tmp.join("assets").exists());
+        task.abort();
+        std::fs::remove_dir_all(tmp).unwrap();
+    }
+
+    #[tokio::test]
+    async fn generation_errors_and_removed_history_routes() {
+        let (tmp, _guard) = crate::store::store_tests::use_tmp("generate-error");
+        let (base, mut requests, task) = mock_provider(
+            json!({"error": {"message": "mock rejected"}}),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+        configure(&base).await;
+        let error = generate(request(vec![temporary_url()]))
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(error.0, StatusCode::BAD_GATEWAY);
+        assert_eq!(error.1, "mock rejected");
+        assert_eq!(requests.recv().await.unwrap().0, "/images/edits");
+        assert!(!tmp.join("runs").exists());
+        assert!(!tmp.join("assets").exists());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let local = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, router()).await.unwrap() });
+        let client = reqwest::Client::new();
+        assert_eq!(
+            client
+                .get(format!("{local}/runs"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            client
+                .post(format!("{local}/runs/old/rerun"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        server.abort();
+        task.abort();
+        std::fs::remove_dir_all(tmp).unwrap();
+    }
+
+    #[tokio::test]
+    async fn chained_image_larger_than_default_body_limit_can_be_generated() {
+        let (tmp, _guard) = crate::store::store_tests::use_tmp("large-input");
+        let b64 = base64::engine::general_purpose::STANDARD.encode(PNG);
+        let (base, mut requests, upstream) =
+            mock_provider(json!({"data": [{"b64_json": b64}]}), StatusCode::OK).await;
+        configure(&base).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let local = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, router()).await.unwrap() });
+        let image = format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(vec![0; 2 * 1024 * 1024])
+        );
+        let response = reqwest::Client::new()
+            .post(format!("{local}/generate"))
+            .json(&json!({
+                "model": "mock:gpt-image-2", "prompt": "a cat", "imageUrls": [image]
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(requests.recv().await.unwrap().0, "/images/edits");
+        assert!(!tmp.join("runs").exists());
+        assert!(!tmp.join("assets").exists());
+        server.abort();
+        upstream.abort();
+        std::fs::remove_dir_all(tmp).unwrap();
+    }
+
+    #[tokio::test]
+    async fn graph_and_view_write_failures_surface_as_errors() {
+        let (tmp, _guard) = crate::store::store_tests::use_tmp("save-errors");
+        let Json(graph) = create_graph(None).await.unwrap();
+        let graph_root = tmp.join("graphs").join(&graph.id);
+        std::fs::create_dir(graph_root.join("graph.tmp")).unwrap();
+        let error = update_graph(
+            Path(graph.id.clone()),
+            Json(GraphUpdateBody {
+                nodes: vec![],
+                edges: vec![],
+            }),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(!crate::store::get_graph(&graph.id)
+            .await
+            .unwrap()
+            .nodes
+            .is_empty());
+        std::fs::create_dir(graph_root.join("view.tmp")).unwrap();
+        let view: GraphView =
+            serde_json::from_value(json!({"outputs": {"old": "/asset/old.png"}})).unwrap();
+        assert!(serde_json::to_value(&view)
+            .unwrap()
+            .get("outputs")
+            .is_none());
+        let error = save_graph_view(Path(graph.id), Json(view))
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+        std::fs::remove_dir_all(tmp).unwrap();
     }
 }

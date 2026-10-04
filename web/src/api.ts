@@ -24,7 +24,8 @@ export interface GenerateParams {
 }
 
 export interface GenerateResult {
-	imageUrl: string
+	/** 当前请求的临时产物；显式收藏之前不写入永久资产。 */
+	imageUrls: string[]
 }
 
 export async function apiGenerate(params: GenerateParams): Promise<GenerateResult> {

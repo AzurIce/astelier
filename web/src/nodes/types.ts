@@ -1,6 +1,6 @@
 import { ClassicPreset, type GetSchemes } from 'rete'
 import type { SvelteArea2D } from 'rete-svelte-plugin/5'
-import type { NodeTypes } from './classes'
+import type { NodeTypes } from './classes.svelte'
 
 export type Schemes = GetSchemes<
 	NodeTypes,

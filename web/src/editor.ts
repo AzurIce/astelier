@@ -14,7 +14,7 @@ import { type Schemes, type AreaExtra } from './nodes/types'
 import { connKeys } from './nodes/conn'
 import { rt } from './runtime'
 import { refreshNodeSockets, removeNodeCascade } from './nodes/actions'
-import { scheduleSave, scheduleViewSave } from './graphStore'
+import { graphSession, scheduleSave, scheduleViewSave } from './graphStore.svelte'
 
 export function createEditor(container: HTMLElement) {
 	const editor = new NodeEditor<Schemes>()
@@ -88,6 +88,14 @@ export function createEditor(container: HTMLElement) {
 				})
 			: null
 
+	editor.addPipe((ctx) => {
+		if (ctx.type === 'noderemove') {
+			const view = area.nodeViews.get(ctx.data.id)
+			if (view) resizeObserver?.unobserve(view.element)
+		}
+		return ctx
+	})
+
 	editor.use(area)
 	area.use(connection)
 	area.use(render)
@@ -124,6 +132,7 @@ export function createEditor(container: HTMLElement) {
 	// removeNode 不会级联清理连线，须先删相邻连线。
 	// 有选中连线时优先删连线。
 	document.addEventListener('keydown', (e) => {
+		if (graphSession.loading) return
 		if (e.key === 'Delete' || e.key === 'Backspace') {
 			const tag = (document.activeElement as HTMLElement | null)?.tagName
 			if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
@@ -175,7 +184,7 @@ export function createEditor(container: HTMLElement) {
 	let restoreTimer: ReturnType<typeof setTimeout> | null = null
 
 	editor.addPipe((ctx) => {
-		if (ctx.type === 'connectionremoved') {
+		if (ctx.type === 'connectionremoved' && !graphSession.loading) {
 			const c = ctx.data as unknown as {
 				source: string
 				sourceOutput: string

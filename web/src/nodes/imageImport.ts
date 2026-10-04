@@ -1,6 +1,6 @@
-import type { ImageRef } from './classes'
+import type { ImageRef } from './classes.svelte'
 import type { DragImagePayload } from './dragPayload'
-import type { GraphStoreFileMeta } from '../graphStore'
+import type { GraphStoreFileMeta } from '../graphStore.svelte'
 import { imageHash } from './imageHash.ts'
 
 export type ImageSource = { kind: 'file'; file: File } | { kind: 'url'; image: DragImagePayload }
@@ -82,9 +82,17 @@ export function createImageImporter(opts: ImportOptions) {
 						report.skipped++
 						continue
 					}
-					const meta = await opts.upload(target.graphId, prepared.name, blob)
+					let image: ImageRef
+					if (source.kind === 'url' && /^(data:image\/|blob:)/i.test(source.image.url)) {
+						// 画布临时产物继续作为会话输入，只有拖进库才永久保存。
+						const dataUrl = source.image.url.startsWith('data:') ? source.image.url : await blobDataUrl(blob)
+						image = { file: `temporary-${prepared.hash}`, name, hash: prepared.hash, dataUrl }
+					} else {
+						const meta = await opts.upload(target.graphId, prepared.name, blob)
+						image = { file: meta.name, name, w: meta.w, h: meta.h, hash: prepared.hash }
+					}
 					if (disposed || !target.isActive()) continue
-					if (target.append({ file: meta.name, name, w: meta.w, h: meta.h, hash: prepared.hash })) report.added++
+					if (target.append(image)) report.added++
 					else report.skipped++
 				} catch (error) {
 					if (!disposed && target.isActive()) {
@@ -122,4 +130,13 @@ export function createImageImporter(opts: ImportOptions) {
 			abort.abort()
 		},
 	}
+}
+
+function blobDataUrl(blob: Blob): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader()
+		reader.onload = () => resolve(String(reader.result))
+		reader.onerror = () => reject(reader.error ?? new Error('读取临时图片失败'))
+		reader.readAsDataURL(blob)
+	})
 }

@@ -205,7 +205,9 @@
 			const res = await fetch(url)
 			if (!res.ok) throw new Error(`HTTP ${res.status}`)
 			const blob = await res.blob()
-			const name = decodeURIComponent(url.split('/').pop() || `image-${Date.now()}.png`)
+			const name = /^(data:|blob:)/i.test(url)
+				? `image-${Date.now()}.${blob.type === 'image/jpeg' ? 'jpg' : blob.type === 'image/webp' ? 'webp' : 'png'}`
+				: decodeURIComponent(url.split('/').pop() || `image-${Date.now()}.png`)
 			await uploadStoreFile(new File([blob], name, { type: blob.type || 'image/png' }), cwd)
 			toast({ kind: 'ok', title: '已收入库', msg: `${name} → ${cwd || '根目录'}` })
 			await refresh()

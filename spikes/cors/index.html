@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>浏览器跨域 spike</title>
+<style>
+  body { font: 16px system-ui; max-width: 900px; margin: 40px auto; padding: 0 20px; }
+  label { display: block; margin: 16px 0; }
+  input { display: block; width: 100%; box-sizing: border-box; padding: 8px; }
+  button { padding: 8px 16px; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+<h1>浏览器跨域 spike</h1>
+<p>直接调用 provider，不经过本项目后端。下面三项探测只读取模型列表或提交缺少必填项的请求，不请求生成图片。Key 仅保留在当前页面内存。</p>
+<label>Base URL<input id="base" type="url" value="https://www.poke2api.com/v1"></label>
+<label>API key<input id="key" type="password" autocomplete="off"></label>
+<button id="run">探测跨域</button>
+<pre id="output"></pre>
+<script type="module">
+  import { probeRequest } from './probe.mjs';
+  window.probeRequest = probeRequest;
+  const button = document.querySelector('#run');
+  button.onclick = async () => {
+    button.disabled = true;
+    const output = document.querySelector('#output');
+    output.textContent = '';
+    try {
+      for (const kind of ['models', 'json', 'edit']) {
+        const result = await probeRequest({ name: kind, kind, baseURL: document.querySelector('#base').value, token: document.querySelector('#key').value });
+        output.textContent += JSON.stringify(result, null, 2) + '\n';
+      }
+    } finally { button.disabled = false; }
+  };
+</script>
+</html>

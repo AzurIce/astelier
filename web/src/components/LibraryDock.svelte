@@ -257,18 +257,32 @@
 		renameValue = baseName(path)
 		await tick()
 		renameEl?.focus()
-		renameEl?.select()
+		// 只选中主体（不含扩展名）：防止误改扩展名导致文件「消失」
+		// （扩展名是类型标识，改了会破坏引用与静态 mime；目录无扩展名则全选）
+		const dot = renameValue.lastIndexOf('.')
+		if (dot > 0) renameEl?.setSelectionRange(0, dot)
+		else renameEl?.select()
 	}
 	async function commitRename() {
 		const path = renaming
-		const value = renameValue.trim()
 		renaming = null
-		if (!path || !value || value === baseName(path)) return
-		const to = joinPath(parentDir(path), value)
+		if (!path) return
+		const orig = baseName(path)
+		const typed = renameValue.trim()
+		// 扩展名锁定：输入只改主体，扩展名一律保留原值
+		const origDot = orig.lastIndexOf('.')
+		const ext = origDot > 0 ? orig.slice(origDot) : ''
+		const typedDot = typed.lastIndexOf('.')
+		const final = (typedDot > 0 ? typed.slice(0, typedDot) : typed) + ext
+		if (!final || final === orig) return
+		const to = joinPath(parentDir(path), final)
 		try {
 			await moveStorePath(path, to)
 			await refresh()
 			setSel(new Set([to]))
+			if (typed !== final) {
+				toast({ kind: 'info', title: '扩展名不可修改', msg: `已保留 ${ext}` })
+			}
 		} catch (e) {
 			toast({ kind: 'err', title: '重命名失败', msg: e instanceof Error ? e.message : String(e) })
 		}

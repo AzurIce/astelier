@@ -38,6 +38,15 @@ export async function removeNodeCascade(nodeId: string): Promise<void> {
 	if (orphanRefs.size) await cleanupGraphStoreRefs(orphanRefs)
 }
 
+/**
+ * 解除引用后的文件回收：调用方必须已经改完引用（组件先 editNode 再调这里），
+ * 本函数扫全图现役引用，只删「已无任何节点引用」的文件。
+ * 用于节点内单张移除 / 清空全部——以前只解引用，文件永久残留在图 store。
+ */
+export async function releaseGraphStoreFiles(files: string[]): Promise<void> {
+	if (files.length) await cleanupGraphStoreRefs(new Set(files))
+}
+
 /** 删除一组图内引用文件（跳过仍被其他节点引用的） */
 async function cleanupGraphStoreRefs(refs: Set<string>): Promise<void> {
 	const gid = activeGraphId()

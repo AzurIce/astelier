@@ -13,7 +13,7 @@ import EmptySocket from './nodes/components/EmptySocket.svelte'
 import { type Schemes, type AreaExtra } from './nodes/types'
 import { connKeys } from './nodes/conn'
 import { rt } from './runtime'
-import { refreshNodeSockets } from './nodes/actions'
+import { refreshNodeSockets, removeNodeCascade } from './nodes/actions'
 import { scheduleSave, scheduleViewSave } from './graphStore'
 
 export function createEditor(container: HTMLElement) {
@@ -133,13 +133,8 @@ export function createEditor(container: HTMLElement) {
 				if (await removeSelectedConnection()) return
 				const selected = editor.getNodes().filter((n) => n.selected)
 				for (const node of selected) {
-					for (const conn of editor.getConnections()) {
-						const k = connKeys(conn as unknown as Record<string, unknown>)
-						if (k.source === node.id || k.target === node.id) {
-							await editor.removeConnection(conn.id)
-						}
-					}
-					await editor.removeNode(node.id)
+					// 走级联删除：连带回收 LoadImage 独占的图内 store 文件
+					await removeNodeCascade(node.id)
 				}
 			})()
 			return

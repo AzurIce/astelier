@@ -114,6 +114,14 @@ export async function loadDoc(doc: GraphDoc, view?: ViewDoc): Promise<void> {
 			if (node && url) applyOutput(node, url)
 		}
 	}
+
+	// 载入收尾必须重推一次 props。rete-svelte-plugin 的 Root 只认 props 对象的
+	// 重新赋值（见其 compat/svelte5.svelte.js 的 update()），Svelte 5 不感知
+	// 普通类实例的字段变更；而上面的 applyOutput 改的是已挂载实例的字段
+	// （generate 的 resultUrl / preview 的 displayUrl）。不补这一下，产物图
+	// 要等下一次点击选中、nodeselected 触发重渲染才肯显示。
+	// （params 不同：addNode 之前就写好了，首渲染即带图。）
+	for (const dn of doc.nodes) area.update('node', dn.id)
 }
 
 function defaultPosition(type: NodeType, index: number): { x: number; y: number } {

@@ -909,9 +909,6 @@ pub async fn serve_graph_store_file(
     if safe_store_file(&name).as_deref() != Some(name.as_str()) {
         return (StatusCode::BAD_REQUEST, "bad file name").into_response();
     }
-    if !graph_store_dir(&gid).join("manifest.json").exists() {
-        return (StatusCode::NOT_FOUND, "store not found").into_response();
-    }
     match tokio::fs::read(graph_store_dir(&gid).join(&name)).await {
         Ok(bytes) => image_response(&name, bytes),
         Err(_) => (StatusCode::NOT_FOUND, "file not found").into_response(),
@@ -1091,8 +1088,20 @@ mod store_tests {
         let g = save_graph_store_file("unit-test-graph", "inner.png", &png).await.unwrap();
         assert_eq!(g.name, "inner.png");
         assert!(list_graph_store("unit-test-graph").await.iter().any(|f| f.name == "inner.png"));
+        // 图 store 已不写 manifest；刚上传的图片必须能直接预览 / 再次拖出。
+        assert!(!graph_store_dir("unit-test-graph").join("manifest.json").exists());
+        let response = serve_graph_store_file(axum::extract::Path((
+            "unit-test-graph".to_string(), "inner.png".to_string(),
+        ))).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let served = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(served.as_ref(), png.as_slice());
         delete_graph_store_file("unit-test-graph", "inner.png").await.unwrap();
         assert!(list_graph_store("unit-test-graph").await.is_empty());
+        let missing = serve_graph_store_file(axum::extract::Path((
+            "unit-test-graph".to_string(), "inner.png".to_string(),
+        ))).await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

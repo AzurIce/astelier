@@ -7,6 +7,7 @@
 		"dev": "vite --host",
 		"build": "vite build",
 		"check": "svelte-check --tsconfig ./tsconfig.json",
+		"test": "bun test src/nodes/imageImport.test.ts",
 		"preview": "vite preview"
 	},
 	"dependencies": {

@@ -20,6 +20,7 @@ export const ICONS = {
 
 	// 操作
 	plus: '<path d="M5 12h14M12 5v14" />',
+	grip: '<circle cx="8" cy="5" r="1" /><circle cx="16" cy="5" r="1" /><circle cx="8" cy="12" r="1" /><circle cx="16" cy="12" r="1" /><circle cx="8" cy="19" r="1" /><circle cx="16" cy="19" r="1" />',
 	play: '<path d="M7 4.5v15l12-7.5z" />',
 	stop: '<rect x="6" y="6" width="12" height="12" rx="2" />',
 	trash: '<path d="M3.5 6.5h17M9 6.5V4.8A1.8 1.8 0 0 1 10.8 3h2.4A1.8 1.8 0 0 1 15 4.8v1.7M18.5 6.5 17.6 19a2 2 0 0 1-2 1.9H8.4a2 2 0 0 1-2-1.9L5.5 6.5M10 10.5v6M14 10.5v6" />',

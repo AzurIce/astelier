@@ -36,6 +36,8 @@ export interface ImageRef {
 	/** 展示用尺寸（store 引用时来自 manifest） */
 	w?: number
 	h?: number
+	/** 内容指纹：不同文件名的相同图片也只保留一份。 */
+	hash?: string
 }
 
 export class LoadImageNode extends ClassicPreset.Node {
@@ -47,16 +49,31 @@ export class LoadImageNode extends ClassicPreset.Node {
 		this.addOutput('image', new ClassicPreset.Output(sockets.image))
 	}
 
-	/** 追加（同名去重），返回是否真的加进去了 */
+	/** 追加（引用 / 内容去重），返回是否真的加进去了 */
 	addImage(ref: ImageRef): boolean {
 		if (!ref.file) return false
-		if (this.images.some((i) => i.file === ref.file)) return false
+		const existing = this.images.find((i) => i.file === ref.file || (ref.hash && i.hash === ref.hash))
+		if (existing) {
+			// 老文档没有指纹；首次重新导入同一引用时补齐，后续也能按内容去重。
+			if (ref.hash && !existing.hash) this.images = this.images.map((i) => i === existing ? { ...i, hash: ref.hash } : i)
+			return false
+		}
 		this.images = [...this.images, ref]
 		return true
 	}
 
 	removeImage(file: string): void {
 		this.images = this.images.filter((i) => i.file !== file)
+	}
+
+	/** 拖拽和键盘共用顺序更新入口。 */
+	moveImage(file: string, index: number): void {
+		const from = this.images.findIndex((image) => image.file === file)
+		if (from < 0) return
+		const images = [...this.images]
+		const [image] = images.splice(from, 1)
+		images.splice(Math.max(0, Math.min(index, images.length)), 0, image)
+		this.images = images
 	}
 }
 
@@ -138,7 +155,7 @@ export function applyParams(node: NodeTypes, params: Record<string, unknown>) {
 		node.text = String(params.text ?? '')
 	} else if (node instanceof LoadImageNode) {
 		const list: ImageRef[] = []
-		const push = (file: string, name?: string, w?: number, h?: number) => {
+		const push = (file: string, name?: string, w?: number, h?: number, hash?: string) => {
 			const f = file?.trim()
 			if (!f || list.some((i) => i.file === f)) return
 			list.push({
@@ -146,6 +163,7 @@ export function applyParams(node: NodeTypes, params: Record<string, unknown>) {
 				name: (name && name.trim()) || f,
 				...(w != null ? { w } : {}),
 				...(h != null ? { h } : {}),
+				...(hash ? { hash } : {}),
 			})
 		}
 		for (const it of Array.isArray(params.images) ? params.images : []) {
@@ -156,6 +174,7 @@ export function applyParams(node: NodeTypes, params: Record<string, unknown>) {
 				typeof r.name === 'string' ? r.name : undefined,
 				typeof r.w === 'number' ? r.w : undefined,
 				typeof r.h === 'number' ? r.h : undefined,
+				typeof r.hash === 'string' ? r.hash : undefined,
 			)
 		}
 		// 过渡：旧文档存的 fileName / refFile / {store,file} / /gstore/… 引用

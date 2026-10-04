@@ -4,6 +4,7 @@
 	import IconButton from './IconButton.svelte'
 	import { toast } from './toast.svelte'
 	import { openLightbox } from './lightbox.svelte'
+	import { STORE_DRAG_MIME, writeImageDrag } from '../nodes/dragPayload'
 	import {
 		baseName,
 		deleteStorePath,
@@ -309,12 +310,12 @@
 	}
 
 	// ---------- 拖出（网格 → 画布 / 库内移动） ----------
-	const DRAG_MIME = 'application/x-atelier-store'
+	const DRAG_MIME = STORE_DRAG_MIME
 	function onTileDragStart(e: DragEvent, path: string) {
 		if (!e.dataTransfer) return
 		// 拖未选中项 = 单独拖它；拖已选中项 = 拖整组
 		let paths: string[]
-		if (selected.has(path)) paths = [...selected]
+		if (selected.has(path)) paths = entries.filter((entry) => selected.has(entry.path)).map((entry) => entry.path)
 		else {
 			selectOnly(path)
 			paths = [path]
@@ -322,13 +323,11 @@
 		paths = paths.filter((p) => entries.some((en) => en.path === p))
 		if (!paths.length) return
 		e.dataTransfer.setData(DRAG_MIME, JSON.stringify({ paths }))
-		// 兼容 LoadImage 的 acceptImageDrop（只读 uri-list / plain）：放第一张的 URL
-		const firstFile = paths.find((p) => p.toLowerCase().endsWith('.png') || p.toLowerCase().endsWith('.jpg') || p.toLowerCase().endsWith('.jpeg') || p.toLowerCase().endsWith('.webp') || p.toLowerCase().endsWith('.gif'))
-		if (firstFile) {
-			const url = storeUrl(firstFile)
-			e.dataTransfer.setData('text/uri-list', url)
-			e.dataTransfer.setData('text/plain', url)
-		}
+		const images = paths.flatMap((p) => {
+			const file = fileOf(p)
+			return file ? [{ kind: 'store' as const, url: storeUrl(p), store: '', file: p, w: file.w, h: file.h }] : []
+		})
+		if (images.length) writeImageDrag(e.dataTransfer, images)
 		e.dataTransfer.effectAllowed = 'copyMove'
 	}
 

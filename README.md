@@ -73,6 +73,12 @@ just check      # cargo check
 
 端口用 `ATLIER_ADDR` 覆盖。前端依赖 bun 管理（`web/bun.lock`）。
 
+Image 节点支持多选上传、从图片库多选拖入，以及画布图片之间的拖入。
+点击图片查看大图；拖动左上角序号调整参考图的输出顺序，聚焦序号后也可用
+方向键、Home / End 排序或 Delete 移除。连续添加会排队，重复内容自动跳过，
+单张导入失败不会隐藏或丢失其他图片，并可在节点内重试。参考图数量上限由
+所连接的模型校验。运行 `cd web && bun run test` 可验证导入与拖拽载荷逻辑。
+
 ## 路线
 
 - [ ] Generate 参数区接 profiles schema（steps/cfg/seed 之外的模型参数动态渲染）

@@ -1,63 +1,85 @@
-// 画布上「接收 store 图片」的共用 Svelte action。
-// 挂在节点的图片输入区域（LoadImage body / Generate / Preview）。
-// - H5 DnD（dragover/drop）：放行 preventDefault，从 dataTransfer 读图片 URL
-// - 视觉：dragover 期间给宿主加 class
+import { IMAGE_DRAG_MIME, IMAGE_ORDER_MIME, readImageDrag } from './dragPayload'
 import type { DragImagePayload } from './dragPayload'
 
-/** Svelte action 的最小类型（避免依赖 legacy 导出） */
-type ActionReturn = { destroy?: () => void }
-type Action<Node extends Element, Param> = (node: Node, param: Param) => ActionReturn
-
 export interface AcceptImageOptions {
-	/** 落下时调用；返回是否接受（用于 toast 反馈） */
-	onDrop: (img: DragImagePayload) => void | Promise<void>
-	/** dragover 期间加在宿主上的 class（默认 accepting） */
+	onDrop: (images: DragImagePayload[]) => void
+	onFiles?: (files: File[]) => void
+	onActiveChange?: (active: boolean) => void
 	activeClass?: string
 }
 
-export const acceptImageDrop: Action<HTMLElement, AcceptImageOptions> = (node, opts) => {
-	let inside = 0
-
-	function readPayload(e: DragEvent): DragImagePayload | null {
-		const uri = e.dataTransfer?.getData('text/uri-list') || e.dataTransfer?.getData('text/plain')
-		if (!uri) return null
-		return { kind: 'store', url: uri, store: '', file: uri.split('/').pop() ?? '' }
+/** 单一原生事件入口，整个内容区可接收；内部排序不进入导入流程。 */
+export function acceptImageDrop(node: HTMLElement, initial: AcceptImageOptions) {
+	let opts = initial
+	let depth = 0
+	let active = false
+	function setActive(next: boolean) {
+		node.classList.toggle(opts.activeClass ?? 'accepting', next)
+		if (active !== next) opts.onActiveChange?.(next)
+		active = next
 	}
-
-	function onEnter(e: DragEvent) {
+	function reset() {
+		depth = 0
+		setActive(false)
+	}
+	function accepts(e: DragEvent) {
+		const types = Array.from(e.dataTransfer?.types ?? [])
+		if (types.includes(IMAGE_ORDER_MIME)) return false
+		return (types.includes('Files') && !!opts.onFiles) ||
+			types.some((type) => [IMAGE_DRAG_MIME, 'text/uri-list', 'text/plain'].includes(type))
+	}
+	function enter(e: DragEvent) {
+		if (!accepts(e)) return
 		e.preventDefault()
+		e.stopPropagation()
+		depth++
+		setActive(true)
+	}
+	function leave(e: DragEvent) {
+		e.stopPropagation()
+		depth = Math.max(0, depth - 1)
+		if (!depth) setActive(false)
+	}
+	function over(e: DragEvent) {
+		if (!accepts(e)) return
+		e.preventDefault()
+		e.stopPropagation()
 		if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
-		inside++
-		node.classList.add(opts.activeClass ?? 'accepting')
+		setActive(true)
 	}
-	function onLeave() {
-		inside = Math.max(0, inside - 1)
-		if (inside === 0) node.classList.remove(opts.activeClass ?? 'accepting')
-	}
-	function onOver(e: DragEvent) {
+	function drop(e: DragEvent) {
+		reset()
+		if (!accepts(e) || !e.dataTransfer) return
 		e.preventDefault()
-		if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+		e.stopPropagation()
+		// 文件优先，避免同一次系统拖拽的 files + URI 被重复导入。
+		const files = Array.from(e.dataTransfer.files)
+		if (files.length && opts.onFiles) opts.onFiles(files)
+		else {
+			const images = readImageDrag(e.dataTransfer)
+			if (images.length) opts.onDrop(images)
+		}
 	}
-	async function onDropEvt(e: DragEvent) {
-		e.preventDefault()
-		inside = 0
-		node.classList.remove(opts.activeClass ?? 'accepting')
-		const img = readPayload(e)
-		if (!img || !img.url) return
-		await opts.onDrop(img)
-	}
-
-	node.addEventListener('dragenter', onEnter)
-	node.addEventListener('dragleave', onLeave)
-	node.addEventListener('dragover', onOver)
-	node.addEventListener('drop', onDropEvt)
+	node.addEventListener('dragenter', enter)
+	node.addEventListener('dragleave', leave)
+	node.addEventListener('dragover', over)
+	node.addEventListener('drop', drop)
+	window.addEventListener('dragend', reset)
+	window.addEventListener('drop', reset)
 	return {
+		update(next: AcceptImageOptions) {
+			node.classList.remove(opts.activeClass ?? 'accepting')
+			opts = next
+			node.classList.toggle(opts.activeClass ?? 'accepting', active)
+		},
 		destroy() {
-			node.removeEventListener('dragenter', onEnter)
-			node.removeEventListener('dragleave', onLeave)
-			node.removeEventListener('dragover', onOver)
-			node.removeEventListener('drop', onDropEvt)
+			reset()
+			node.removeEventListener('dragenter', enter)
+			node.removeEventListener('dragleave', leave)
+			node.removeEventListener('dragover', over)
+			node.removeEventListener('drop', drop)
+			window.removeEventListener('dragend', reset)
+			window.removeEventListener('drop', reset)
 		},
 	}
 }
-

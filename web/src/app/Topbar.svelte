@@ -17,6 +17,7 @@
 		ready = false,
 		onRename,
 		onRun,
+		onSettings,
 	}: {
 		title: string
 		saveState?: SaveState
@@ -24,6 +25,7 @@
 		ready?: boolean
 		onRename: (title: string) => void | Promise<void>
 		onRun: () => void
+		onSettings?: () => void
 	} = $props()
 
 	let editing = $state(false)
@@ -166,6 +168,9 @@
 	</Popover>
 
 	<SkinSwitcher />
+	{#if onSettings}
+		<IconButton icon="settings" label="设置" size={15} variant="ghost" onclick={onSettings} />
+	{/if}
 	<IconButton
 		icon={design.mode === 'dark' ? 'sun' : 'moon'}
 		label={design.mode === 'dark' ? '切换到浅色' : '切换到深色'}

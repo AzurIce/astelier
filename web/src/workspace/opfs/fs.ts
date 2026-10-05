@@ -63,6 +63,18 @@ export async function readJson<T>(path: FsPath): Promise<T | null> {
 	}
 }
 
+/**
+ * 跨标签页写串行化（Web Locks，同源生效；不可用时退化为直接执行）。
+ * 对应 Rust 侧全局 STORE_LOCK：读改写序列（groups/config/graph 合并）在
+ * 持锁期间整体执行，避免两个标签页交错覆盖。
+ */
+export async function withFsLock<T>(fn: () => Promise<T>): Promise<T> {
+	if (typeof navigator !== 'undefined' && 'locks' in navigator) {
+		return navigator.locks.request('atelier-opfs-write', fn)
+	}
+	return fn()
+}
+
 export async function writeBytes(path: FsPath, bytes: BufferSource): Promise<void> {
 	const { dir, name } = await parentOf(path)
 	const handle = await dir.getFileHandle(name, { create: true })

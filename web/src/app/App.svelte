@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte'
 	import Sidebar from '../workspace/Sidebar.svelte'
 	import Topbar from './Topbar.svelte'
+	import SettingsDialog from './SettingsDialog.svelte'
 	import ViewportControls from '../canvas/components/ViewportControls.svelte'
 	import NodePalette from '../canvas/components/NodePalette.svelte'
 	import Toaster from '../ui/toast/Toaster.svelte'
@@ -12,6 +13,7 @@
 	import { toast } from '../ui/toast/toast.svelte'
 	import { rt } from '../canvas/runtime'
 	import { loadProviderConfig } from '../generation/config.svelte'
+	import { currentWorkspaceChoice } from '../workspace/selection.svelte'
 	import { activeGraphId, ensureGraphAndLoad, graphSession, renameGraphAndSync } from '../canvas/session.svelte'
 	import { createEditor } from '../canvas/editor'
 	import { fitView } from '../canvas/viewport'
@@ -20,6 +22,7 @@
 	let running = $state(false)
 	let nodeCount = $state(0)
 	let dockOpen = $state(true)
+	let settingsOpen = $state(false)
 
 	let sidebar: Sidebar | undefined = $state()
 	let palette: NodePalette | undefined = $state()
@@ -59,6 +62,10 @@
 	}
 
 	onMount(async () => {
+		// 本地工作区：一次性申请持久存储，降低站点数据被自动清理的风险
+		if (currentWorkspaceChoice().kind === 'opfs') {
+			navigator.storage?.persist?.().catch(() => {})
+		}
 		try {
 			await loadProviderConfig()
 		} catch (e) {
@@ -88,7 +95,7 @@
 <div class="shell">
 	<Sidebar bind:this={sidebar} />
 	<div class="main">
-		<Topbar title={graphSession.title} saveState={graphSession.saveState} {running} ready={ready && !graphSession.loading} onRename={renameTitle} onRun={run} />
+		<Topbar title={graphSession.title} saveState={graphSession.saveState} {running} ready={ready && !graphSession.loading} onRename={renameTitle} onRun={run} onSettings={() => (settingsOpen = true)} />
 		<div class="canvas-layer" inert={graphSession.loading}>
 			<div id="rete"></div>
 			{#if ready && nodeCount === 0}
@@ -114,3 +121,4 @@
 <Toaster />
 <ConfirmHost />
 <LightboxHost />
+<SettingsDialog open={settingsOpen} onclose={() => (settingsOpen = false)} />

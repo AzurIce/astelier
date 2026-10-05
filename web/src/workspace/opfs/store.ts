@@ -16,7 +16,7 @@ import type { GraphDoc, GraphDocWithId, GraphGroup, GraphSummary, ProviderConfig
 import type { WorkspaceStore } from '../store'
 import { sniffDimensions } from '../../images/sniff'
 
-import { dirExists, ensureDir, listDir, movePath, readBytes, readFile, readJson, removePath, uuid, writeBytes, writeJson, WORKSPACE_ROOT, type FsPath } from './fs'
+import { dirExists, ensureDir, listDir, movePath, readBytes, readFile, readJson, removePath, uuid, withFsLock, writeBytes, writeJson, WORKSPACE_ROOT, type FsPath } from './fs'
 import { freeStoreName, resolveStoreDirPath, safeStoreFile, safeStorePath } from './paths'
 import { graphStoreObjectUrl, releaseGraphStoreObjectUrls, releaseStoreObjectUrl, storeObjectUrl } from './objectUrls'
 
@@ -172,7 +172,8 @@ async function collectTree(dir: FsPath, rel: string, dirs: string[], files: Stor
 
 /** 返回对象是普通字面量（测试会用展开包裹 putGraph/putView 注入故障） */
 export function createOpfsStore(): WorkspaceStore {
-	async function loadConfigRecord(): Promise<ProviderConfig> {
+	/** 无锁内核：调用方已在 withFsLock 内时使用（Web Locks 同名不可重入） */
+	async function readConfigUnlocked(): Promise<ProviderConfig> {
 		const stored = await readJson<ProviderConfig>(configJson())
 		if (stored && Array.isArray(stored.providers) && stored.providers.length) {
 			return {
@@ -207,7 +208,7 @@ export function createOpfsStore(): WorkspaceStore {
 		label: '本地工作区（OPFS）',
 
 		async loadConfig() {
-			return loadConfigRecord()
+			return withFsLock(readConfigUnlocked)
 		},
 
 		async saveConfig(config) {
@@ -224,16 +225,18 @@ export function createOpfsStore(): WorkspaceStore {
 		},
 
 		async createGraph(groupId, title) {
-			if (groupId && !(await readGroups()).some((g) => g.id === groupId)) throw new Error('目标目录不存在')
-			const config = await loadConfigRecord()
-			const active = config.providers.find((p) => p.id === config.active_provider) ?? config.providers[0]
-			const modelParams = active ? { provider: active.id, modelId: active.models[0] ?? '' } : { provider: '', modelId: '' }
-			const id = uuid()
-			const { record, view } = seedGraph(id, title?.trim() || '未命名图', groupId, modelParams)
-			// view 先落盘：结构文档存在即视为完整图
-			await writeJson(viewJson(id), view)
-			await saveGraphRecord(record)
-			return toDocWithId(record)
+			return withFsLock(async () => {
+				if (groupId && !(await readGroups()).some((g) => g.id === groupId)) throw new Error('目标目录不存在')
+				const config = await readConfigUnlocked()
+				const active = config.providers.find((p) => p.id === config.active_provider) ?? config.providers[0]
+				const modelParams = active ? { provider: active.id, modelId: active.models[0] ?? '' } : { provider: '', modelId: '' }
+				const id = uuid()
+				const { record, view } = seedGraph(id, title?.trim() || '未命名图', groupId, modelParams)
+				// view 先落盘：结构文档存在即视为完整图
+				await writeJson(viewJson(id), view)
+				await saveGraphRecord(record)
+				return toDocWithId(record)
+			})
 		},
 
 		async fetchGraph(id) {
@@ -243,16 +246,20 @@ export function createOpfsStore(): WorkspaceStore {
 		},
 
 		async putGraph(id, doc: GraphDoc) {
-			const record = await readGraphRecord(id)
-			if (!record) throw new Error('图不存在')
-			await saveGraphRecord({ ...record, nodes: doc.nodes, edges: doc.edges, updated_at: Date.now() })
+			await withFsLock(async () => {
+				const record = await readGraphRecord(id)
+				if (!record) throw new Error('图不存在')
+				await saveGraphRecord({ ...record, nodes: doc.nodes, edges: doc.edges, updated_at: Date.now() })
+			})
 		},
 
 		async renameGraph(id, title) {
-			const record = await readGraphRecord(id)
-			if (!record) throw new Error('图不存在')
-			await saveGraphRecord({ ...record, title, updated_at: Date.now() })
-			return { id }
+			return withFsLock(async () => {
+				const record = await readGraphRecord(id)
+				if (!record) throw new Error('图不存在')
+				await saveGraphRecord({ ...record, title, updated_at: Date.now() })
+				return { id }
+			})
 		},
 
 		async fetchView(id) {
@@ -269,9 +276,11 @@ export function createOpfsStore(): WorkspaceStore {
 		},
 
 		async setGraphGroup(id, groupId) {
-			const record = await readGraphRecord(id)
-			if (!record) throw new Error('图不存在')
-			await saveGraphRecord({ ...record, group_id: groupId, updated_at: Date.now() })
+			await withFsLock(async () => {
+				const record = await readGraphRecord(id)
+				if (!record) throw new Error('图不存在')
+				await saveGraphRecord({ ...record, group_id: groupId, updated_at: Date.now() })
+			})
 		},
 
 		async deleteGraph(id) {
@@ -284,69 +293,79 @@ export function createOpfsStore(): WorkspaceStore {
 		},
 
 		async createGroup(name, parentId) {
-			const groups = await readGroups()
-			if (parentId && !groups.some((g) => g.id === parentId)) throw new Error('父目录不存在')
-			const now = Date.now()
-			const group: GraphGroup = { id: uuid(), name: name.trim() || '新建文件夹', parent_id: parentId, created_at: now, updated_at: now }
-			await writeGroups([...groups, group])
-			return group
+			return withFsLock(async () => {
+				const groups = await readGroups()
+				if (parentId && !groups.some((g) => g.id === parentId)) throw new Error('父目录不存在')
+				const now = Date.now()
+				const group: GraphGroup = { id: uuid(), name: name.trim() || '新建文件夹', parent_id: parentId, created_at: now, updated_at: now }
+				await writeGroups([...groups, group])
+				return group
+			})
 		},
 
 		async renameGroup(id, name) {
-			const groups = await readGroups()
-			const slot = groups.find((g) => g.id === id)
-			if (!slot) return
-			slot.name = name
-			slot.updated_at = Date.now()
-			await writeGroups(groups)
+			await withFsLock(async () => {
+				const groups = await readGroups()
+				const slot = groups.find((g) => g.id === id)
+				if (!slot) return
+				slot.name = name
+				slot.updated_at = Date.now()
+				await writeGroups(groups)
+			})
 		},
 
 		async moveGroup(id, parentId) {
-			const groups = await readGroups()
-			if (parentId) {
-				if (parentId === id) throw new Error('不能把目录移动到它自己内部')
-				let cursor = parentId
-				const byId = new Map(groups.map((g) => [g.id, g] as const))
-				while (cursor) {
-					if (cursor === id) throw new Error('不能把目录移动到它自己内部')
-					cursor = byId.get(cursor)?.parent_id ?? ''
+			await withFsLock(async () => {
+				const groups = await readGroups()
+				if (parentId) {
+					if (parentId === id) throw new Error('不能把目录移动到它自己内部')
+					let cursor = parentId
+					const byId = new Map(groups.map((g) => [g.id, g] as const))
+					while (cursor) {
+						if (cursor === id) throw new Error('不能把目录移动到它自己内部')
+						cursor = byId.get(cursor)?.parent_id ?? ''
+					}
+					if (!groups.some((g) => g.id === parentId)) throw new Error('目标目录不存在')
 				}
-				if (!groups.some((g) => g.id === parentId)) throw new Error('目标目录不存在')
-			}
-			const slot = groups.find((g) => g.id === id)
-			if (!slot) return
-			slot.parent_id = parentId
-			slot.updated_at = Date.now()
-			await writeGroups(groups)
+				const slot = groups.find((g) => g.id === id)
+				if (!slot) return
+				slot.parent_id = parentId
+				slot.updated_at = Date.now()
+				await writeGroups(groups)
+			})
 		},
 
 		async deleteGroup(id) {
-			const groups = await readGroups()
-			const doomed = doomedGroups(groups, id)
-			await writeGroups(groups.filter((g) => !doomed.has(g.id)))
-			// 组内与子组内的图回到未分组（图是资产，不连带删）
-			for (const name of (await listDir([...WORKSPACE_ROOT, 'graphs'])).dirs) {
-				const record = await readGraphRecord(name)
-				if (record?.group_id && doomed.has(record.group_id)) {
-					await saveGraphRecord({ ...record, group_id: null })
+			await withFsLock(async () => {
+				const groups = await readGroups()
+				const doomed = doomedGroups(groups, id)
+				await writeGroups(groups.filter((g) => !doomed.has(g.id)))
+				// 组内与子组内的图回到未分组（图是资产，不连带删）
+				for (const name of (await listDir([...WORKSPACE_ROOT, 'graphs'])).dirs) {
+					const record = await readGraphRecord(name)
+					if (record?.group_id && doomed.has(record.group_id)) {
+						await saveGraphRecord({ ...record, group_id: null })
+					}
 				}
-			}
+			})
 		},
 
 		async uploadGraphStoreFile(gid, name, blob) {
-			const safe = safeStoreFile(name)
-			if (!safe) throw new Error('文件名不合法')
-			const bytes = await bytesOf(blob)
-			if (!bytes.length) throw new Error('空文件')
-			// 同名同内容 → 保持原名（幂等）；同名不同内容 → 加序号，绝不互相覆盖
-			let target = safe
-			const existing = await readBytes(graphStoreFile(gid, safe))
-			if (existing && !sameBytes(existing, bytes)) {
-				const taken = (await listDir(graphStoreDir(gid))).files
-				target = freeStoreName(safe, (candidate) => taken.has(candidate), uuid)
-			}
-			const meta = await putStoreBytes(graphStoreFile(gid, target), bytes)
-			return { name: target, ...(meta.w != null ? { w: meta.w } : {}), ...(meta.h != null ? { h: meta.h } : {}), bytes: meta.bytes }
+			return withFsLock(async () => {
+				const safe = safeStoreFile(name)
+				if (!safe) throw new Error('文件名不合法')
+				const bytes = await bytesOf(blob)
+				if (!bytes.length) throw new Error('空文件')
+				// 同名同内容 → 保持原名（幂等）；同名不同内容 → 加序号，绝不互相覆盖
+				let target = safe
+				const existing = await readBytes(graphStoreFile(gid, safe))
+				if (existing && !sameBytes(existing, bytes)) {
+					const taken = (await listDir(graphStoreDir(gid))).files
+					target = freeStoreName(safe, (candidate) => taken.has(candidate), uuid)
+				}
+				const meta = await putStoreBytes(graphStoreFile(gid, target), bytes)
+				return { name: target, ...(meta.w != null ? { w: meta.w } : {}), ...(meta.h != null ? { h: meta.h } : {}), bytes: meta.bytes }
+			})
 		},
 
 		async graphStoreUrl(gid, name) {

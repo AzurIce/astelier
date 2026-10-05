@@ -1,8 +1,9 @@
 // OpenAI Images 协议参数表（gpt-image 系）。
-// 与后端 src/profiles.rs 的档案同源（当前为镜像维护；权威默认值在后端
-// ParamDef.default_value，前端展示与「始终完整发送」init 以这里为准，
-// 后端生成接口 也会按档案兜底补齐）。
-// UI 不再提供「默认」占位：每个参数始终有具体值，缺失键按 def 归一。
+// 由 generation/profiles.ts 的内置档案派生——参数定义单一事实来源，
+// 直连生图（默认补齐/校验/请求映射）与参数区渲染读同一份；
+// 这里只补充纯展示层信息：控件形态（control）与尺寸候选扩展。
+import { builtinProfile } from './profiles'
+
 export interface ParamDef {
 	key: string
 	label: string
@@ -14,102 +15,37 @@ export interface ParamDef {
 	max: number | null
 	advanced: boolean
 	group: string
-	/** 协议默认值（与后端 ParamDef.default_value 同源）：
-	 *  始终完整发送——控件初值与缺失键归一都以它为准 */
+	/** 协议默认值（与档案 default_value 同源）：始终完整发送 */
 	def: string | number | null
 }
 
-export const OPENAI_IMAGE_PARAMS: ParamDef[] = [
-	{
-		key: 'quality',
-		label: '画质',
-		kind: 'select',
-		control: 'slider',
-		options: ['auto', 'high', 'medium', 'low', 'xhigh', 'max'],
-		min: null,
-		max: null,
-		advanced: false,
-		group: '',
-		def: 'auto',
-	},
-	{
-		key: 'size',
-		label: '尺寸',
-		kind: 'size',
-		// 常用预设建议；gpt-image-2+ 支持任意 16 整除的自定义 WxH，可自由输入
-		options: ['auto', '1024x1024', '1536x1024', '1024x1536', '1792x1008', '1008x1792'],
-		min: null,
-		max: null,
-		advanced: false,
-		group: '',
-		def: 'auto',
-	},
-	{
-		key: 'n',
-		label: '数量',
-		kind: 'number',
-		options: [],
-		min: 1,
-		max: 10,
-		advanced: false,
-		group: '',
-		def: 1,
-	},
-	{
-		key: 'background',
-		label: '背景',
-		kind: 'select',
-		control: 'segmented',
-		options: ['auto', 'transparent', 'opaque'],
-		min: null,
-		max: null,
-		advanced: false,
-		group: '',
-		def: 'auto',
-	},
-	{
-		key: 'output_format',
-		label: '输出格式',
-		kind: 'select',
-		control: 'segmented',
-		options: ['png', 'jpeg', 'webp'],
-		min: null,
-		max: null,
-		advanced: false,
-		group: 'output',
-		def: 'png',
-	},
-	{
-		key: 'input_fidelity',
-		label: '原图保真',
-		kind: 'select',
-		options: ['low', 'high'],
-		min: null,
-		max: null,
-		advanced: true,
-		group: 'edit',
-		def: 'low',
-	},
-	{
-		key: 'output_compression',
-		label: '压缩率',
-		kind: 'number',
-		options: [],
-		min: 0,
-		max: 100,
-		advanced: true,
-		group: 'output',
-		def: 100,
-	},
-	{
-		key: 'moderation',
-		label: '审核',
-		kind: 'select',
-		options: ['auto', 'low'],
-		min: null,
-		max: null,
-		advanced: true,
-		group: 'safety',
-		def: 'auto',
-	},
-]
+/** UI 控件形态（纯展示偏好，协议层不感知） */
+const CONTROL_BY_KEY: Record<string, 'slider' | 'segmented'> = {
+	quality: 'slider',
+	background: 'segmented',
+	output_format: 'segmented',
+}
+
+/** gpt-image-2+ 常用比例参考档（16:9 / 9:16），追加到档案预设之后 */
+const EXTRA_SIZE_PRESETS = ['1792x1008', '1008x1792']
+
+function defaultValue(v: unknown): string | number | null {
+	if (v == null || typeof v !== 'object') return null
+	const value = v as { t?: string; v?: unknown }
+	if (value.t === 'text' || value.t === 'size') return typeof value.v === 'string' ? value.v : null
+	if (value.t === 'number') return typeof value.v === 'number' ? value.v : null
+	return null
+}
+
+export const OPENAI_IMAGE_PARAMS: ParamDef[] = builtinProfile('gpt-image-2').params.map((def) => ({
+	key: def.key,
+	label: def.label,
+	kind: def.kind,
+	control: CONTROL_BY_KEY[def.key],
+	options: def.key === 'size' ? [...def.options, ...EXTRA_SIZE_PRESETS] : def.options,
+	min: def.min,
+	max: def.max,
+	advanced: def.advanced,
+	group: def.group,
+	def: defaultValue(def.default_value),
+}))

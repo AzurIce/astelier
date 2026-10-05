@@ -16,7 +16,7 @@ import type { GraphDoc, GraphDocWithId, GraphGroup, GraphSummary, ProviderConfig
 import type { WorkspaceStore } from '../store'
 import { sniffDimensions } from '../../images/sniff'
 
-import { dirExists, ensureDir, listDir, movePath, readBytes, readFile, readJson, removePath, uuid, withFsLock, writeBytes, writeJson, WORKSPACE_ROOT, type FsPath } from './fs'
+import { dirExists, ensureDir, fileExists, listDir, movePath, readBytes, readFile, readJson, removePath, uuid, withFsLock, writeBytes, writeJson, WORKSPACE_ROOT, type FsPath } from './fs'
 import { freeStoreName, resolveStoreDirPath, safeStoreFile, safeStorePath } from './paths'
 import { graphStoreObjectUrl, releaseGraphStoreObjectUrls, releaseStoreObjectUrl, storeObjectUrl } from './objectUrls'
 
@@ -411,8 +411,9 @@ export function createOpfsStore(): WorkspaceStore {
 			if (!safeTo) throw new Error('目标路径不合法')
 			if (safeFrom === safeTo) return
 			if (safeTo.startsWith(`${safeFrom}/`)) throw new Error('不能移动到自己的子目录')
-			if (!(await dirExists([...storesRoot(), ...safeFrom.split('/')]))) throw new Error('源路径不存在')
-			await movePath([...storesRoot(), ...safeFrom.split('/')], [...storesRoot(), ...safeTo.split('/')])
+			const fromPath = [...storesRoot(), ...safeFrom.split('/')]
+			if (!(await fileExists(fromPath)) && !(await dirExists(fromPath))) throw new Error('源路径不存在')
+			await movePath(fromPath, [...storesRoot(), ...safeTo.split('/')])
 			releaseStoreObjectUrl(from)
 		},
 

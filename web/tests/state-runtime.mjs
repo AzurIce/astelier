@@ -154,6 +154,22 @@ try {
   assert.equal((await evaluate(async () => (await import('/src/library/api.ts')).fetchStoreTree())).files.length, 1)
   console.log('PASS explicit drag into library persists one selected image into OPFS')
 
+  // 库改名/移动：路径即身份，移动后树与旧 URL 缓存立即更新
+  const moved = await evaluate(async () => {
+    const api = await import('/src/library/api.ts')
+    const before = (await api.fetchStoreTree()).files[0].path
+    const renamed = before.replace(/\.png$/, '') + '-改名.png'
+    await api.makeStoreDir('收藏')
+    await api.moveStorePath(before, `收藏/${renamed}`)
+    const tree = await api.fetchStoreTree()
+    return { before, tree, after: tree.files[0]?.path }
+  })
+  assert.equal(moved.after, `收藏/${moved.before.replace(/\.png$/, '')}-改名.png`)
+  assert.ok(moved.tree.dirs.includes('收藏'))
+  await page.locator('.dock-head [aria-label="刷新"]').click()
+  await page.waitForSelector('.entry[data-entry]')
+  console.log('PASS library rename and move keep path identity; tree refreshes')
+
   await evaluate(async (id) => { await window.testStore.openGraph(id) }, ids.idB)
   assert.equal(await page.locator('.graph-title .name').textContent(), 'Graph B')
   assert.equal(await page.locator('.result-img').count(), 0)

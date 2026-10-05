@@ -10,6 +10,33 @@
 
 2026-10-05 前端目录按职责重排，文件链接已迁到当前路径；下文函数名、行号和未使用入口描述保留初审时的证据，逐项复核仍见 TODO。当前模块边界见 [web/README.md](./web/README.md)。
 
+2026-10-05 双工作区迁移完成（[todo.md](./todo.md) §3/§5/§6/§7）：前端默认本地 OPFS + 浏览器直连，Rust 服务保留为可选远端工作区。各条目处置如下；条目正文保留初审证据不再逐段改写：
+
+| 条目 | 处置 |
+| --- | --- |
+| A01 路径校验 | 前端已修：OPFS 路径段全部经 [paths.ts](web/src/workspace/opfs/paths.ts) 校验、图 id 为 UUID。服务端遗留（远端模式自带边界） |
+| A02 吞保存错误 | 前端已修：OPFS 写失败冒泡，保存失败阻塞切图（浏览器测试覆盖）。服务端遗留 |
+| A03 读改写竞争 | 前端已修：OPFS 读改写序列经 Web Locks 持锁整体执行（[fs.ts](web/src/workspace/opfs/fs.ts)）。服务端遗留 |
+| A04 加载触发保存 | 已修（2026-10-04 随 todo §2：restoring 标志 + 载入不触发自动保存） |
+| A05 回收与保存顺序 | 仍需处理（低危：回收失败仅残留文件；OPFS 下同样存在） |
+| A06 edits 端点 | 已修：直连实现按有无参考图切换端点（[protocol.ts](web/src/generation/protocol.ts)/[direct.ts](web/src/generation/direct.ts)）；服务端 adapter 亦已切换 |
+| A07 URL 编码契约 | 本地模式已消除：文档存结构化引用、URL 运行时解析；远端模式服务端自编码自解码，无跨端不一致 |
+| A08 执行快照依赖活动画布 | 已修：参考图在执行开始按当时 graphId 一次性解析快照（[execute.ts](web/src/canvas/execute.ts)） |
+| A09 参数两套定义 | 已修：[profiles.ts](web/src/generation/profiles.ts) 为唯一来源，UI 参数表由档案派生（[params.ts](web/src/generation/params.ts)，单测锁定） |
+| A10 归档与协议差异 | 随 Run 删除消失 |
+| A11 参数校验未落实 | 直连路径已修：发送前 validate（含范围/枚举/图片上限）。服务端遗留路径同旧 |
+| A12 图身份与标题绑定 | 本地已修：图 id = 稳定 UUID，重命名不换 id。远端沿用服务端目录身份（接口返回新 id 兼容） |
+| A13 同步接口包装异步 Run | 随 Run 删除消失：直连直接等待上游 |
+| A14 执行前校验 | 直连路径已修（model/prompt/参数/图片数发送前校验） |
+| C01 900ms 连线恢复窗口 | 仍需处理 |
+| C02 socket 刷新重复 | 仍需处理 |
+| C03 历史兼容分支 | 保留（旧文档读取需要；新写入不带） |
+| C04 未使用接口 | 前端已随迁移清理；服务端 profiles/override 端点保留供未来 |
+| C05 重复校验逻辑 | 前端已并（profiles.ts 单一来源）；服务端一份属自身路径 |
+| C06 纯文本按 HTML 解释 | 仍需处理 |
+| C07 可覆盖图片 immutable 缓存 | 本地模式消失（blob: URL 无 HTTP 缓存）；远端模式仍存在（服务端语义） |
+| C08 全局 CSS Svelte 语法 | 仍需处理 |
+
 ## 按使用场景分类
 
 分类回答“这是哪种使用方式下的问题”，优先级回答“在当前定位下多急着修”。每项只有一个主分类；关联场景只是说明影响范围，不代表新增一项问题。

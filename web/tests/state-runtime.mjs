@@ -60,8 +60,8 @@ await page.route('**/api/**', async (route) => {
 await page.route('**/store/**', (route) => route.fulfill({status:200,contentType:'image/png',body:Buffer.from(png.split(',')[1],'base64')}));
 const evaluate = (fn,args) => page.evaluate(fn,args);
 const loadModules = async () => evaluate(async () => {
-  const {rt} = await import('/src/runtime.ts');
-  const store = await import('/src/graphStore.svelte.ts');
+  const {rt} = await import('/src/canvas/runtime.ts');
+  const store = await import('/src/canvas/session.svelte.ts');
   await store.flushNow();
   window.testRt = rt; window.testStore = store;
   window.nodeUpdates = 0;
@@ -104,7 +104,7 @@ try {
   console.log('PASS connection endpoint follows reactive gallery height changes');
 
   await evaluate(async () => {
-    const {LoadImageNode} = await import('/src/nodes/classes.svelte.ts');
+    const {LoadImageNode} = await import('/src/canvas/nodes/model.svelte.ts');
     const node = new LoadImageNode(); node.id = 'image';
     await window.testRt.editor.addNode(node);
     await window.testRt.area.translate(node.id,{x:30,y:450});
@@ -117,7 +117,7 @@ try {
   await page.waitForFunction(() => window.testRt.editor.getNode('image').images.length === 1);
   assert.equal(requests.filter((request) => request.method === 'POST' && /\/store$/.test(request.path)).length,0);
   const serialized = await evaluate(async () => {
-    const {toDoc,toViewDoc} = await import('/src/graphDoc.ts');
+    const {toDoc,toViewDoc} = await import('/src/canvas/document.ts');
     await window.testStore.flushNow();
     return {doc:toDoc(),view:toViewDoc()};
   });
@@ -162,7 +162,7 @@ try {
   // Both fixtures deliberately reuse node IDs to exercise identity protection.
   generateGate = deferred();
   await evaluate(async () => {
-    const {runPipeline} = await import('/src/exec.ts');
+    const {runPipeline} = await import('/src/canvas/execute.ts');
     window.pendingPipeline=runPipeline().then(() => ({ok:true}), (error) => ({ok:false,message:error.message}));
   });
   await page.waitForFunction(() => window.testRt.editor.getNode('generate').busy);
@@ -181,12 +181,12 @@ try {
   assert.equal(await evaluate(() => window.testRt.editor.getNode('generate').busy),false);
   generateMode='success'; generateGate=deferred();
   await evaluate(async () => {
-    const {runPipeline} = await import('/src/exec.ts');
+    const {runPipeline} = await import('/src/canvas/execute.ts');
     window.deletedNode=window.testRt.editor.getNode('generate');
     window.pendingPipeline=runPipeline().then(() => ({ok:true}), (error) => ({ok:false,message:error.message}));
   });
   await page.waitForFunction(() => window.deletedNode.busy);
-  await evaluate(async () => {const {removeNodeCascade}=await import('/src/nodes/actions.ts');await removeNodeCascade('generate')});
+  await evaluate(async () => {const {removeNodeCascade}=await import('/src/canvas/nodes/actions.ts');await removeNodeCascade('generate')});
   generateGate.release(); generateGate=null;
   assert.equal((await evaluate(() => window.pendingPipeline)).ok,false);
   assert.equal(await evaluate(() => window.deletedNode.busy),false);

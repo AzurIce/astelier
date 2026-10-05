@@ -20,13 +20,13 @@ OPFS 与浏览器直连 provider 的迁移计划见 [todo.md](todo.md)。当前�
 
 ```text
 web/（bun + Vite + Svelte 5 + Rete.js 2）
-  src/nodes/classes.svelte.ts  节点身份、响应式业务字段与会话运行状态
-  src/editor.ts               Rete 插件、连线约束、视口与统一 socket 布局观察
-  src/exec.ts                 使用输入快照执行图，结果回写原节点
-  src/graphDoc.ts             Graph/View 的显式序列化与恢复
-  src/graphStore.svelte.ts     共享当前图 ID/标题/保存状态，切图与改名
-  src/saveQueue.ts             合并修改、串行保存、失败保留与 flush 等待
-  src/components/LibraryDock.svelte  图片库与显式收藏
+  src/app/         应用装配与顶栏
+  src/canvas/      Rete 编辑器、节点、执行、当前图会话与保存队列
+  src/workspace/   持久文档类型、图/分组 API、图内参考图与侧栏
+  src/generation/  Provider 配置、生成请求与参数 schema
+  src/images/      图片引用、拖拽协议、导入队列与内容指纹
+  src/library/     图片库面板、库 API 与路径处理
+  src/ui/          通用控件、主题、确认框、消息与预览
         │ fetch /api/*（开发时 Vite proxy → 127.0.0.1:8230）
         ▼
 src/（cargo，axum）
@@ -36,6 +36,8 @@ src/（cargo，axum）
   store.rs     JSON、图内参考图和库文件存储
   main.rs      API、图片路由和 web/dist 托管
 ```
+
+前端目录与依赖规则见 [web/README.md](web/README.md)。
 
 生成响应中的每张图片都保留在 Generate 节点中，可单独预览、拖入 Image 节点或
 图片库；下游生成接收全部图片，Preview 展示第一张。执行中切图或删除原节点时，

@@ -28,7 +28,7 @@
 - [x] 保留显式序列化入口，只挑选 Graph/View 的持久字段，不序列化整个节点实例。
 - [x] 集中管理保存安排与正在进行的写入。切图前等待旧图的待保存修改和进行中的写入完成；写入失败不能显示为已保存。
 
-主要位置：[节点类](./web/src/nodes/classes.svelte.ts)、[节点编辑](./web/src/nodes/actions.ts)、[图状态](./web/src/graphStore.svelte.ts)、[保存队列](./web/src/saveQueue.ts)、[文档序列化](./web/src/graphDoc.ts)。
+主要位置：[节点类](./web/src/canvas/nodes/model.svelte.ts)、[节点编辑](./web/src/canvas/nodes/actions.ts)、[图状态](./web/src/canvas/session.svelte.ts)、[保存队列](./web/src/canvas/saveQueue.ts)、[文档序列化](./web/src/canvas/document.ts)。
 
 2026-10-04 已完成。继续沿用现有 Graph/View 自动保存策略，最终选择仍见第 1 节。保存队列串行写入并保留失败的待保存修改；切图与改名先等待写入，加载节点不触发自动保存。
 
@@ -51,7 +51,7 @@
 - [x] 生成结果先作为临时图片留在会话中，供节点预览、下游输入和拖拽收藏使用；拖入库时只保存用户选择的图片。
 - [x] 执行期间切图或删除节点时，异步结果仍归属原图/原节点，不能写入新打开的图。
 
-主要位置：[执行逻辑](./web/src/exec.ts)、[生成 API](./src/api.rs)、[生图适配](./src/adapter.rs)、[模型](./src/model.rs)、[存储](./src/store.rs)、[图片收藏](./web/src/components/LibraryDock.svelte)。
+主要位置：[执行逻辑](./web/src/canvas/execute.ts)、[生成 API](./src/api.rs)、[生图适配](./src/adapter.rs)、[模型](./src/model.rs)、[存储](./src/store.rs)、[图片收藏](./web/src/library/LibraryDock.svelte)。
 
 2026-10-04 已完成。生成 API 在请求内返回全部图片的临时 data URL；临时图片拖入 Image 节点不上传，拖入库才保存选中的图片。现有磁盘历史文件未删除，显式资产上传与旧图片读取仍可用。当前继续使用 Rust 后端，不提前实现第 3、5、6 节。
 

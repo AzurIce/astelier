@@ -8,6 +8,8 @@
 
 本文件保留初次审查时的问题与依据。2026-10-04 已完成 [todo.md 第 2、4 节](./todo.md)：节点响应式、保存队列、Run 删除与临时产物链路已调整，以下涉及旧实现的描述不应视为当前实现仍然存在的结论。各审查条目的逐项状态复核仍留在 TODO 第 7 节；当前架构见 [README](./README.md)。
 
+2026-10-05 前端目录按职责重排，文件链接已迁到当前路径；下文函数名、行号和未使用入口描述保留初审时的证据，逐项复核仍见 TODO。当前模块边界见 [web/README.md](./web/README.md)。
+
 ## 按使用场景分类
 
 分类回答“这是哪种使用方式下的问题”，优先级回答“在当前定位下多急着修”。每项只有一个主分类；关联场景只是说明影响范围，不代表新增一项问题。
@@ -90,7 +92,7 @@
 
 **问题性质：实现、状态模型。**
 
-位置：[src/store.rs](src/store.rs)，`write_json_at_unlocked()`（第 54 行）；[web/src/graphStore.ts](web/src/graphStore.ts)，`flushGraph()`（第 108 行）。
+位置：[src/store.rs](src/store.rs)，`write_json_at_unlocked()`（第 54 行）；[web/src/canvas/session.svelte.ts](web/src/canvas/session.svelte.ts)，`flushGraph()`（第 108 行）。
 
 后端忽略创建目录、序列化、写入和重命名失败，API 因而继续返回成功。读取也将文件缺失、读取失败和 JSON 损坏统一折叠为 `None`，配置加载可能据此写入默认值。前端甚至在保存失败后设置 `saved`。
 
@@ -112,7 +114,7 @@
 
 **问题性质：状态模型、异步实现。**
 
-位置：[web/src/graphStore.ts](web/src/graphStore.ts)，`flushNow()`（第 76 行）、`openGraph()`（第 90 行）；[web/src/editor.ts](web/src/editor.ts)，结构变化触发保存的 pipe。
+位置：[web/src/canvas/session.svelte.ts](web/src/canvas/session.svelte.ts)，`flushNow()`（第 76 行）、`openGraph()`（第 90 行）；[web/src/canvas/editor.ts](web/src/canvas/editor.ts)，结构变化触发保存的 pipe。
 
 `flushNow()` 只等待尚未触发的定时器，不等待已经开始的保存请求。清空编辑器和逐个加载节点又会触发自动保存，可能把空图或部分加载的图写回磁盘。切图过程也缺少串行控制。
 
@@ -132,7 +134,7 @@
 
 **问题性质：资源所有权模型、数据一致性。**
 
-位置：[web/src/nodes/actions.ts](web/src/nodes/actions.ts)，`cleanupGraphStoreRefs()`（第 51 行）；[web/src/nodes/components/LoadImageNode.svelte](web/src/nodes/components/LoadImageNode.svelte)，移除和清空图片的逻辑。
+位置：[web/src/canvas/nodes/actions.ts](web/src/canvas/nodes/actions.ts)，`cleanupGraphStoreRefs()`（第 51 行）；[web/src/canvas/nodes/components/LoadImageNode.svelte](web/src/canvas/nodes/components/LoadImageNode.svelte)，移除和清空图片的逻辑。
 
 浏览器扫描当前编辑器引用后立即删除文件，而图结构要延迟保存。如果保存失败或提前关闭页面，磁盘文档仍引用已经删除的图片。其他标签页和执行中的快照也不在引用判断内。
 
@@ -170,7 +172,7 @@
 
 **问题性质：模型设计、接口契约。**
 
-位置：[web/src/graphStore.ts](web/src/graphStore.ts)，`graphStoreUrl()`（第 169 行）；[src/api.rs](src/api.rs)，`url_to_asset()` 的图内 store 分支（第 808 行）。
+位置：[web/src/workspace/imageFiles.ts](web/src/workspace/imageFiles.ts)，`graphStoreUrl()`（第 169 行）；[src/api.rs](src/api.rs)，`url_to_asset()` 的图内 store 分支（第 808 行）。
 
 前端对图 ID、文件名编码，后端从 JSON 中拆出 URL 字符串后直接读文件，没有解码。该字符串没有经过静态图片路由的路径解码过程。
 
@@ -188,7 +190,7 @@
 
 **问题性质：模型设计、重复逻辑。**
 
-位置：[web/src/apiParams.ts](web/src/apiParams.ts)（第 8 行）；[web/src/nodes/components/GenerateNode.svelte](web/src/nodes/components/GenerateNode.svelte)；[web/src/profiles.ts](web/src/profiles.ts)；[src/profiles.rs](src/profiles.rs)，`output_compression_def()`（第 101 行）。
+位置：[web/src/generation/params.ts](web/src/generation/params.ts)（第 8 行）；[web/src/canvas/nodes/components/GenerateNode.svelte](web/src/canvas/nodes/components/GenerateNode.svelte)；[web/src/generation/params.ts](web/src/generation/params.ts)；[src/profiles.rs](src/profiles.rs)，`output_compression_def()`（第 101 行）。
 
 前端静态参数表实际驱动全部 Generate 节点，后端 profiles 没有接入参数 UI。`fetchProfiles()` 没有调用方，前端的 `def` 与后端的 `default_value` 契约也不同。模型切换和 provider override 无法完整驱动参数区。
 
@@ -230,7 +232,7 @@
 
 **问题性质：执行模型、状态边界。**
 
-位置：[web/src/exec.ts](web/src/exec.ts)，Image 求值（第 99 行）、Generate 返回输出（第 153 行）。
+位置：[web/src/canvas/execute.ts](web/src/canvas/execute.ts)，Image 求值（第 99 行）、Generate 返回输出（第 153 行）。
 
 执行 Image 节点时重新读取 `activeGraphId()`，Generate 输出又依赖存活 UI 实例。运行期间切图、删除节点或重命名会改变执行所依赖的状态，文档快照没有包含完整上下文。
 
@@ -248,7 +250,7 @@
 
 **问题性质：执行模型、实现。**
 
-位置：[web/src/exec.ts](web/src/exec.ts)，全图遍历（第 48 行）。
+位置：[web/src/canvas/execute.ts](web/src/canvas/execute.ts)，全图遍历（第 48 行）。
 
 执行器遍历全部节点，包含未连接的输入节点。图中较晚出现的缺失输入或环，可能在前面的生成已经发生后才被发现。
 
@@ -264,7 +266,7 @@
 
 **使用场景分类：画布执行与交互。**
 
-位置：[web/src/editor.ts](web/src/editor.ts)，`restoreTimer`（第 192 行）。
+位置：[web/src/canvas/editor.ts](web/src/canvas/editor.ts)，`restoreTimer`（第 192 行）。
 
 用固定定时器判断恢复旧连线的有效期，行为依赖拖动时长。建议依据实际拖拽会话的开始、完成和取消事件管理状态。证据为代码分析。
 
@@ -324,7 +326,7 @@
 
 **问题性质：模型设计、繁琐实现。**
 
-位置：[src/api.rs](src/api.rs)，`rename_graph()`（第 340 行）；[src/store.rs](src/store.rs)，`retarget_runs_graph()`（第 253 行）；[web/src/App.svelte](web/src/App.svelte)、[web/src/Sidebar.svelte](web/src/Sidebar.svelte)，活动 ID 更新。
+位置：[src/api.rs](src/api.rs)，`rename_graph()`（第 340 行）；[src/store.rs](src/store.rs)，`retarget_runs_graph()`（第 253 行）；[web/src/app/App.svelte](web/src/app/App.svelte)、[web/src/workspace/Sidebar.svelte](web/src/workspace/Sidebar.svelte)，活动 ID 更新。
 
 重命名会移动目录、改变 ID、遍历修改历史 Run，再让前端同步活动 ID。旧 `/gstore/` URL、其他会话和在途操作仍可能持有旧身份，这些补偿不能形成完整的原子迁移。
 
@@ -340,7 +342,7 @@
 
 **使用场景分类：模型与代码维护。**
 
-位置：[web/src/editor.ts](web/src/editor.ts)，节点 `ResizeObserver`（第 80 行）；[web/src/nodes/components/LoadImageNode.svelte](web/src/nodes/components/LoadImageNode.svelte)，`observeSize()`（第 146 行）。
+位置：[web/src/canvas/editor.ts](web/src/canvas/editor.ts)，节点 `ResizeObserver`（第 80 行）；[web/src/canvas/nodes/components/LoadImageNode.svelte](web/src/canvas/nodes/components/LoadImageNode.svelte)，`observeSize()`（第 146 行）。
 
 Image 组件与 editor 各有一套尺寸观察和 socket 刷新。建议保留一个统一入口，将 Rete 的 DOM/socket 补偿集中到适配层。
 
@@ -356,7 +358,7 @@ Image 组件与 editor 各有一套尺寸观察和 socket 刷新。建议保留�
 
 **关联场景：历史请求与图片引用的向后兼容。**
 
-位置：[src/model.rs](src/model.rs)，`Run`（第 512 行）及读取辅助方法；[web/src/nodes/classes.ts](web/src/nodes/classes.ts)，旧图片引用转换与 `imageRefsOf()`。
+位置：[src/model.rs](src/model.rs)，`Run`（第 512 行）及读取辅助方法；[web/src/canvas/nodes/model.svelte.ts](web/src/canvas/nodes/model.svelte.ts)，旧图片引用转换与 `imageRefsOf()`。
 
 Run 同时承载新请求、配方快照和 legacy 字段，读取方法反复选择事实来源；图片引用也在多个入口兼容旧格式。
 
@@ -370,7 +372,7 @@ Run 同时承载新请求、配方快照和 legacy 字段，读取方法反复�
 
 **使用场景分类：模型与代码维护。**
 
-位置：[web/src/profiles.ts](web/src/profiles.ts)、[web/src/nodes/conn.ts](web/src/nodes/conn.ts)、[web/src/api.ts](web/src/api.ts)、[web/src/graphStore.ts](web/src/graphStore.ts)、[src/model.rs](src/model.rs)、[src/profiles.rs](src/profiles.rs)。
+位置：[web/src/generation/params.ts](web/src/generation/params.ts)、[web/src/canvas/nodes/connections.ts](web/src/canvas/nodes/connections.ts)、[web/src/workspace/api.ts](web/src/workspace/api.ts)、[web/src/canvas/session.svelte.ts](web/src/canvas/session.svelte.ts)、[src/model.rs](src/model.rs)、[src/profiles.rs](src/profiles.rs)。
 
 `fetchProfiles`、`connectedModelNode`、`uploadAsset`、`fetchGraphStore` 等没有调用方。Rust 模块级 `allow(dead_code)` 掩盖了残留代码。建议按当前功能清理，确需保留的兼容或计划接口使用局部说明。
 
@@ -402,7 +404,7 @@ Run 同时承载新请求、配方快照和 legacy 字段，读取方法反复�
 
 **关联场景：不可信名称或上游消息进入 HTML 渲染时的内容安全。**
 
-位置：[web/src/components/ConfirmDialog.svelte](web/src/components/ConfirmDialog.svelte)，`{@html message}`（第 52 行）；[web/src/Sidebar.svelte](web/src/Sidebar.svelte)，含用户图名的确认消息；[poke-image-studio/app.js](poke-image-studio/app.js)，`status()`（第 853 行）。
+位置：[web/src/ui/confirm/ConfirmDialog.svelte](web/src/ui/confirm/ConfirmDialog.svelte)，`{@html message}`（第 52 行）；[web/src/workspace/Sidebar.svelte](web/src/workspace/Sidebar.svelte)，含用户图名的确认消息；[poke-image-studio/app.js](poke-image-studio/app.js)，`status()`（第 853 行）。
 
 确认消息包含用户图名，却未经转义作为 HTML 渲染；实验页也将上游错误插入 `innerHTML`。这些纯文本需求不需要 HTML 解释逻辑。建议使用文本渲染，确需富文本时使用独立结构化内容入口。证据为代码分析。
 
@@ -430,7 +432,7 @@ Run 同时承载新请求、配方快照和 legacy 字段，读取方法反复�
 
 **使用场景分类：展示内容与浏览器缓存。**
 
-位置：[web/src/index.css](web/src/index.css)，第 444 行。
+位置：[web/src/ui/theme/global.css](web/src/ui/theme/global.css)，第 444 行。
 
 全局 CSS 中的 `:global(body.resizing-sidebar)` 没有经过组件样式转换，构建产生无效伪类警告。建议直接使用全局 CSS 选择器。
 
@@ -442,7 +444,7 @@ Run 同时承载新请求、配方快照和 legacy 字段，读取方法反复�
 
 ## 建议保留的适配
 
-[web/src/nodes/noNodeDrag.ts](web/src/nodes/noNodeDrag.ts) 和 [web/src/noCanvasWheel.ts](web/src/noCanvasWheel.ts) 针对原生事件与 Svelte 委托事件的边界，有明确用途。可以保留这些小适配，并把依赖 Rete 行为的补偿集中管理。
+[web/src/canvas/dom/noNodeDrag.ts](web/src/canvas/dom/noNodeDrag.ts) 和 [web/src/canvas/dom/noCanvasWheel.ts](web/src/canvas/dom/noCanvasWheel.ts) 针对原生事件与 Svelte 委托事件的边界，有明确用途。可以保留这些小适配，并把依赖 Rete 行为的补偿集中管理。
 
 ## 建议修复顺序
 
@@ -456,7 +458,7 @@ Run 同时承载新请求、配方快照和 legacy 字段，读取方法反复�
 ## 本次验证结果与范围
 
 - Rust：`cargo test`，13 项通过。
-- 前端：`bun test src/nodes/imageImport.test.ts`，7 项通过。
+- 前端：`bun test src/images/import.test.ts`，7 项通过。
 - 静态检查：`npm run check`，Svelte 检查 0 错误、0 警告。
 - 构建：`npm run build` 成功，出现 C08 所述全局 CSS 警告。
 - 额外后端验证使用临时数据目录和本地模拟服务；前端验证使用受控编辑器、网络和延迟。

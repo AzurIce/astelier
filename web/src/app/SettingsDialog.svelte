@@ -4,6 +4,7 @@
 	import { workspaceStore } from '../workspace/store'
 	import { currentWorkspaceChoice } from '../workspace/selection.svelte'
 	import { loadProviderConfig } from '../generation/config.svelte'
+	import { exportWorkspaceZip, importWorkspaceZip } from '../workspace/opfs/transfer'
 	import type { ProviderConfig, ProviderEntry } from '../workspace/types'
 
 	// 设置：本地模式下编辑 Provider（base_url / API key / 模型列表，明文存
@@ -17,6 +18,8 @@
 	let saving = $state(false)
 	let draft = $state<ProviderConfig>({ providers: [], active_provider: '' })
 	let usage = $state<{ used: number; quota: number; persisted: boolean } | null>(null)
+	let transferring = $state(false)
+	let importInput = $state<HTMLInputElement>()
 
 	$effect(() => {
 		if (open && !loading) void reload()
@@ -107,6 +110,38 @@
 			toast({ kind: 'err', title: '申请持久存储失败' })
 		}
 	}
+
+	async function exportZip() {
+		if (transferring) return
+		transferring = true
+		try {
+			const name = await exportWorkspaceZip()
+			toast({ kind: 'ok', title: '已导出工作区', msg: `${name} 已开始下载` })
+		} catch (e) {
+			toast({ kind: 'err', title: '导出失败', msg: e instanceof Error ? e.message : String(e) })
+		} finally {
+			transferring = false
+		}
+	}
+
+	async function importZip(file: File | undefined) {
+		if (!file || transferring) return
+		transferring = true
+		try {
+			const report = await importWorkspaceZip(file)
+			toast({
+				kind: 'ok',
+				title: '已导入工作区',
+				msg: `图 ${report.graphsTaken} 张（跳过较新 ${report.graphsSkipped}）· 库图片 ${report.libraryFiles} 张${report.groupsMerged ? ' · 分组已合并' : ''}${report.rejected ? ` · 忽略 ${report.rejected} 项` : ''}`,
+			})
+			onclose()
+			location.reload()
+		} catch (e) {
+			toast({ kind: 'err', title: '导入失败', msg: e instanceof Error ? e.message : String(e) })
+		} finally {
+			transferring = false
+		}
+	}
 </script>
 
 {#if open}
@@ -151,10 +186,33 @@
 							{#if usage.quota}
 								<div class="quota-bar"><div class="quota-fill" style="width:{Math.min(100, (usage.used / usage.quota) * 100)}%"></div></div>
 							{/if}
-							<p class="hint">数据保存在本浏览器的 OPFS；清除站点数据会一并删除。导出备份见「工作区导入/导出」。</p>
+							<p class="hint">数据保存在本浏览器的 OPFS；清除站点数据会一并删除。导出备份见下方「导入 / 导出」。</p>
 						{:else}
 							<p class="hint">当前浏览器不支持存储配额查询。</p>
 						{/if}
+					</section>
+
+					<section class="card">
+						<h3>导入 / 导出</h3>
+						<div class="transfer-row">
+							<button type="button" class="ui-btn ghost sm" disabled={transferring} onclick={() => void exportZip()}>
+								{#if transferring}<Icon name="spinner" size={12} class="spin" />{:else}<Icon name="upload" size={12} />{/if}导出 zip
+							</button>
+							<button type="button" class="ui-btn ghost sm" disabled={transferring} onclick={() => importInput?.click()}>
+								<Icon name="move" size={12} />导入 zip
+							</button>
+							<input
+								bind:this={importInput}
+								type="file"
+								accept="application/zip,.zip"
+								style="display:none"
+								onchange={(e) => {
+									void importZip(e.currentTarget.files?.[0])
+									e.currentTarget.value = ''
+								}}
+							/>
+						</div>
+						<p class="hint">导出包含图、视图、分组、图内参考图与库图片。导入按「本地较新的图跳过」合并；Provider 配置与密钥不随 zip 转移。</p>
 					</section>
 
 					<section class="card">
@@ -326,6 +384,11 @@
 	.quota-fill {
 		height: 100%;
 		background: var(--ui-accent);
+	}
+	.transfer-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
 	}
 	.provider {
 		display: flex;

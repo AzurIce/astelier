@@ -7,11 +7,12 @@
 		"dev": "vite --host",
 		"build": "vite build",
 		"check": "svelte-check --tsconfig ./tsconfig.json",
-    "test": "bun test src",
-    "test:browser": "node tests/state-runtime.mjs && node tests/remote-workspace.mjs",
+		"test": "bun test src",
+		"test:browser": "node tests/state-runtime.mjs && node tests/remote-workspace.mjs",
 		"preview": "vite preview"
 	},
 	"dependencies": {
+		"fflate": "^0.8.3",
 		"rete": "^2.0.6",
 		"rete-area-plugin": "^2.3.2",
 		"rete-connection-plugin": "^2.0.5",

@@ -1,5 +1,5 @@
 // 每次执行使用文档快照；运行状态和产物属于原节点，不归档。
-import { apiGenerate } from '../generation/api'
+import { imageGenerator } from '../generation/generator'
 import { toDoc } from './document'
 import { rt, runningNodes } from './runtime'
 import { activeGraphId, graphSession } from './session.svelte'
@@ -16,9 +16,12 @@ export async function runPipeline(): Promise<number> {
 
 	const doc = toDoc()
 	const nodes = new Map(editor.getNodes().map((node) => [node.id, node]))
-	// 临时参考图不进入文档，仍作为本次执行的输入快照。
-	const images = new Map([...nodes].filter(([, node]) => node instanceof LoadImageNode)
-		.map(([id, node]) => [id, (node as LoadImageNode).images.map((image) => image.dataUrl ?? graphStoreUrl(graphId, image.file))]))
+	// 临时参考图不进入文档，仍作为本次执行的输入快照；
+	// 持久引用解析成会话 URL（本地为 blob:，远端为绝对地址）。
+	const images = new Map<string, string[]>()
+	for (const [id, node] of nodes) {
+		if (node instanceof LoadImageNode) images.set(id, await resolveRefs(graphId, (node as LoadImageNode).images))
+	}
 	const cache = new Map<string, Outputs>()
 	const running = new Set<string>()
 	let generated = 0
@@ -74,7 +77,7 @@ export async function runPipeline(): Promise<number> {
 			live.error = null
 			runningNodes.add(id)
 			try {
-				const result = await apiGenerate({ model, prompt, params: node.params, imageUrls: collectStrings(inputs.image) })
+				const result = await imageGenerator().generate({ model, prompt, params: node.params, imageUrls: collectStrings(inputs.image) })
 				requireActive(id)
 				if (!result.imageUrls?.length) throw new Error('响应中没有图片数据')
 				live.resultUrls = result.imageUrls
@@ -95,6 +98,20 @@ export async function runPipeline(): Promise<number> {
 
 	for (const node of doc.nodes) await evalNode(node.id)
 	return generated
+}
+
+async function resolveRefs(graphId: string, refs: { dataUrl?: string; file: string }[]): Promise<string[]> {
+	const out: string[] = []
+	for (const image of refs) {
+		if (image.dataUrl) {
+			out.push(image.dataUrl)
+			continue
+		}
+		const url = await graphStoreUrl(graphId, image.file)
+		if (!url) throw new Error(`参考图文件不存在：${image.file}`)
+		out.push(url)
+	}
+	return out
 }
 
 function collectStrings(value: unknown): string[] {

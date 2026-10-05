@@ -7,6 +7,9 @@
 
 export type FsPath = string[]
 
+/** 工作区在 OPFS 根下的命名空间（同源多应用互不干扰） */
+export const WORKSPACE_ROOT: FsPath = ['atelier']
+
 export async function opfsRoot(): Promise<FileSystemDirectoryHandle> {
 	return navigator.storage.getDirectory()
 }
@@ -104,6 +107,11 @@ export async function dirExists(path: FsPath): Promise<boolean> {
 	} catch {
 		return false
 	}
+}
+
+/** 确保目录存在（多级创建） */
+export async function ensureDir(path: FsPath): Promise<void> {
+	await dirHandle(path, true)
 }
 
 export interface DirEntries {

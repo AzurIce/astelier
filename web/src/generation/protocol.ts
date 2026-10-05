@@ -8,7 +8,7 @@ import { paramsToBody, type ModelProfile, type ParamMap } from './profiles'
 
 /** 本次调用的参考图字节；不复制到任何永久存储 */
 export interface InputImage {
-	bytes: Uint8Array
+	bytes: Uint8Array<ArrayBuffer>
 	ext: string
 }
 
@@ -105,6 +105,13 @@ export function bytesToBase64(bytes: Uint8Array): string {
 		binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
 	}
 	return btoa(binary)
+}
+
+export function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
+	const binary = atob(b64)
+	const bytes = new Uint8Array(binary.length)
+	for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+	return bytes
 }
 
 /** 结果图片统一转 data URL（按魔数嗅探格式） */

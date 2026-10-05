@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte'
+	import { SvelteMap } from 'svelte/reactivity'
 	import NodeFrame from './NodeFrame.svelte'
 	import Port from './Port.svelte'
 	import Icon from '../../../ui/Icon.svelte'
@@ -114,8 +115,26 @@
 		writeImageDrag(e.dataTransfer, [{ kind: 'store', url: imageUrl(image), store: activeGraphId(), file: image.dataUrl ? image.name : image.file, w: image.w, h: image.h }])
 		e.dataTransfer.effectAllowed = 'copy'
 	}
+
+	// 持久引用的展示 URL 是异步解析的（本地工作区读 OPFS 生成 blob: URL）
+	const resolvedUrls = new SvelteMap<string, string>()
+	async function warmUrl(image: ImageRef) {
+		if (image.dataUrl || resolvedUrls.has(image.file) || broken.has(image.file)) return
+		const gid = activeGraphId()
+		if (!gid) return
+		const url = await graphStoreUrl(gid, image.file)
+		if (activeGraphId() !== gid || !imageRefsLive(image)) return
+		if (url) resolvedUrls.set(image.file, url)
+		else broken = new Set([...broken, image.file])
+	}
+	function imageRefsLive(image: ImageRef): boolean {
+		return data.images.some((current) => current === image || current.file === image.file)
+	}
+	$effect(() => {
+		for (const image of images) void warmUrl(image)
+	})
 	function imageUrl(image: ImageRef): string {
-		return image.dataUrl ?? graphStoreUrl(activeGraphId(), image.file)
+		return image.dataUrl ?? resolvedUrls.get(image.file) ?? ''
 	}
 
 	// 原生监听先于画布层执行，排序不会进入外部图片导入入口。
@@ -175,8 +194,8 @@
 							<li class="image-card" class:sorting={dragging === image.file} class:sort-target={sortOver === image.file} use:sortTarget={{ file: image.file, index }}>
 								<div class="image-preview">
 									<button type="button" class="preview-button" aria-label={`预览 ${image.name}`} title="点击预览 · 拖到其他 Image 节点或图片库" draggable="true" ondragstart={(e) => dragImage(e, image)} onclick={() => openLightbox(imageUrl(image))}>
-										{#if broken.has(image.file)}
-											<span class="missing-image"><Icon name="alert" size={22} />图片不可用</span>
+										{#if broken.has(image.file) || !imageUrl(image)}
+											<span class="missing-image"><Icon name={broken.has(image.file) ? 'alert' : 'spinner'} size={22} />{broken.has(image.file) ? '图片不可用' : '读取中…'}</span>
 										{:else}
 											<img src={imageUrl(image)} alt={image.name} draggable="false" onerror={() => { broken = new Set([...broken, image.file]) }} />
 										{/if}

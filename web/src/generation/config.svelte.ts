@@ -1,4 +1,7 @@
-// Provider 配置与共享响应式状态。
+// Provider 配置与共享响应式状态。数据来自当前工作区 store；
+// 这里只保留 Model 节点需要的字段（凭证不进响应式状态）。
+import { workspaceStore } from '../workspace/store'
+
 export interface ProviderInfo {
 	id: string
 	name: string
@@ -10,9 +13,6 @@ export const providerConfig = $state({
 })
 
 export async function loadProviderConfig(): Promise<void> {
-	const res = await fetch('/api/config')
-	if (!res.ok) throw new Error(`读取配置失败（${res.status}）`)
-	const config = await res.json()
-	providerConfig.providers = config.providers
+	const config = await workspaceStore().loadConfig()
+	providerConfig.providers = config.providers.map((p) => ({ id: p.id, name: p.name, models: p.models }))
 }
-

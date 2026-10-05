@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick, type Snippet } from 'svelte'
+	import { SvelteMap } from 'svelte/reactivity'
 	import Icon from '../ui/Icon.svelte'
 	import IconButton from '../ui/IconButton.svelte'
 	import { toast } from '../ui/toast/toast.svelte'
@@ -13,9 +14,8 @@
 		moveStorePath,
 		storeUrl,
 		uploadStoreFile,
-		type StoreFileEntry,
-		type StoreTree,
 	} from './api'
+	import type { StoreFileEntry, StoreTree } from '../workspace/types'
 
 	// 底部「库」内容浏览器（对标 UE Content Browser）：
 	// 侧边目录树 + 缩略图网格 + 缩放 + 单选/多选/框选 + 右键菜单 + 拖拽移动。
@@ -47,10 +47,22 @@
 	let gridEl = $state<HTMLDivElement>()
 
 	// ---------- 数据 ----------
+	// 展示 URL 异步解析（本地工作区读 OPFS 生成 blob: URL），按路径缓存
+	const urls = new SvelteMap<string, string>()
+	function urlOf(path: string): string {
+		return urls.get(path) ?? ''
+	}
 	async function refresh() {
 		loading = true
 		try {
 			tree = await fetchStoreTree()
+			const paths = new Set((tree?.files ?? []).map((f) => f.path))
+			await Promise.all([...paths].map(async (path) => {
+				if (urls.has(path)) return
+				const url = await storeUrl(path)
+				if (url) urls.set(path, url)
+			}))
+			for (const key of urls.keys()) if (!paths.has(key)) urls.delete(key)
 		} catch (e) {
 			toast({ kind: 'err', title: '读取库失败', msg: e instanceof Error ? e.message : String(e) })
 		}
@@ -325,7 +337,7 @@
 		e.dataTransfer.setData(DRAG_MIME, JSON.stringify({ paths }))
 		const images = paths.flatMap((p) => {
 			const file = fileOf(p)
-			return file ? [{ kind: 'store' as const, url: storeUrl(p), store: '', file: p, w: file.w, h: file.h }] : []
+			return file ? [{ kind: 'store' as const, url: urlOf(p), store: '', file: p, w: file.w, h: file.h }] : []
 		})
 		if (images.length) writeImageDrag(e.dataTransfer, images)
 		e.dataTransfer.effectAllowed = 'copyMove'
@@ -696,7 +708,7 @@
 								}}
 								ondblclick={() => {
 									if (isDir) navigate(en.path)
-									else openLightbox(storeUrl(en.path))
+									else openLightbox(urlOf(en.path))
 								}}
 								ondragstart={(e) => onTileDragStart(e, en.path)}
 								oncontextmenu={(e) => {
@@ -722,14 +734,16 @@
 									dropTarget = null
 								}}
 							>
-								<div class="thumb" style="--tile:{tile}px">
-									{#if isDir}
-										<Icon name={dropTarget === en.path ? 'folderOpen' : 'folder'} size={Math.round(tile * 0.34)} />
-										<span class="dir-badge">{childDirCount(en.path)}</span>
-									{:else}
-										<img src={storeUrl(en.path)} alt={baseName(en.path)} loading="lazy" draggable="false" />
-									{/if}
-								</div>
+									<div class="thumb" style="--tile:{tile}px">
+										{#if isDir}
+											<Icon name={dropTarget === en.path ? 'folderOpen' : 'folder'} size={Math.round(tile * 0.34)} />
+											<span class="dir-badge">{childDirCount(en.path)}</span>
+										{:else if urlOf(en.path)}
+											<img src={urlOf(en.path)} alt={baseName(en.path)} loading="lazy" draggable="false" />
+										{:else}
+											<Icon name="spinner" size={Math.round(tile * 0.3)} class="spin" />
+										{/if}
+									</div>
 								{#if renaming === en.path}
 									<!-- svelte-ignore a11y_autofocus -->
 									<input

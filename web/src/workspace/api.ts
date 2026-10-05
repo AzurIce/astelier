@@ -1,118 +1,64 @@
-// 工作区图文档与分组的 HTTP 存储接口。
+// 图文档与分组的存储接口。委托当前工作区 store（OPFS 或远端服务），
+// 调用方（会话、侧栏、保存队列）不感知实现。
 import type { GraphDoc, ViewDoc, GraphDocWithId, GraphGroup, GraphSummary } from './types'
+import { workspaceStore } from './store'
 
 export async function fetchGraph(id: string): Promise<GraphDocWithId> {
-	const res = await fetch(`/api/graphs/${encodeURIComponent(id)}`)
-	if (!res.ok) throw new Error(`读取图失败（${res.status}）`)
-	return res.json()
+	return workspaceStore().fetchGraph(id)
 }
 
 export async function putGraph(id: string, doc: GraphDoc) {
-	const res = await fetch(`/api/graphs/${encodeURIComponent(id)}`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ ...doc, id }),
-	})
-	if (!res.ok) throw new Error(`保存图失败（${res.status}）`)
+	await workspaceStore().putGraph(id, doc)
 }
 
-/** 图重命名 = 目录改名，id 可能随之变化；返回新 id */
+/** 图重命名。OPFS 返回稳定 id；远端服务可能因目录改名返回新 id。 */
 export async function renameGraph(id: string, title: string): Promise<{ id: string }> {
-	const res = await fetch(`/api/graphs/${encodeURIComponent(id)}/title`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name: title }),
-	})
-	const body = await res.json().catch(() => null)
-	if (!res.ok) throw new Error(body?.error ?? `重命名失败（${res.status}）`)
-	return body as { id: string }
+	return workspaceStore().renameGraph(id, title)
 }
 
 export async function fetchView(id: string): Promise<ViewDoc> {
-	const res = await fetch(`/api/graphs/${encodeURIComponent(id)}/view`)
-	if (!res.ok) throw new Error(`读取视图失败（${res.status}）`)
-	return res.json()
+	return workspaceStore().fetchView(id)
 }
 
 export async function putView(id: string, view: ViewDoc) {
-	const res = await fetch(`/api/graphs/${encodeURIComponent(id)}/view`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(view),
-	})
-	if (!res.ok) throw new Error(`保存视图失败（${res.status}）`)
+	await workspaceStore().putView(id, view)
 }
 
 // ---------- 目录树（文件夹 + 图） ----------
 
 export async function fetchGraphs(): Promise<GraphSummary[]> {
-	const res = await fetch('/api/graphs')
-	if (!res.ok) throw new Error(`读取图列表失败（${res.status}）`)
-	return res.json()
+	return workspaceStore().listGraphs()
 }
 
 export async function fetchGroups(): Promise<GraphGroup[]> {
-	const res = await fetch('/api/groups')
-	if (!res.ok) throw new Error(`读取目录失败（${res.status}）`)
-	return res.json()
+	return workspaceStore().listGroups()
 }
 
 export async function createGroup(name: string, parent_id: string | null): Promise<GraphGroup> {
-	const res = await fetch('/api/groups', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name, parent_id }),
-	})
-	const body = await res.json().catch(() => null)
-	if (!res.ok) throw new Error(body?.error ?? `新建文件夹失败（${res.status}）`)
-	return body as GraphGroup
+	return workspaceStore().createGroup(name, parent_id)
 }
 
 export async function renameGroup(id: string, name: string) {
-	const res = await fetch(`/api/groups/${encodeURIComponent(id)}`, {
-		method: 'PATCH',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name }),
-	})
-	if (!res.ok) throw new Error(`重命名失败（${res.status}）`)
+	await workspaceStore().renameGroup(id, name)
 }
 
 export async function moveGroup(id: string, parent_id: string | null) {
-	const res = await fetch(`/api/groups/${encodeURIComponent(id)}/parent`, {
-		method: 'PATCH',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ parent_id }),
-	})
-	const body = await res.json().catch(() => null)
-	if (!res.ok) throw new Error(body?.error ?? `移动失败（${res.status}）`)
+	await workspaceStore().moveGroup(id, parent_id)
 }
 
 export async function deleteGroup(id: string) {
-	const res = await fetch(`/api/groups/${encodeURIComponent(id)}`, { method: 'DELETE' })
-	if (!res.ok) throw new Error(`删除目录失败（${res.status}）`)
+	await workspaceStore().deleteGroup(id)
 }
 
 /** 建图到指定目录（null = 根） */
 export async function createGraph(group_id: string | null = null, title?: string): Promise<GraphDocWithId> {
-	const res = await fetch('/api/graphs', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ group_id, title }),
-	})
-	if (!res.ok) throw new Error(`建图失败（${res.status}）`)
-	return res.json()
+	return workspaceStore().createGraph(group_id, title)
 }
 
 export async function setGraphGroup(id: string, group_id: string | null) {
-	const res = await fetch(`/api/graphs/${encodeURIComponent(id)}/group`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ group_id }),
-	})
-	if (!res.ok) throw new Error(`移动图失败（${res.status}）`)
+	await workspaceStore().setGraphGroup(id, group_id)
 }
 
 export async function deleteGraph(id: string) {
-	const res = await fetch(`/api/graphs/${encodeURIComponent(id)}`, { method: 'DELETE' })
-	if (!res.ok) throw new Error(`删除图失败（${res.status}）`)
+	await workspaceStore().deleteGraph(id)
 }

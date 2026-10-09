@@ -33,4 +33,7 @@ Server；图会话与生图执行不依赖全局活动后端。
 - `ui/` 不依赖业务模块；不保留旧工作区切换、全局 API 包装和旧路径兼容入口。
 
 `window.__astelierRuntime` 仅供浏览器测试包装存储失败和注入替身生图器。正常应用不注入。
-开发与完整验证命令见根目录 [README](../README.md#架构与验证)。
+运行方式见根目录 [README](../README.md)。验证使用根目录的 `cargo test`，以及 `web/`
+下的 `bun run test`、`bun run check` 和 `bun run test:browser`。浏览器测试需要运行
+Vite，并通过 `PLAYWRIGHT_MODULE`、`CHROMIUM_PATH` 指定 Playwright 模块和 Chromium；
+`ASTELIER_TEST_URL` 可覆盖默认开发地址，`ASTELIER_SERVER_BIN` 可指定 Rust 服务二进制。

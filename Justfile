@@ -4,11 +4,11 @@ default: serve
 serve:
 	cargo run --release
 
-# 前端开发：vite dev（/api、/asset 代理到 127.0.0.1:8230，另起 serve）
+# 纯静态前端开发：无需后端，可选连接任意 Rust 服务
 dev-web:
 	cd web && bun run dev
 
-# 前端构建：产物 web/dist 由服务端托管
+# 前端构建：web/dist 可部署到静态站点，也可由 Rust 服务托管
 build-web:
 	cd web && bun install && bun run build
 

@@ -1,7 +1,7 @@
 // WorkspaceStore 的远端 HTTP 实现：对接现有 Rust 服务 /api/*，
 // 语义与旧版直连 fetch 模块一致。图片 URL 为服务端绝对地址；
 // 密钥、档案校验与参考图解析都在服务端完成。
-import type { GraphDoc, GraphDocWithId, GraphGroup, GraphSummary, ProviderConfig, StoreFileEntry, StoreTree, ViewDoc } from './types'
+import type { GraphDoc, GraphDocWithId, GraphGroup, GraphSummary, StoreFileEntry, StoreTree, ViewDoc } from './types'
 import type { WorkspaceStore } from './store'
 import type { GraphStoreFileMeta } from '../images/types'
 
@@ -17,7 +17,7 @@ export function createHttpStore(rawBase: string): WorkspaceStore {
 	const base = rawBase.trim().replace(/\/+$/, '')
 
 	async function api<T>(path: string, init?: RequestInit): Promise<T> {
-		const res = await fetch(`${base}${path}`, init)
+		const res = await fetch(`${base}${path}`, { signal: AbortSignal.timeout(60_000), ...init })
 		const body = await res.json().catch(() => null)
 		if (!res.ok) throw new Error((body as { error?: string })?.error ?? `请求失败（${res.status}）`)
 		return body as T
@@ -32,14 +32,6 @@ export function createHttpStore(rawBase: string): WorkspaceStore {
 	return {
 		kind: 'http',
 		label: `远端工作区（${base}）`,
-
-		async loadConfig(): Promise<ProviderConfig> {
-			return api<ProviderConfig>('/api/config')
-		},
-
-		async saveConfig(config) {
-			await api('/api/config', jsonInit('PUT', config))
-		},
 
 		async listGraphs(): Promise<GraphSummary[]> {
 			return api<GraphSummary[]>('/api/graphs')
@@ -58,8 +50,8 @@ export function createHttpStore(rawBase: string): WorkspaceStore {
 		},
 
 		async renameGraph(id, title) {
-			// 服务端目录改名可能更换 id，返回新 id 供会话同步
-			return api<{ id: string }>(`/api/graphs/${encodeURIComponent(id)}/title`, jsonInit('PUT', { name: title }))
+			// 图身份与标题独立
+			await api(`/api/graphs/${encodeURIComponent(id)}/title`, jsonInit('PUT', { name: title }))
 		},
 
 		async fetchView(id): Promise<ViewDoc> {

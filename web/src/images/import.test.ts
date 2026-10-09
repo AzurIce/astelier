@@ -21,8 +21,7 @@ function setup(upload?: (gid: string, name: string, blob: Blob) => Promise<{ nam
 	const uploads: string[] = []
 	let active = true
 	const importer = createImageImporter({
-		target: () => ({ graphId: 'test-graph', isActive: () => active, images: () => images, append: (image) => { images.push(image); return true } }),
-		upload: upload ?? (async (_gid, name) => { uploads.push(name); return { name } }),
+		target: () => ({ graphId: 'test-graph', upload: (name, blob) => upload ? upload('test-graph', name, blob) : Promise.resolve((uploads.push(name), { name })), isActive: () => active, images: () => images, append: (image) => { images.push(image); return true } }),
 		onProgress: () => {},
 		onReport: (report) => { reports.push(report) },
 	})
@@ -116,4 +115,17 @@ test('生成结果拖入 Image 节点只创建会话引用，不上传或自动�
 	assert.equal(s.images.length, 1)
 	assert.equal(s.images[0].dataUrl, url)
 	assert.equal(s.reports[0].added, 1)
+})
+
+
+test('已挂载后端的持久图片即使是 blob URL，也复制到目标图内存储', async () => {
+	const s = setup()
+	const blob = new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1])], { type: 'image/png' })
+	const url = URL.createObjectURL(blob)
+	try {
+		await s.importer.enqueue([{ kind: 'url', image: { kind: 'store', backendId: 'local', url, file: 'library.png', store: '' } }])
+		assert.deepEqual(s.uploads, ['library.png'])
+		assert.equal(s.images[0].file, 'library.png')
+		assert.equal(s.images[0].dataUrl, undefined)
+	} finally { URL.revokeObjectURL(url) }
 })

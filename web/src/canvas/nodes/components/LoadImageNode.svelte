@@ -11,8 +11,8 @@
 	import { noNodeDrag } from '../../dom/noNodeDrag'
 	import { noCanvasWheel } from '../../dom/noCanvasWheel'
 	import { acceptImageDrop } from '../../../images/drop'
-	import { activeGraphId, graphSession } from '../../session.svelte'
-	import { uploadGraphStoreFile, graphStoreUrl } from '../../../workspace/imageFiles'
+	import { activeGraph, isCurrentGraph, graphSession } from '../../session.svelte'
+	import { backendStore } from '../../../backends/registry.svelte'
 	import { rt } from '../../runtime'
 	import { LoadImageNode } from '../model.svelte'
 	import { type ImageRef } from '../../../images/types'
@@ -38,11 +38,14 @@
 
 	const importer = createImageImporter({
 		target: () => {
-			const graphId = activeGraphId()
+			const location = activeGraph()
+			const graphId = location.id
+			const store = backendStore(location.backendId)
 			const node = rt.editor?.getNode(data.id)
 			return {
 				graphId,
-				isActive: () => !graphSession.loading && activeGraphId() === graphId && node instanceof LoadImageNode && rt.editor?.getNode(node.id) === node,
+				upload: (name: string, blob: Blob) => store.uploadGraphStoreFile(graphId, name, blob),
+				isActive: () => !graphSession.loading && isCurrentGraph(location) && node instanceof LoadImageNode && rt.editor?.getNode(node.id) === node,
 				images: () => node instanceof LoadImageNode ? node.images : [],
 				append: (image) => {
 					let added = false
@@ -51,7 +54,6 @@
 				},
 			}
 		},
-		upload: uploadGraphStoreFile,
 		onProgress: (next) => { progress = next },
 		onReport: (next) => {
 			report = next
@@ -112,7 +114,7 @@
 	}
 	function dragImage(e: DragEvent, image: ImageRef) {
 		if (!e.dataTransfer) return
-		writeImageDrag(e.dataTransfer, [{ kind: 'store', url: imageUrl(image), store: activeGraphId(), file: image.dataUrl ? image.name : image.file, w: image.w, h: image.h }])
+		writeImageDrag(e.dataTransfer, [{ kind: 'store', url: imageUrl(image), ...(image.dataUrl ? {} : { backendId: graphSession.backendId }), store: graphSession.id, file: image.dataUrl ? image.name : image.file, w: image.w, h: image.h }])
 		e.dataTransfer.effectAllowed = 'copy'
 	}
 
@@ -120,10 +122,11 @@
 	const resolvedUrls = new SvelteMap<string, string>()
 	async function warmUrl(image: ImageRef) {
 		if (image.dataUrl || resolvedUrls.has(image.file) || broken.has(image.file)) return
-		const gid = activeGraphId()
+		const location = activeGraph()
+		const gid = location.id
 		if (!gid) return
-		const url = await graphStoreUrl(gid, image.file)
-		if (activeGraphId() !== gid || !imageRefsLive(image)) return
+		const url = await backendStore(location.backendId).graphStoreUrl(gid, image.file)
+		if (!isCurrentGraph(location) || !imageRefsLive(image)) return
 		if (url) resolvedUrls.set(image.file, url)
 		else broken = new Set([...broken, image.file])
 	}
@@ -186,7 +189,7 @@
 			{#if images.length}
 				<div class="image-toolbar">
 					<span class="image-count"><Icon name="layers" size={13} />{images.length} 张参考图</span>
-					<button type="button" class="add-button" onclick={() => input?.click()}><Icon name="plus" size={13} />添加</button>
+					<button type="button" class="ui-btn primary sm" onclick={() => input?.click()}><Icon name="plus" size={13} />添加</button>
 				</div>
 				<div class="gallery-scroll" use:noCanvasWheel>
 					<ol class="image-gallery" class:single={images.length === 1} aria-label="参考图，按序号发送">
@@ -226,7 +229,7 @@
 			{/if}
 			{#if report?.failures.length}
 				<div class="import-errors" role="status">
-					<div class="error-heading"><Icon name="alert" size={13} /><span>{report.failures.length} 张未能添加</span><button type="button" onclick={() => enqueue(report!.failures.map((failure) => failure.source))}>重试</button></div>
+					<div class="error-heading"><Icon name="alert" size={13} /><span>{report.failures.length} 张未能添加</span><button type="button" class="ui-btn ghost sm" onclick={() => enqueue(report!.failures.map((failure) => failure.source))}>重试</button></div>
 					<ul>{#each report.failures as failure}<li><strong>{failure.name}</strong><span>{failure.message}</span></li>{/each}</ul>
 				</div>
 			{:else if report && report.skipped > 0}
@@ -244,13 +247,8 @@
 	:global(.ui-node[data-node-type='image']) { width: 340px; max-width: 340px; }
 	.image-editor { position: relative; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 	.file-input { display: none; }
-	button { font: inherit; }
-	button:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
-	button:disabled { opacity: .35; cursor: default; }
 	.image-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 	.image-count { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ui-dim); }
-	.add-button { display: inline-flex; align-items: center; gap: 4px; padding: 5px 8px; color: var(--ui-accent); background: var(--ui-accent-weak); border: 0; border-radius: 6px; font-size: 11px; cursor: pointer; }
-	.add-button:hover { background: var(--ui-accent-fade); }
 	.gallery-scroll { max-height: 342px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--ui-track) transparent; padding: 2px; margin: -2px; }
 	.image-gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
 	.image-gallery.single { grid-template-columns: minmax(0, 1fr); }
@@ -273,9 +271,9 @@
 	.image-meta > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ui-text); font-size: 10.5px; }
 	.image-meta small { font: 9px var(--ui-mono); color: var(--ui-faint); }
 	.gallery-footer { display: flex; align-items: center; justify-content: space-between; gap: 6px; color: var(--ui-faint); font-size: 10px; }
-	.clear-button { padding: 2px 0 2px 6px; background: transparent; border: 0; color: var(--ui-dim); cursor: pointer; font-size: 10px; }
+	.clear-button { padding: 2px 0 2px 6px; background: transparent; border: 0; color: var(--ui-dim); cursor: pointer; font: inherit; font-size: 10px; }
 	.clear-button:hover { color: var(--ui-danger); }
-	.empty-drop { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; min-height: 190px; padding: 20px 10px; border: 1px dashed var(--ui-border-fade); border-radius: 10px; color: var(--ui-dim); background: color-mix(in srgb, var(--ui-input) 65%, transparent); cursor: pointer; transition: background var(--ui-fast), border-color var(--ui-fast); }
+	.empty-drop { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; min-height: 190px; padding: 20px 10px; border: 1px dashed var(--ui-border-fade); border-radius: 10px; color: var(--ui-dim); background: color-mix(in srgb, var(--ui-input) 65%, transparent); cursor: pointer; font: inherit; transition: background var(--ui-fast), border-color var(--ui-fast); }
 	.empty-drop:hover { border-color: var(--ui-accent); background: var(--ui-accent-weak); }
 	.empty-icon { position: relative; display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: 7px; border: 1px solid var(--ui-border-fade); border-radius: 14px; color: var(--ui-sock-image); background: var(--ui-card); }
 	.plus-badge { position: absolute; right: -3px; bottom: -3px; display: grid; place-items: center; width: 18px; height: 18px; border: 2px solid var(--ui-card); border-radius: 50%; background: var(--ui-sock-image); color: var(--ui-card); }
@@ -289,7 +287,7 @@
 	.import-errors { padding: 8px; border: 1px solid color-mix(in srgb, var(--ui-danger) 25%, transparent); background: color-mix(in srgb, var(--ui-danger) 5%, transparent); border-radius: 7px; font-size: 10px; }
 	.error-heading { display: flex; align-items: center; gap: 5px; color: var(--ui-danger); }
 	.error-heading span { flex: 1; }
-	.error-heading button { color: var(--ui-text); background: var(--ui-card); border: 1px solid var(--ui-border-fade); border-radius: 4px; padding: 2px 6px; cursor: pointer; }
+	.error-heading .ui-btn { color: var(--ui-text); }
 	.import-errors ul { max-height: 88px; overflow: auto; list-style: none; margin: 7px 0 0; padding: 0; }
 	.import-errors li { display: flex; flex-direction: column; gap: 2px; margin-top: 5px; overflow-wrap: anywhere; color: var(--ui-dim); }
 	.import-errors strong { font-weight: 500; color: var(--ui-text); }

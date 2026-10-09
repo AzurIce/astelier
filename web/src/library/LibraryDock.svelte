@@ -1,20 +1,14 @@
 <script lang="ts">
-	import { onMount, onDestroy, tick, type Snippet } from 'svelte'
+	import { onMount, onDestroy, tick, untrack, type Snippet } from 'svelte'
 	import { SvelteMap } from 'svelte/reactivity'
 	import Icon from '../ui/Icon.svelte'
 	import IconButton from '../ui/IconButton.svelte'
 	import { toast } from '../ui/toast/toast.svelte'
 	import { openLightbox } from '../ui/lightbox/lightbox.svelte'
-	import { STORE_DRAG_MIME, writeImageDrag } from '../images/drag'
+	import { STORE_DRAG_MIME, writeImageDrag, readImageDrag } from '../images/drag'
 	import { baseName, joinPath, parentDir } from './paths'
-	import {
-		deleteStorePath,
-		fetchStoreTree,
-		makeStoreDir,
-		moveStorePath,
-		storeUrl,
-		uploadStoreFile,
-	} from './api'
+	import { backendRegistry, backendStore } from '../backends/registry.svelte'
+	import { copyStorePaths } from './transfer'
 	import type { StoreFileEntry, StoreTree } from '../workspace/types'
 
 	// 底部「库」内容浏览器（对标 UE Content Browser）：
@@ -27,10 +21,15 @@
 	}: { collapsed?: boolean; ontoggle?: () => void; children?: Snippet } = $props()
 
 	// ---------- 状态 ----------
-	let tree = $state<StoreTree | null>(null)
+	let selectedBackendId = $state('local')
+	let trees = $state<Record<string, StoreTree>>({})
+	let errors = $state<Record<string, string>>({})
+	let tree = $derived(trees[selectedBackendId] ?? null)
+	let rootsExpanded = $state(new Set<string>())
 	let loading = $state(false)
 	let cwd = $state('') // 当前目录（'' = 根）
 	let expanded = $state(new Set<string>())
+	const folderKey = (backendId: string, path: string) => JSON.stringify([backendId, path])
 	let selected = $state(new Set<string>())
 	let tile = $state(128) // 缩略图边长 px
 	let query = $state('')
@@ -49,26 +48,29 @@
 	// ---------- 数据 ----------
 	// 展示 URL 异步解析（本地工作区读 OPFS 生成 blob: URL），按路径缓存
 	const urls = new SvelteMap<string, string>()
-	function urlOf(path: string): string {
-		return urls.get(path) ?? ''
-	}
-	async function refresh() {
+	const urlKey = (id: string, path: string) => JSON.stringify([id, path])
+	function urlOf(path: string): string { return urls.get(urlKey(selectedBackendId, path)) ?? '' }
+	async function refresh(id = selectedBackendId) {
+		const store = backendStore(id)
 		loading = true
 		try {
-			tree = await fetchStoreTree()
-			const paths = new Set((tree?.files ?? []).map((f) => f.path))
-			await Promise.all([...paths].map(async (path) => {
-				if (urls.has(path)) return
-				const url = await storeUrl(path)
-				if (url) urls.set(path, url)
+			const next = await store.storeTree()
+			trees[id] = next
+			delete errors[id]
+			await Promise.all(next.files.map(async (file) => {
+				const url = await store.storeUrl(file.path)
+				if (url) urls.set(urlKey(id, file.path), url)
 			}))
-			for (const key of urls.keys()) if (!paths.has(key)) urls.delete(key)
-		} catch (e) {
-			toast({ kind: 'err', title: '读取库失败', msg: e instanceof Error ? e.message : String(e) })
-		}
-		loading = false
+		} catch (error) { errors[id] = error instanceof Error ? error.message : String(error) }
+		finally { loading = false }
 	}
-	onMount(refresh)
+	$effect(() => {
+		const ids = backendRegistry.entries.map((entry) => { entry.revision; return entry.id })
+		untrack(() => {
+			if (!ids.includes(selectedBackendId)) { selectedBackendId = 'local'; cwd = ''; clearSel() }
+			for (const id of ids) void refresh(id)
+		})
+	})
 
 	/** 树结构：path → 直接子目录 / 直接子文件 */
 	let dirsByParent = $derived.by(() => {
@@ -92,8 +94,8 @@
 	function fileOf(path: string): StoreFileEntry | undefined {
 		return (tree?.files ?? []).find((f) => f.path === path)
 	}
-	function childDirCount(dir: string): number {
-		return (filesByParent.get(dir) ?? []).length
+	function childDirCount(dir: string, backendId = selectedBackendId): number {
+		return (trees[backendId]?.files ?? []).filter((file) => parentDir(file.path) === dir).length
 	}
 
 	/** 当前目录的直接子项：目录在前、按名排序；query 过滤 */
@@ -153,85 +155,93 @@
 	}
 
 	// ---------- 导航 ----------
-	function navigate(dir: string) {
+	function navigate(dir: string, backendId = selectedBackendId) {
+		if (backendId !== selectedBackendId) { selectedBackendId = backendId; query = '' }
+		rootsExpanded = new Set([...rootsExpanded, backendId])
 		cwd = dir
 		clearSel()
 		// 展开祖先链，树上看得到当前位置
 		const s = new Set(expanded)
 		let p = dir
 		while (p) {
-			s.add(parentDir(p) || '__root__')
+			s.add(folderKey(backendId, parentDir(p)))
 			p = parentDir(p)
 		}
-		s.delete('__root__')
 		expanded = s
 		ctx = null
 	}
-	function isExpanded(dir: string): boolean {
-		return expanded.has(dir)
+	function isExpanded(dir: string, backendId = selectedBackendId): boolean {
+		return expanded.has(folderKey(backendId, dir))
 	}
-	function toggleExpand(dir: string) {
+	function toggleExpand(dir: string, backendId = selectedBackendId) {
+		const key = folderKey(backendId, dir)
 		const s = new Set(expanded)
-		if (s.has(dir)) s.delete(dir)
-		else s.add(dir)
+		if (s.has(key)) s.delete(key)
+		else s.add(key)
 		expanded = s
 	}
 
 	/** 树的行：根 + 递归展开的目录（flat 列表渲染） */
 	let treeRows = $derived.by(() => {
-		const rows: { path: string; name: string; depth: number }[] = [{ path: '', name: '库', depth: 0 }]
-		const walk = (prefix: string, depth: number) => {
-			const kids = [...(dirsByParent.get(prefix) ?? [])].sort((a, b) =>
-				baseName(a).localeCompare(baseName(b), 'zh'),
-			)
-			for (const k of kids) {
-				rows.push({ path: k, name: baseName(k), depth })
-				if (expanded.has(k)) walk(k, depth + 1)
+		const rows: { path: string; name: string; depth: number; backendId: string; root: boolean }[] = []
+		for (const entry of backendRegistry.entries) {
+			rows.push({ path: '', name: entry.name, depth: 0, backendId: entry.id, root: true })
+			if (!rootsExpanded.has(entry.id)) continue
+			const byParent = new Map<string, string[]>()
+			for (const dir of trees[entry.id]?.dirs ?? []) { const parent = parentDir(dir); byParent.set(parent, [...(byParent.get(parent) ?? []), dir]) }
+			const walk = (dir: string, depth: number) => {
+				for (const child of [...(byParent.get(dir) ?? [])].sort()) {
+					rows.push({ path: child, name: baseName(child), depth, backendId: entry.id, root: false })
+					if (expanded.has(folderKey(entry.id, child))) walk(child, depth + 1)
+				}
 			}
+			walk('', 1)
 		}
-		walk('', 1)
 		return rows
 	})
 
 	// ---------- 操作 ----------
-	async function upload(list: FileList | null) {
+	async function upload(list: FileList | null, backendId = selectedBackendId, dir = cwd) {
+		const store = backendStore(backendId)
 		if (!list?.length) return
 		let ok = 0
 		for (const f of list) {
 			try {
-				await uploadStoreFile(f, cwd)
+				await store.uploadStoreFile(f, dir)
 				ok++
 			} catch (e) {
 				toast({ kind: 'err', title: `上传 ${f.name} 失败`, msg: e instanceof Error ? e.message : String(e) })
 			}
 		}
 		if (ok) toast({ kind: 'ok', title: `已上传 ${ok} 张`, msg: cwd || '库根目录' })
-		await refresh()
+		await refresh(backendId)
 	}
 
 	/** 结果图 / 外部 URL 拖进来 → 收藏进当前目录 */
-	async function collect(url: string) {
+	async function collect(url: string, backendId = selectedBackendId, dir = cwd, filename?: string) {
+		const store = backendStore(backendId)
 		try {
 			const res = await fetch(url)
 			if (!res.ok) throw new Error(`HTTP ${res.status}`)
 			const blob = await res.blob()
-			const name = /^(data:|blob:)/i.test(url)
+			const name = filename ?? (/^(data:|blob:)/i.test(url)
 				? `image-${Date.now()}.${blob.type === 'image/jpeg' ? 'jpg' : blob.type === 'image/webp' ? 'webp' : 'png'}`
-				: decodeURIComponent(url.split('/').pop() || `image-${Date.now()}.png`)
-			await uploadStoreFile(new File([blob], name, { type: blob.type || 'image/png' }), cwd)
+				: decodeURIComponent(new URL(url, location.href).pathname.split('/').pop() || `image-${Date.now()}.png`))
+			await store.uploadStoreFile(new File([blob], name, { type: blob.type || 'image/png' }), dir)
 			toast({ kind: 'ok', title: '已收入库', msg: `${name} → ${cwd || '根目录'}` })
-			await refresh()
+			await refresh(backendId)
 		} catch (e) {
 			toast({ kind: 'err', title: '收藏失败', msg: e instanceof Error ? e.message : String(e) })
 		}
 	}
 
 	async function remove(paths: string[]) {
+		const backendId = selectedBackendId, store = backendStore(backendId)
 		if (!paths.length) return
 		let ok = 0
 		for (const p of paths) {
 			try {
-				await deleteStorePath(p)
+				await store.deleteStorePath(p)
 				ok++
 			} catch (e) {
 				toast({ kind: 'err', title: `删除 ${baseName(p)} 失败`, msg: e instanceof Error ? e.message : String(e) })
@@ -239,19 +249,20 @@
 		}
 		if (ok) {
 			toast({ kind: 'ok', title: `已删除 ${ok} 项` })
-			await refresh()
+			await refresh(backendId)
 			clearSel()
 		}
 	}
 
-	async function moveInto(paths: string[], dir: string) {
+	async function moveInto(paths: string[], dir: string, backendId = selectedBackendId) {
+		const store = backendStore(backendId)
 		const targets = paths.filter((p) => p !== dir && parentDir(p) !== dir)
 		if (!targets.length) return
 		let ok = 0
 		let lastErr = ''
 		for (const p of targets) {
 			try {
-				await moveStorePath(p, joinPath(dir, baseName(p)))
+				await store.moveStorePath(p, joinPath(dir, baseName(p)))
 				ok++
 			} catch (e) {
 				lastErr = e instanceof Error ? e.message : String(e)
@@ -259,7 +270,7 @@
 		}
 		if (ok) {
 			toast({ kind: 'ok', title: `已移动 ${ok} 项`, msg: `→ ${dir || '库根目录'}` })
-			await refresh()
+			await refresh(backendId)
 			clearSel()
 		}
 		if (lastErr && !ok) toast({ kind: 'err', title: '移动失败', msg: lastErr })
@@ -277,6 +288,7 @@
 		else renameEl?.select()
 	}
 	async function commitRename() {
+		const backendId = selectedBackendId, store = backendStore(backendId)
 		const path = renaming
 		renaming = null
 		if (!path) return
@@ -290,8 +302,8 @@
 		if (!final || final === orig) return
 		const to = joinPath(parentDir(path), final)
 		try {
-			await moveStorePath(path, to)
-			await refresh()
+			await store.moveStorePath(path, to)
+			await refresh(backendId)
 			setSel(new Set([to]))
 			if (typed !== final) {
 				toast({ kind: 'info', title: '扩展名不可修改', msg: `已保留 ${ext}` })
@@ -302,6 +314,7 @@
 	}
 
 	async function newFolder() {
+		const backendId = selectedBackendId, store = backendStore(backendId)
 		const base = cwd ? `${cwd}/新建文件夹` : '新建文件夹'
 		let path = base
 		let n = 2
@@ -309,12 +322,12 @@
 			path = `${base} ${n++}`
 		}
 		try {
-			await makeStoreDir(path)
+			await store.makeStoreDir(path)
 			// 展开当前目录让新文件夹可见，并直接进入重命名
 			const s = new Set(expanded)
-			if (cwd) s.add(cwd)
+			if (cwd) s.add(folderKey(backendId, cwd))
 			expanded = s
-			await refresh()
+			await refresh(backendId)
 			await startRename(path)
 		} catch (e) {
 			toast({ kind: 'err', title: '新建文件夹失败', msg: e instanceof Error ? e.message : String(e) })
@@ -334,10 +347,10 @@
 		}
 		paths = paths.filter((p) => entries.some((en) => en.path === p))
 		if (!paths.length) return
-		e.dataTransfer.setData(DRAG_MIME, JSON.stringify({ paths }))
+		e.dataTransfer.setData(DRAG_MIME, JSON.stringify({ backendId: selectedBackendId, paths }))
 		const images = paths.flatMap((p) => {
 			const file = fileOf(p)
-			return file ? [{ kind: 'store' as const, url: urlOf(p), store: '', file: p, w: file.w, h: file.h }] : []
+			return file ? [{ kind: 'store' as const, url: urlOf(p), backendId: selectedBackendId, store: '', file: p, w: file.w, h: file.h }] : []
 		})
 		if (images.length) writeImageDrag(e.dataTransfer, images)
 		e.dataTransfer.effectAllowed = 'copyMove'
@@ -454,35 +467,22 @@
 	}
 
 	// ---------- 网格 drop（收藏 / 上传 / 库内移动） ----------
-	function readDragPaths(e: DragEvent): string[] {
-		const raw = e.dataTransfer?.getData(DRAG_MIME)
-		if (!raw) return []
+	async function dropInto(e: DragEvent, backendId: string, dir: string) {
+		e.preventDefault(); e.stopPropagation(); dropTarget = null
 		try {
-			return (JSON.parse(raw) as { paths: string[] }).paths ?? []
-		} catch {
-			return []
-		}
-	}
-	async function onGridDrop(e: DragEvent) {
-		e.preventDefault()
-		dropTarget = null
-		const moving = readDragPaths(e)
-		if (moving.length) {
-			await moveInto(moving, cwd)
-			return
-		}
-		const files = e.dataTransfer?.files
-		if (files && files.length) {
-			void upload(files)
-			return
-		}
-		const url = e.dataTransfer?.getData('text/uri-list') || e.dataTransfer?.getData('text/plain')
-		if (url) await collect(url)
+			const raw = e.dataTransfer?.getData(DRAG_MIME)
+			if (raw) {
+				const payload = JSON.parse(raw) as { backendId: string; paths: string[] }
+				if (payload.backendId === backendId) await moveInto(payload.paths, dir, backendId)
+				else { await copyStorePaths(payload.backendId, payload.paths, backendId, dir); await refresh(backendId) }
+				return
+			}
+			if (e.dataTransfer?.files.length) { await upload(e.dataTransfer.files, backendId, dir); return }
+			for (const image of readImageDrag(e.dataTransfer!)) await collect(image.url, backendId, dir, image.file ? baseName(image.file) : undefined)
+		} catch (error) { toast({ kind: 'err', title: '导入图片失败', msg: String(error) }) }
 	}
 
-	function tileTitle(path: string, w?: number, h?: number): string {
-		return `${baseName(path)}${w && h ? ` · ${w}×${h}` : ''}`
-	}
+	function tileTitle(path: string, w?: number, h?: number): string { return `${baseName(path)}${w && h ? ` · ${w}×${h}` : ''}` }
 </script>
 
 <svelte:window onpointerdowncapture={onWindowPointerDownCapture} />
@@ -517,7 +517,7 @@
 
 		<header class="dock-head">
 			<Icon name="layers" size={14} />
-			<strong>库</strong>
+			<strong>库 · {backendRegistry.entries.find((entry) => entry.id === selectedBackendId)?.name}</strong>
 			{#if loading}
 				<Icon name="spinner" size={13} class="spin" />
 			{/if}
@@ -554,10 +554,10 @@
 				</button>
 				<input
 					bind:this={uploadRef}
+					class="ui-file"
 					type="file"
 					accept="image/*"
 					multiple
-					style="display:none"
 					onchange={(e) => {
 						void upload(e.currentTarget.files)
 						e.currentTarget.value = ''
@@ -589,64 +589,47 @@
 		<div class="dock-body">
 			<!-- 侧边目录树 -->
 			<aside class="tree" aria-label="目录树">
-				{#each treeRows as row (row.path)}
-					{@const isCur = row.path === cwd}
-					{@const hasKids = (dirsByParent.get(row.path) ?? []).length > 0}
+				{#each treeRows as row (row.backendId + row.path)}
+					{@const isCur = row.backendId === selectedBackendId && row.path === cwd}
+					{@const hasKids = row.root || (trees[row.backendId]?.dirs ?? []).some((dir) => parentDir(dir) === row.path)}
 					<button
 						type="button"
 						class="tree-row"
 						class:cur={isCur}
-						class:drop={dropTarget === row.path}
+						class:drop={dropTarget === folderKey(row.backendId, row.path)}
 						style="padding-left:{6 + row.depth * 13}px"
-						title={row.path || '库根目录'}
-						onclick={() => navigate(row.path)}
-						ondragenter={() => (dropTarget = row.path)}
+						title={row.name}
+						onclick={() => navigate(row.path, row.backendId)}
+						ondragenter={() => (dropTarget = folderKey(row.backendId, row.path))}
 						ondragover={(e) => {
 							e.preventDefault()
-							dropTarget = row.path
+							dropTarget = folderKey(row.backendId, row.path)
 						}}
 						ondragleave={() => {
-							if (dropTarget === row.path) dropTarget = null
+							if (dropTarget === folderKey(row.backendId, row.path)) dropTarget = null
 						}}
-						ondrop={(e) => {
-							e.preventDefault()
-							const moving = readDragPaths(e)
-							if (moving.length) void moveInto(moving, row.path)
-							else {
-								const files = e.dataTransfer?.files
-								if (files?.length) {
-									void upload(files)
-								} else {
-									const url = e.dataTransfer?.getData('text/uri-list') || e.dataTransfer?.getData('text/plain')
-									if (url) {
-										cwd = row.path
-										void collect(url)
-									}
-								}
-							}
-							dropTarget = null
-						}}
+						ondrop={(e) => void dropInto(e, row.backendId, row.path)}
 					>
 						{#if hasKids}
 							<span
 								class="twisty"
 								role="button"
 								tabindex="-1"
-								aria-label={isExpanded(row.path) ? '折叠' : '展开'}
+								aria-label={(row.root ? rootsExpanded.has(row.backendId) : isExpanded(row.path, row.backendId)) ? '折叠' : '展开'}
 								onclick={(e) => {
 									e.stopPropagation()
-									toggleExpand(row.path)
+									if (row.root) { const next = new Set(rootsExpanded); if (next.has(row.backendId)) next.delete(row.backendId); else next.add(row.backendId); rootsExpanded = next } else toggleExpand(row.path, row.backendId)
 								}}
 								onkeydown={() => {}}
 							>
-								<Icon name={isExpanded(row.path) ? 'chevronDown' : 'chevronRight'} size={11} />
+								<Icon name={(row.root ? rootsExpanded.has(row.backendId) : isExpanded(row.path, row.backendId)) ? 'chevronDown' : 'chevronRight'} size={11} />
 							</span>
 						{:else}
 							<span class="twisty ph"></span>
 						{/if}
-						<Icon name={row.path === '' ? 'layers' : isExpanded(row.path) ? 'folderOpen' : 'folder'} size={13} />
+						<Icon name={row.path === '' ? 'layers' : isExpanded(row.path, row.backendId) ? 'folderOpen' : 'folder'} size={13} />
 						<span class="tname">{row.name}</span>
-						<span class="tcount mono">{childDirCount(row.path)}</span>
+						<span class="tcount mono">{childDirCount(row.path, row.backendId)}</span>
 					</button>
 				{/each}
 			</aside>
@@ -656,7 +639,7 @@
 			<div
 				bind:this={gridEl}
 				class="grid-wrap"
-				class:drop={dropTarget === cwd}
+				class:drop={dropTarget === folderKey(selectedBackendId, cwd)}
 				style="--lib-tile:{tile}px"
 				role="listbox"
 				aria-multiselectable="true"
@@ -666,14 +649,15 @@
 				oncontextmenu={(e) => openCtx(e, 'blank', cwd)}
 				ondragover={(e) => {
 					e.preventDefault()
-					dropTarget = cwd
+					dropTarget = folderKey(selectedBackendId, cwd)
 				}}
 				ondragleave={() => {
-					if (dropTarget === cwd) dropTarget = null
+					if (dropTarget === folderKey(selectedBackendId, cwd)) dropTarget = null
 				}}
-				ondrop={(e) => void onGridDrop(e)}
+				ondrop={(e) => void dropInto(e, selectedBackendId, cwd)}
 			>
-				{#if entries.length === 0}
+				{#if errors[selectedBackendId]}<div class="grid-empty">{errors[selectedBackendId]}<button type="button" class="ui-btn ghost sm" onclick={() => void refresh()}>重试</button></div>
+				{:else if entries.length === 0}
 					<div class="grid-empty">
 						<Icon name="layers" size={22} />
 						<span>{query ? '没有匹配的项' : cwd ? '空目录' : '库还是空的'}</span>
@@ -719,24 +703,17 @@
 									if (isDir) {
 										e.preventDefault()
 										e.stopPropagation()
-										dropTarget = en.path
+										dropTarget = folderKey(selectedBackendId, en.path)
 									}
 								}}
 								ondragleave={() => {
-									if (isDir && dropTarget === en.path) dropTarget = null
+									if (isDir && dropTarget === folderKey(selectedBackendId, en.path)) dropTarget = null
 								}}
-								ondrop={(e) => {
-									if (!isDir) return
-									e.preventDefault()
-									e.stopPropagation()
-									const moving = readDragPaths(e)
-									if (moving.length) void moveInto(moving, en.path)
-									dropTarget = null
-								}}
+								ondrop={(e) => { if (isDir) void dropInto(e, selectedBackendId, en.path) }}
 							>
 									<div class="thumb" style="--tile:{tile}px">
 										{#if isDir}
-											<Icon name={dropTarget === en.path ? 'folderOpen' : 'folder'} size={Math.round(tile * 0.34)} />
+											<Icon name={dropTarget === folderKey(selectedBackendId, en.path) ? 'folderOpen' : 'folder'} size={Math.round(tile * 0.34)} />
 											<span class="dir-badge">{childDirCount(en.path)}</span>
 										{:else if urlOf(en.path)}
 											<img src={urlOf(en.path)} alt={baseName(en.path)} loading="lazy" draggable="false" />
@@ -792,7 +769,7 @@
 		{#if ctx}
 			{@const selPaths = ctx.kind === 'tile' && selected.has(ctx.path) ? [...selected] : [ctx.path]}
 			<div
-				class="ctx-menu"
+				class="ui-menu ctx-menu"
 				style="left:{Math.min(ctx.x, window.innerWidth - 200)}px;top:{Math.min(ctx.y, window.innerHeight - 40 - (ctx.kind === 'tile' ? 4 : 6) * 30)}px"
 				role="menu"
 			>
@@ -800,6 +777,7 @@
 					{#if !fileOf(ctx.path)}
 						<button
 							type="button"
+							class="ui-menu-item"
 							role="menuitem"
 							onclick={() => {
 								navigate(ctx!.path)
@@ -811,6 +789,7 @@
 					{/if}
 					<button
 						type="button"
+						class="ui-menu-item"
 						role="menuitem"
 						onclick={() => {
 							void startRename(ctx!.path)
@@ -821,6 +800,7 @@
 					</button>
 					<button
 						type="button"
+						class="ui-menu-item"
 						role="menuitem"
 						onclick={() => {
 							void moveInto(selPaths, cwd)
@@ -829,11 +809,11 @@
 					>
 						<Icon name="move" size={13} />移到此目录
 					</button>
-					<div class="ctx-sep"></div>
+					<div class="ui-menu-sep"></div>
 					<button
 						type="button"
+						class="ui-menu-item danger"
 						role="menuitem"
-						class:danger={true}
 						onclick={() => {
 							void remove(selPaths)
 							closeCtx()
@@ -844,6 +824,7 @@
 				{:else}
 					<button
 						type="button"
+						class="ui-menu-item"
 						role="menuitem"
 						onclick={() => {
 							void newFolder()
@@ -854,6 +835,7 @@
 					</button>
 					<button
 						type="button"
+						class="ui-menu-item"
 						role="menuitem"
 						onclick={() => {
 							uploadRef?.click()
@@ -862,9 +844,10 @@
 					>
 						<Icon name="upload" size={13} />上传图片
 					</button>
-					<div class="ctx-sep"></div>
+					<div class="ui-menu-sep"></div>
 					<button
 						type="button"
+						class="ui-menu-item"
 						role="menuitem"
 						onclick={() => {
 							selectAll()
@@ -876,8 +859,8 @@
 					{#if selCount > 0}
 						<button
 							type="button"
+							class="ui-menu-item danger"
 							role="menuitem"
-							class:danger={true}
 							onclick={() => {
 								void remove([...selected])
 								closeCtx()
@@ -1277,42 +1260,10 @@
 		color: var(--ui-faint);
 	}
 
-	/* ---- 右键菜单 ---- */
+	/* ---- 右键菜单：外观走全局 .ui-menu / .ui-menu-item，这里只抬高层级
+	   （库面板 maximized 时 z-index 60，浮层要盖住它） ---- */
 	.ctx-menu {
-		position: fixed;
 		z-index: 80;
 		min-width: 168px;
-		padding: 5px;
-		border-radius: var(--ui-r-menu);
-		background: var(--ui-panel);
-		border: 1px solid var(--ui-border-fade);
-		box-shadow: var(--ui-shadow, 0 8px 24px rgba(0, 0, 0, 0.35));
-	}
-	.ctx-menu button {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		width: 100%;
-		height: 28px;
-		padding: 0 8px;
-		border: none;
-		border-radius: var(--ui-r-control);
-		background: none;
-		color: var(--ui-text);
-		font: inherit;
-		font-size: 11.5px;
-		text-align: left;
-		cursor: pointer;
-	}
-	.ctx-menu button:hover {
-		background: var(--ui-input);
-	}
-	.ctx-menu button.danger {
-		color: var(--ui-danger, #e5484d);
-	}
-	.ctx-sep {
-		height: 1px;
-		margin: 4px 6px;
-		background: var(--ui-border-fade);
 	}
 </style>

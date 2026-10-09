@@ -3,7 +3,7 @@
 // 自定义尺寸校验全部由它驱动。接入新模型 = 增加一份档案或由 provider
 // override 提供元数据，不改代码。
 //
-// 本模块是浏览器直连生图的唯一参数来源；服务端 /api/generate 仍按
+// 本模块是浏览器直连生图的唯一参数来源；服务端 /api/providers/{provider_id}/generate 仍按
 // 自己的档案兜底，两侧同源维护。
 
 export type ParamKind = 'select' | 'number' | 'text' | 'size'
@@ -323,7 +323,7 @@ function isRatioPreset(v: unknown): v is RatioPreset {
 
 // ---------- 默认值与校验 ----------
 
-/** JSON 标量 → ParamValue（对象/数组/null 丢弃），对应服务端 /api/generate 的参数收窄 */
+/** JSON 标量 → ParamValue（对象/数组/null 丢弃），对应服务端 /api/providers/{provider_id}/generate 的参数收窄 */
 export function coerceParamValue(v: unknown): ParamValue | null {
 	if (typeof v === 'string') return { t: 'text', v }
 	if (typeof v === 'number') return Number.isFinite(v) ? { t: 'number', v } : null

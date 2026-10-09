@@ -12,9 +12,8 @@
 	import Icon from '../ui/Icon.svelte'
 	import { toast } from '../ui/toast/toast.svelte'
 	import { rt } from '../canvas/runtime'
-	import { loadProviderConfig } from '../generation/config.svelte'
-	import { currentWorkspaceChoice } from '../workspace/selection.svelte'
-	import { activeGraphId, ensureGraphAndLoad, graphSession, renameGraphAndSync } from '../canvas/session.svelte'
+		import { backendRegistry, connectBackend } from '../backends/registry.svelte'
+	import { activeGraph, ensureGraphAndLoad, graphSession, renameGraphAndSync } from '../canvas/session.svelte'
 	import { createEditor } from '../canvas/editor'
 	import { fitView } from '../canvas/viewport'
 
@@ -54,7 +53,7 @@
 
 	async function renameTitle(next: string) {
 		try {
-			await renameGraphAndSync(activeGraphId(), next)
+			await renameGraphAndSync(activeGraph(), next)
 			await sidebar?.refreshAndKeepActive()
 		} catch (e) {
 			toast({ kind: 'err', title: '重命名失败', msg: e instanceof Error ? e.message : String(e) })
@@ -62,15 +61,9 @@
 	}
 
 	onMount(async () => {
-		// 本地工作区：一次性申请持久存储，降低站点数据被自动清理的风险
-		if (currentWorkspaceChoice().kind === 'opfs') {
-			navigator.storage?.persist?.().catch(() => {})
-		}
-		try {
-			await loadProviderConfig()
-		} catch (e) {
-			toast({ kind: 'err', title: '读取配置失败', msg: e instanceof Error ? e.message : String(e) })
-		}
+		navigator.storage?.persist?.().catch(() => {})
+		await connectBackend('local')
+		for (const entry of backendRegistry.entries.filter((entry) => entry.kind === 'http')) void connectBackend(entry.id)
 
 		createEditor(document.getElementById('rete')!)
 		rt.onCanvasContextMenu = (cx, cy) => void palette?.openAt(cx, cy)
@@ -93,7 +86,7 @@
 </script>
 
 <div class="shell">
-	<Sidebar bind:this={sidebar} />
+	<Sidebar bind:this={sidebar} onManage={() => (settingsOpen = true)} />
 	<div class="main">
 		<Topbar title={graphSession.title} saveState={graphSession.saveState} {running} ready={ready && !graphSession.loading} onRename={renameTitle} onRun={run} onSettings={() => (settingsOpen = true)} />
 		<div class="canvas-layer" inert={graphSession.loading}>

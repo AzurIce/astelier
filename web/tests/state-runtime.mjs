@@ -67,9 +67,10 @@ try {
   await page.goto(process.env.ATELIER_TEST_URL ?? 'http://127.0.0.1:5173')
   await page.waitForSelector('.ui-node')
   const ids = await evaluate(async ({ png, nodes, edges }) => {
-    const api = await import('/src/workspace/api.ts')
+    const api = (await import('/src/backends/registry.svelte.ts')).backendStore('local')
     const fs = await import('/src/workspace/opfs/fs.ts')
-    const seedId = localStorage.getItem('atelier-graph-id')
+    const seedId = JSON.parse(localStorage.getItem('atelier-active-graph') ?? 'null')?.id
+    await (await import('/src/generation/localConfig.ts')).saveLocalConfig({ active_provider: 'mock', providers: [{ id: 'mock', name: 'Mock', models: ['gpt-image-2'], base_url: 'https://mock.example/v1', api_key: 'sk-fake', overrides: {} }] })
     const idA = (await api.createGraph(null, 'Graph A')).id
     const idB = (await api.createGraph(null, 'Graph B')).id
     await api.putGraph(idA, { version: 1, nodes, edges })
@@ -81,7 +82,7 @@ try {
       outputs: { generate: png, preview: png },
     })
     if (seedId && seedId !== idA && seedId !== idB) await api.deleteGraph(seedId)
-    localStorage.setItem('atelier-graph-id', idA)
+    localStorage.setItem('atelier-active-graph', JSON.stringify({ backendId: 'local', id: idA }))
     return { idA, idB }
   }, { png, nodes: fixtureNodes(), edges: fixtureEdges() })
 
@@ -109,7 +110,7 @@ try {
   await page.waitForSelector('.result-img')
   assert.equal(await page.locator('.result-img').count(), 2)
   assert.equal(await evaluate(() => window.nodeUpdates), 0)
-  assert.equal((await evaluate(async () => (await import('/src/library/api.ts')).fetchStoreTree())).files.length, 0)
+  assert.equal((await evaluate(async () => (await import('/src/backends/registry.svelte.ts')).backendStore('local').storeTree())).files.length, 0)
   console.log('PASS busy and outputs react automatically; request snapshot stable; no automatic collection')
 
   await page.waitForFunction(() => {
@@ -135,7 +136,7 @@ try {
     document.querySelector('[data-node-id="image"] .image-editor').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }))
   }, png)
   await page.waitForFunction(() => window.testRt.editor.getNode('image').images.length === 1)
-  assert.equal((await evaluate(async () => (await import('/src/library/api.ts')).fetchStoreTree())).files.length, 0, 'temporary image must not upload anywhere')
+  assert.equal((await evaluate(async () => (await import('/src/backends/registry.svelte.ts')).backendStore('local').storeTree())).files.length, 0, 'temporary image must not upload anywhere')
   const serialized = await evaluate(async () => {
     const { toDoc, toViewDoc } = await import('/src/canvas/document.ts')
     await window.testStore.flushNow()
@@ -151,17 +152,17 @@ try {
     document.querySelector('.grid-wrap').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }))
   }, png)
   await page.waitForSelector('.entry[data-entry]')
-  assert.equal((await evaluate(async () => (await import('/src/library/api.ts')).fetchStoreTree())).files.length, 1)
+  assert.equal((await evaluate(async () => (await import('/src/backends/registry.svelte.ts')).backendStore('local').storeTree())).files.length, 1)
   console.log('PASS explicit drag into library persists one selected image into OPFS')
 
   // 库改名/移动：路径即身份，移动后树与旧 URL 缓存立即更新
   const moved = await evaluate(async () => {
-    const api = await import('/src/library/api.ts')
-    const before = (await api.fetchStoreTree()).files[0].path
+    const api = (await import('/src/backends/registry.svelte.ts')).backendStore('local')
+    const before = (await api.storeTree()).files[0].path
     const renamed = before.replace(/\.png$/, '') + '-改名.png'
     await api.makeStoreDir('收藏')
     await api.moveStorePath(before, `收藏/${renamed}`)
-    const tree = await api.fetchStoreTree()
+    const tree = await api.storeTree()
     return { before, tree, after: tree.files[0]?.path }
   })
   assert.equal(moved.after, `收藏/${moved.before.replace(/\.png$/, '')}-改名.png`)
@@ -170,27 +171,27 @@ try {
   await page.waitForSelector('.entry[data-entry]')
   console.log('PASS library rename and move keep path identity; tree refreshes')
 
-  await evaluate(async (id) => { await window.testStore.openGraph(id) }, ids.idB)
+  await evaluate(async (id) => { await window.testStore.openGraph({ backendId: 'local', id }) }, ids.idB)
   assert.equal(await page.locator('.graph-title .name').textContent(), 'Graph B')
   assert.equal(await page.locator('.result-img').count(), 0)
   await gateOn('__saveGate')
   await evaluate(() => { window.testRt.editor.getNode('prompt').text = 'Wait for save'; window.testStore.scheduleSave() })
   await page.waitForFunction(() => window.testStore.graphSession.saveState === 'saving')
-  await evaluate(async (id) => { window.switchDone = false; window.switchPromise = window.testStore.openGraph(id).then(() => { window.switchDone = true }) }, ids.idA)
-  assert.equal(await evaluate(() => window.testStore.activeGraphId()), ids.idB)
+  await evaluate(async (id) => { window.switchDone = false; window.switchPromise = window.testStore.openGraph({ backendId: 'local', id }).then(() => { window.switchDone = true }) }, ids.idA)
+  assert.equal(await evaluate(() => window.testStore.activeGraph().id), ids.idB)
   assert.equal(await evaluate(() => window.switchDone), false)
   await gateOff('__saveGate')
   await evaluate(() => window.switchPromise)
-  assert.equal(await evaluate(() => window.testStore.activeGraphId()), ids.idA)
+  assert.equal(await evaluate(() => window.testStore.activeGraph().id), ids.idA)
   assert.equal(await page.locator('.graph-title .name').textContent(), 'Graph A')
   console.log('PASS graph switching awaits already-started writes and shares current title')
 
   await setFlag('__failSave', true)
   await evaluate(() => { window.testStore.scheduleSave() })
   await page.waitForFunction(() => window.testStore.graphSession.saveState === 'error')
-  const blocked = await evaluate(async (id) => { try { await window.testStore.openGraph(id); return false } catch { return true } }, ids.idB)
+  const blocked = await evaluate(async (id) => { try { await window.testStore.openGraph({ backendId: 'local', id }); return false } catch { return true } }, ids.idB)
   assert(blocked)
-  assert.equal(await evaluate(() => window.testStore.activeGraphId()), ids.idA)
+  assert.equal(await evaluate(() => window.testStore.activeGraph().id), ids.idA)
   assert.equal(await page.locator('.save-dot').textContent().then((text) => text.trim()), '保存失败')
   await setFlag('__failSave', false)
   await evaluate(() => window.testStore.flushNow())
@@ -203,7 +204,7 @@ try {
     window.pendingPipeline = runPipeline().then(() => ({ ok: true }), (error) => ({ ok: false, message: error.message }))
   })
   await page.waitForFunction(() => window.testRt.editor.getNode('generate').busy)
-  await evaluate(async (id) => { await window.testStore.openGraph(id) }, ids.idB)
+  await evaluate(async (id) => { await window.testStore.openGraph({ backendId: 'local', id }) }, ids.idB)
   await gateOff('__generateGate')
   const outcome = await evaluate(() => window.pendingPipeline)
   assert.equal(outcome.ok, false)
@@ -225,7 +226,7 @@ try {
   await loadModules()
   const persisted = await evaluate(async () => {
     await new Promise((resolve) => setTimeout(resolve, 100))
-    const tree = await (await import('/src/library/api.ts')).fetchStoreTree()
+    const tree = await (await import('/src/backends/registry.svelte.ts')).backendStore('local').storeTree()
     return {
       files: tree.files.length,
       title: document.querySelector('.graph-title .name')?.textContent,

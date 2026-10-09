@@ -2,7 +2,7 @@
 // 由 generation/profiles.ts 的内置档案派生——参数定义单一事实来源，
 // 直连生图（默认补齐/校验/请求映射）与参数区渲染读同一份；
 // 这里只补充纯展示层信息：控件形态（control）与尺寸候选扩展。
-import { builtinProfile } from './profiles'
+import { builtinProfile, type ModelProfile } from './profiles'
 
 export interface ParamDef {
 	key: string
@@ -37,15 +37,17 @@ function defaultValue(v: unknown): string | number | null {
 	return null
 }
 
-export const OPENAI_IMAGE_PARAMS: ParamDef[] = builtinProfile('gpt-image-2').params.map((def) => ({
+export function profileParams(profile: ModelProfile): ParamDef[] { return profile.params.map((def) => ({
 	key: def.key,
 	label: def.label,
 	kind: def.kind,
 	control: CONTROL_BY_KEY[def.key],
-	options: def.key === 'size' ? [...def.options, ...EXTRA_SIZE_PRESETS] : def.options,
+	options: def.key === 'size' && profile.size_rule ? [...new Set([...def.options, ...EXTRA_SIZE_PRESETS])] : def.options,
 	min: def.min,
 	max: def.max,
 	advanced: def.advanced,
 	group: def.group,
 	def: defaultValue(def.default_value),
-}))
+})) }
+
+export const OPENAI_IMAGE_PARAMS = profileParams(builtinProfile('gpt-image-2'))

@@ -1,18 +1,37 @@
 <script lang="ts">
 	import Icon from '../ui/Icon.svelte'
 	import { toast } from '../ui/toast/toast.svelte'
-	import { workspaceStore } from '../workspace/store'
-	import { currentWorkspaceChoice } from '../workspace/selection.svelte'
-	import { loadProviderConfig } from '../generation/config.svelte'
+	import { untrack } from 'svelte'
+	import { backendRegistry, addServer, renameBackend, connectBackend, refreshProviders } from '../backends/registry.svelte'
+	import { detachBackend, flushNow } from '../canvas/session.svelte'
+	import { loadLocalConfig, saveLocalConfig } from '../generation/localConfig'
 	import { exportWorkspaceZip, importWorkspaceZip } from '../workspace/opfs/transfer'
-	import type { ProviderConfig, ProviderEntry } from '../workspace/types'
+	import type { ProviderConfig, ProviderEntry } from '../generation/localConfig'
 
-	// 设置：本地模式下编辑 Provider（base_url / API key / 模型列表，明文存
-	// OPFS config.json，可随时清除）；远端模式下只展示工作区信息（配置在服务端）。
+	// 设备级后端管理、本地 Provider 配置和 OPFS 备份。
 	let { open = false, onclose }: { open?: boolean; onclose: () => void } = $props()
 
-	const choice = $derived(currentWorkspaceChoice())
-	const isLocal = $derived(choice.kind === 'opfs')
+	let serverName = $state('')
+	let serverUrl = $state('')
+	let connecting = $state(false)
+
+	/** 后端状态 → 徽章文案与色调（与 .ui-badge 变体同名） */
+	function statusOf(status: string): { label: string; tone: 'ok' | 'warn' | 'err' } {
+		if (status === 'online') return { label: '已连接', tone: 'ok' }
+		if (status === 'connecting') return { label: '连接中', tone: 'warn' }
+		return { label: '离线', tone: 'err' }
+	}
+
+	async function addConnection() {
+		if (connecting) return
+		connecting = true
+		try { await addServer(serverName, serverUrl); serverName = ''; serverUrl = '' }
+		catch (error) { toast({ kind: 'err', title: '添加后端失败', msg: String(error) }) }
+		finally { connecting = false }
+	}
+	async function detach(id: string) {
+		try { await detachBackend(id) } catch (error) { toast({ kind: 'err', title: '移除连接失败', msg: String(error) }) }
+	}
 
 	let loading = $state(false)
 	let saving = $state(false)
@@ -22,22 +41,20 @@
 	let importInput = $state<HTMLInputElement>()
 
 	$effect(() => {
-		if (open && !loading) void reload()
+		if (open) untrack(() => void reload())
 	})
 
 	async function reload() {
 		loading = true
 		try {
-			if (isLocal) {
-				const config = await workspaceStore().loadConfig()
-				draft = { providers: config.providers.map((p) => ({ ...p, models: [...p.models] })), active_provider: config.active_provider }
-				if (navigator.storage?.estimate) {
-					const estimate = await navigator.storage.estimate()
-					usage = {
-						used: estimate.usage ?? 0,
-						quota: estimate.quota ?? 0,
-						persisted: navigator.storage.persisted ? await navigator.storage.persisted() : false,
-					}
+			const config = await loadLocalConfig()
+			draft = { providers: config.providers.map((p) => ({ ...p, models: [...p.models] })), active_provider: config.active_provider }
+			if (navigator.storage?.estimate) {
+				const estimate = await navigator.storage.estimate()
+				usage = {
+					used: estimate.usage ?? 0,
+					quota: estimate.quota ?? 0,
+					persisted: navigator.storage.persisted ? await navigator.storage.persisted() : false,
 				}
 			}
 		} catch (e) {
@@ -54,7 +71,7 @@
 	}
 
 	function addProvider() {
-		const id = `provider-${draft.providers.length + 1}`
+		const id = `provider-${crypto.randomUUID()}`
 		draft.providers.push({ id, name: '新 Provider', base_url: '', api_key: '', models: [], overrides: {} })
 		draft.providers = [...draft.providers]
 		if (!draft.active_provider) draft.active_provider = id
@@ -86,8 +103,8 @@
 		}
 		saving = true
 		try {
-			await workspaceStore().saveConfig(draft)
-			await loadProviderConfig()
+			await saveLocalConfig($state.snapshot(draft))
+			await refreshProviders('local')
 			toast({ kind: 'ok', title: '设置已保存', msg: 'Provider 配置已写入本地工作区' })
 			onclose()
 		} catch (e) {
@@ -115,6 +132,7 @@
 		if (transferring) return
 		transferring = true
 		try {
+			await flushNow()
 			const name = await exportWorkspaceZip()
 			toast({ kind: 'ok', title: '已导出工作区', msg: `${name} 已开始下载` })
 		} catch (e) {
@@ -128,6 +146,7 @@
 		if (!file || transferring) return
 		transferring = true
 		try {
+			await flushNow()
 			const report = await importWorkspaceZip(file)
 			toast({
 				kind: 'ok',
@@ -166,15 +185,39 @@
 			<div class="body">
 				{#if loading}
 					<div class="loading"><Icon name="spinner" size={16} class="spin" />读取中…</div>
-				{:else if !isLocal}
-					<section class="card">
-						<h3>工作区</h3>
-						<p>当前使用<b>远端工作区</b>：<code>{choice.kind === 'http' ? choice.baseUrl : ''}</code></p>
-						<p class="hint">Provider 与密钥配置在服务端（data/config.json）；生成请求由服务端代发。本地 Provider 设置请切回本地工作区。</p>
-					</section>
 				{:else}
 					<section class="card">
-						<h3>工作区存储</h3>
+						<h3>后端连接</h3>
+						{#each backendRegistry.entries as entry (entry.id)}
+							{@const status = statusOf(entry.status)}
+							<div class="connection" data-connection-id={entry.id}>
+								<div class="connection-row">
+									<input class="ui-input" aria-label="后端名称" value={entry.name} onchange={(e) => renameBackend(entry.id, e.currentTarget.value)} />
+									<span class="ui-badge {status.tone}" title={status.label}><i class="dot"></i>{status.label}</span>
+									<button type="button" class="ui-btn ghost sm" onclick={() => void connectBackend(entry.id)}>刷新 / 重连</button>
+									{#if entry.kind === 'http'}<button type="button" class="ui-btn ghost sm danger" onclick={() => void detach(entry.id)}>移除连接</button>{/if}
+								</div>
+								<p class="hint mono">{entry.baseUrl ?? '本浏览器存储'}</p>
+								{#if entry.error || entry.providerError}<p class="hint err">{entry.error ?? entry.providerError}</p>{/if}
+								{#if entry.kind === 'http'}<p class="hint">Provider：{entry.providers.map((p) => p.name).join('、') || '暂无'}。配置与密钥由服务器管理。</p>{/if}
+							</div>
+						{/each}
+						<div class="connection-add">
+							<label class="ui-field name">
+								<span>名称</span>
+								<input class="ui-input" bind:value={serverName} placeholder="名称（可选）" />
+							</label>
+							<label class="ui-field url">
+								<span>服务地址</span>
+								<input class="ui-input mono" bind:value={serverUrl} placeholder="https://server.example.com" spellcheck="false" />
+							</label>
+							<button type="button" class="ui-btn ghost" disabled={connecting || !serverUrl.trim()} onclick={() => void addConnection()}>
+								{#if connecting}<Icon name="spinner" size={12} class="spin" />{/if}添加服务器
+							</button>
+						</div>
+					</section>
+					<section class="card">
+						<h3>本地存储</h3>
 						{#if usage}
 							<div class="storage-row">
 								<span class="mono">{fmtSize(usage.used)}{usage.quota ? ` / ${fmtSize(usage.quota)}` : ''}</span>
@@ -203,9 +246,9 @@
 							</button>
 							<input
 								bind:this={importInput}
+								class="ui-file"
 								type="file"
 								accept="application/zip,.zip"
-								style="display:none"
 								onchange={(e) => {
 									void importZip(e.currentTarget.files?.[0])
 									e.currentTarget.value = ''
@@ -217,10 +260,10 @@
 
 					<section class="card">
 						<div class="card-head">
-							<h3>Provider</h3>
+							<h3>Local Provider</h3>
 							<button type="button" class="ui-btn ghost sm" onclick={addProvider}><Icon name="plus" size={12} />新增</button>
 						</div>
-						<p class="hint">API Key 明文保存在本机 OPFS（可在下方随时清除），仅本地工作区的直连生图使用。</p>
+						<p class="hint">API Key 明文保存在本机 OPFS（可在下方随时清除），本地 Provider 可供所有后端上的图使用。</p>
 						{#each draft.providers as provider, index (provider.id + index)}
 							<div class="provider" class:active={provider.id === draft.active_provider}>
 								<div class="provider-head">
@@ -266,7 +309,7 @@
 				{/if}
 			</div>
 
-			{#if isLocal && !loading}
+			{#if !loading}
 				<footer>
 					<button type="button" class="ui-btn ghost" onclick={onclose}>取消</button>
 					<button type="button" class="ui-btn primary" disabled={saving} onclick={() => void save()}>
@@ -279,6 +322,47 @@
 {/if}
 
 <style>
+	.connection {
+		display: flex;
+		flex-direction: column;
+		gap: 5px;
+		padding: 9px 0;
+		border-bottom: 1px solid var(--ui-border-fade);
+	}
+	.connection:last-child {
+		border-bottom: none;
+	}
+	/* 名称 + 状态徽章 + 操作按钮：同一行，控件高度一致 */
+	.connection-row {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+	.connection-row .ui-input {
+		flex: 1 1 150px;
+		min-width: 0;
+		max-width: 220px;
+	}
+	.connection-row .ui-badge {
+		flex: none;
+	}
+	.connection-row .ui-btn {
+		flex: none;
+	}
+	.connection-add {
+		display: flex;
+		align-items: flex-end;
+		flex-wrap: wrap;
+		gap: 6px;
+		padding-top: 10px;
+	}
+	.connection-add .name {
+		flex: 0 1 132px;
+	}
+	.connection-add .url {
+		flex: 1 1 190px;
+	}
 	.settings-dialog {
 		width: min(560px, calc(100vw - 48px));
 		max-height: min(720px, calc(100vh - 64px));
@@ -346,13 +430,13 @@
 		color: var(--ui-dim);
 		overflow-wrap: anywhere;
 	}
-	.card p code {
-		font-family: var(--ui-mono, monospace);
-		color: var(--ui-accent);
-	}
-	.hint {
+	/* 说明文字统一一档更小；路径 / 错误这类行内信息按其语义着色 */
+	.card p.hint {
 		font-size: 10.5px;
 		color: var(--ui-faint);
+	}
+	.card p.hint.err {
+		color: var(--ui-danger);
 	}
 	.storage-row {
 		display: flex;

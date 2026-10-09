@@ -12,8 +12,9 @@
 // 图身份是稳定 UUID：目录名只在建图时生成，重命名只改 graph.json（同步友好）。
 // 业务语义（建图种子、分组级联、同名同内容幂等、路径校验）移植自 Rust
 // store.rs / api.rs，逐条对齐；磁盘即唯一事实来源，无索引清单。
-import type { GraphDoc, GraphDocWithId, GraphGroup, GraphSummary, ProviderConfig, ProviderEntry, StoreFileEntry, ViewDoc, DocNode, DocEdge } from '../types'
+import type { GraphDoc, GraphDocWithId, GraphGroup, GraphSummary, StoreFileEntry, ViewDoc, DocNode, DocEdge } from '../types'
 import type { WorkspaceStore } from '../store'
+import { readLocalConfigUnlocked } from '../../generation/localConfig'
 import { sniffDimensions } from '../../images/sniff'
 
 import { dirExists, ensureDir, fileExists, listDir, movePath, readBytes, readFile, readJson, removePath, uuid, withFsLock, writeBytes, writeJson, WORKSPACE_ROOT, type FsPath } from './fs'
@@ -39,20 +40,7 @@ const viewJson = (id: string): FsPath => [...graphDir(id), 'view.json']
 const graphStoreDir = (gid: string): FsPath => [...graphDir(gid), 'store']
 const graphStoreFile = (gid: string, name: string): FsPath => [...graphStoreDir(gid), name]
 const groupsJson = (): FsPath => [...WORKSPACE_ROOT, 'groups.json']
-const configJson = (): FsPath => [...WORKSPACE_ROOT, 'config.json']
 const storesRoot = (): FsPath => [...WORKSPACE_ROOT, 'stores']
-
-function defaultConfig(): ProviderConfig {
-	const models = ['gpt-image-2', 'gpt-image-2.5-sunburst', 'gpt-image-2.5-flare']
-	const entry = (id: string, name: string, base_url: string): ProviderEntry => ({ id, name, base_url, api_key: '', models: [...models], overrides: {} })
-	return {
-		active_provider: 'openai',
-		providers: [
-			entry('openai', 'OpenAI 官方', 'https://api.openai.com/v1'),
-			entry('poke', 'Poke API', 'https://www.poke2api.com/v1'),
-		],
-	}
-}
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
 	return a.length === b.length && a.every((byte, i) => byte === b[i])
@@ -172,26 +160,6 @@ async function collectTree(dir: FsPath, rel: string, dirs: string[], files: Stor
 
 /** 返回对象是普通字面量（测试会用展开包裹 putGraph/putView 注入故障） */
 export function createOpfsStore(): WorkspaceStore {
-	/** 无锁内核：调用方已在 withFsLock 内时使用（Web Locks 同名不可重入） */
-	async function readConfigUnlocked(): Promise<ProviderConfig> {
-		const stored = await readJson<ProviderConfig>(configJson())
-		if (stored && Array.isArray(stored.providers) && stored.providers.length) {
-			return {
-				providers: stored.providers.map((p) => ({
-					id: String(p?.id ?? ''),
-					name: String(p?.name ?? ''),
-					base_url: String(p?.base_url ?? ''),
-					api_key: String(p?.api_key ?? ''),
-					models: Array.isArray(p?.models) ? p.models.map(String) : [],
-					overrides: p?.overrides && typeof p.overrides === 'object' ? p.overrides : {},
-				})),
-				active_provider: String(stored.active_provider ?? ''),
-			}
-		}
-		const seeded = defaultConfig()
-		await writeJson(configJson(), seeded)
-		return seeded
-	}
 
 	async function saveGraphRecord(record: GraphRecord): Promise<void> {
 		await writeJson(graphJson(record.id), record)
@@ -207,14 +175,6 @@ export function createOpfsStore(): WorkspaceStore {
 		kind: 'opfs',
 		label: '本地工作区（OPFS）',
 
-		async loadConfig() {
-			return withFsLock(readConfigUnlocked)
-		},
-
-		async saveConfig(config) {
-			await writeJson(configJson(), config)
-		},
-
 		async listGraphs() {
 			const out: GraphSummary[] = []
 			for (const name of (await listDir([...WORKSPACE_ROOT, 'graphs'])).dirs) {
@@ -227,7 +187,7 @@ export function createOpfsStore(): WorkspaceStore {
 		async createGraph(groupId, title) {
 			return withFsLock(async () => {
 				if (groupId && !(await readGroups()).some((g) => g.id === groupId)) throw new Error('目标目录不存在')
-				const config = await readConfigUnlocked()
+				const config = await readLocalConfigUnlocked()
 				const active = config.providers.find((p) => p.id === config.active_provider) ?? config.providers[0]
 				const modelParams = active ? { provider: active.id, modelId: active.models[0] ?? '' } : { provider: '', modelId: '' }
 				const id = uuid()
@@ -258,7 +218,6 @@ export function createOpfsStore(): WorkspaceStore {
 				const record = await readGraphRecord(id)
 				if (!record) throw new Error('图不存在')
 				await saveGraphRecord({ ...record, title, updated_at: Date.now() })
-				return { id }
 			})
 		},
 
@@ -395,6 +354,7 @@ export function createOpfsStore(): WorkspaceStore {
 			if (!bytes.length) throw new Error('空文件')
 			const rel = safeDir ? `${safeDir}/${safe}` : safe
 			const meta = await putStoreBytes([...storesRoot(), ...rel.split('/')], bytes)
+			releaseStoreObjectUrl(rel)
 			return { path: rel, ...(meta.w != null ? { w: meta.w } : {}), ...(meta.h != null ? { h: meta.h } : {}), bytes: meta.bytes }
 		},
 

@@ -50,39 +50,43 @@ fn normalize_base(base: &str) -> String {
 /// API Key 三种填法：
 /// 1. `sk-…` 等字面密钥，原样使用
 /// 2. `env:变量名` 显式引用
-/// 3. 纯大写+下划线的值（如 OPENAI_API_KEY）自动当作环境变量名读取
+/// 3. 合法环境变量名（如 OPENAI_API_KEY、TEAM_KEY_2）自动当作环境变量名读取
 /// 均在请求时从服务端进程的环境变量解析，密钥本身不落在配置文件里。
 fn resolve_api_key(stored: &str) -> Result<String, String> {
+    resolve_api_key_with(stored, |name| std::env::var(name).ok())
+}
+
+fn resolve_api_key_with(
+    stored: &str,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Result<String, String> {
     let stored = stored.trim();
-    if let Some(var) = stored.strip_prefix("env:") {
-        let var = var.trim();
-        if var.is_empty() {
-            return Err("env: 后缺少变量名".into());
+    if stored.is_empty() {
+        return Err("Provider 未配置 API Key".into());
+    }
+    let name = stored
+        .strip_prefix("env:")
+        .map(str::trim)
+        .or_else(|| is_env_name(stored).then_some(stored));
+    if let Some(name) = name {
+        if name.is_empty() {
+            return Err("环境变量名不能为空".into());
         }
-        read_env_var(var)
-    } else if is_env_name(stored) {
-        // 纯大写+下划线（至少含一个字母）即视为环境变量名风格
-        read_env_var(stored)
+        match lookup(name) {
+            Some(value) if !value.trim().is_empty() => Ok(value.trim().into()),
+            Some(_) => Err(format!("环境变量 {name} 的值为空")),
+            None => Err(format!("环境变量 {name} 未设置（服务端进程中）")),
+        }
     } else {
         Ok(stored.to_string())
     }
 }
 
-/// 纯大写+下划线（至少含一个字母）即视为环境变量名风格
 fn is_env_name(s: &str) -> bool {
-    !s.is_empty()
-        && s.chars().all(|c| c.is_ascii_uppercase() || c == '_')
-        && s.chars().any(|c| c.is_ascii_alphabetic())
-}
-
-fn read_env_var(var: &str) -> Result<String, String> {
-    match std::env::var(var) {
-        Ok(v) if !v.trim().is_empty() => Ok(v.trim().to_string()),
-        Ok(_) => Err(format!("环境变量 {var} 的值为空")),
-        Err(_) => Err(format!(
-            "环境变量 {var} 未设置（后端进程看不到它；若想直接填密钥，请用 sk-… 这样的字面值）"
-        )),
-    }
+    s.as_bytes()
+        .first()
+        .is_some_and(|c| c.is_ascii_alphabetic() || *c == b'_')
+        && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
 }
 
 pub struct GenOutcome {
@@ -243,5 +247,35 @@ fn image_mime(ext: &str) -> &'static str {
         "webp" => "image/webp",
         "gif" => "image/gif",
         _ => "image/png",
+    }
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+    #[test]
+    fn keys_resolve_names_with_digits_and_lowercase_at_request_time() {
+        let lookup = |name: &str| {
+            if name == "Team_KEY_2" {
+                Some(" sk-secret ".into())
+            } else {
+                None
+            }
+        };
+        assert_eq!(
+            resolve_api_key_with("Team_KEY_2", lookup).unwrap(),
+            "sk-secret"
+        );
+        assert_eq!(
+            resolve_api_key_with("sk-literal", lookup).unwrap(),
+            "sk-literal"
+        );
+        assert!(resolve_api_key_with("MISSING_2", lookup)
+            .unwrap_err()
+            .contains("MISSING_2"));
+        assert!(resolve_api_key_with("EMPTY_KEY", |_| Some("  ".into()))
+            .unwrap_err()
+            .contains("为空"));
+        assert!(resolve_api_key_with("", lookup).is_err());
     }
 }

@@ -1,10 +1,10 @@
 // 浏览器直连生图（移植自 Rust adapter.rs + api.rs generate 流程）：
-// 从本地 Provider 配置读取 Base URL 与密钥，文生图发 JSON 到
+// 使用绑定 Provider 的 Base URL 与密钥，文生图发 JSON 到
 // {base}/images/generations，参考图编辑发 multipart 到 {base}/images/edits。
-// 请求与结果只存活于本次调用，不写任何档案；CORS spike 已验证入口可用。
-import { workspaceStore } from '../workspace/store'
+// 请求与结果只存活于本次调用，不写档案。上游需允许浏览器跨域访问。
+import type { ProviderEntry } from './localConfig'
 import type { GenerateResult, ImageGenerator } from './generator'
-import type { GenerateParams } from './api'
+import type { GenerateParams } from './generator'
 import { coerceParamValue, mergedProfile, validateRequest, withDefaults, type ParamMap } from './profiles'
 import {
 	base64ToBytes,
@@ -26,23 +26,10 @@ import { sniffExt } from '../images/sniff'
 const REQUEST_TIMEOUT = 600_000
 const DOWNLOAD_TIMEOUT = 120_000
 
-export function createDirectGenerator(): ImageGenerator {
+export function createDirectGenerator(provider: ProviderEntry): ImageGenerator {
 	return {
 		async generate(params: GenerateParams): Promise<GenerateResult> {
-			const config = await workspaceStore().loadConfig()
-			// model 解析：`provider:model` 前缀命中已配置 provider 才拆开，
-			// 否则整体视作 model、走当前激活 provider
-			let provider = config.providers.find((p) => p.id === config.active_provider)
-			let modelId = params.model
-			const colon = params.model.indexOf(':')
-			if (colon > 0) {
-				const hit = config.providers.find((p) => p.id === params.model.slice(0, colon))
-				if (hit) {
-					provider = hit
-					modelId = params.model.slice(colon + 1)
-				}
-			}
-			if (!provider) throw new Error('没有可用的 Provider，请先在设置里配置')
+			const modelId = params.model
 
 			const profile = mergedProfile(modelId, provider.overrides?.[modelId])
 			if (!params.prompt.trim()) throw new Error('Prompt 为空')
@@ -61,13 +48,13 @@ export function createDirectGenerator(): ImageGenerator {
 					const parsed = parseDataImageUrl(url)
 					if (!parsed) throw new Error('参考图需要 PNG/JPEG/WebP/GIF 的 base64 data URL')
 					images.push(parsed)
-				} else if (url.startsWith('blob:')) {
+				} else if (/^(blob:|https?:)/.test(url)) {
 					const res = await fetch(url)
 					if (!res.ok) throw new Error(`读取参考图失败（HTTP ${res.status}）`)
 					const bytes = new Uint8Array(await res.arrayBuffer())
 					images.push({ bytes, ext: sniffExt(bytes) })
 				} else {
-					throw new Error('仅支持会话内图片（data: / blob:）；库与图内图片会先解析为会话引用')
+					throw new Error('参考图需要 data、blob 或 HTTP 图片地址')
 				}
 			}
 

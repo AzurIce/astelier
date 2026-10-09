@@ -37,6 +37,12 @@
 | C07 可覆盖图片 immutable 缓存 | 本地模式消失（blob: URL 无 HTTP 缓存）；远端模式仍存在（服务端语义） |
 | C08 全局 CSS Svelte 语法 | 仍需处理 |
 
+2026-10-09 多后端与共享 Provider 实现：全局工作区切换与 API 包装已删除；
+图会话绑定后端，Provider 执行独立路由。A05 的图内文件回收先等待保存，A12 的 Server
+图身份也改为稳定 UUID，C07 的路径图片改为重新验证缓存，C08 的全局 CSS 错误已修。
+OPFS zip 另修复密钥导出和图内参考图路径问题，完整往返由真实浏览器验证。
+当前入口与验收范围见 [README](README.md) 与 [todo.md](todo.md)。
+
 ## 按使用场景分类
 
 分类回答“这是哪种使用方式下的问题”，优先级回答“在当前定位下多急着修”。每项只有一个主分类；关联场景只是说明影响范围，不代表新增一项问题。
@@ -199,7 +205,7 @@
 
 **问题性质：模型设计、接口契约。**
 
-位置：[web/src/workspace/imageFiles.ts](web/src/workspace/imageFiles.ts)，`graphStoreUrl()`（第 169 行）；[src/api.rs](src/api.rs)，`url_to_asset()` 的图内 store 分支（第 808 行）。
+位置：[web/src/workspace/store.ts](web/src/workspace/store.ts)，`graphStoreUrl()`（第 169 行）；[src/api.rs](src/api.rs)，`url_to_asset()` 的图内 store 分支（第 808 行）。
 
 前端对图 ID、文件名编码，后端从 JSON 中拆出 URL 字符串后直接读文件，没有解码。该字符串没有经过静态图片路由的路径解码过程。
 
@@ -399,7 +405,7 @@ Run 同时承载新请求、配方快照和 legacy 字段，读取方法反复�
 
 **使用场景分类：模型与代码维护。**
 
-位置：[web/src/generation/params.ts](web/src/generation/params.ts)、[web/src/canvas/nodes/connections.ts](web/src/canvas/nodes/connections.ts)、[web/src/workspace/api.ts](web/src/workspace/api.ts)、[web/src/canvas/session.svelte.ts](web/src/canvas/session.svelte.ts)、[src/model.rs](src/model.rs)、[src/profiles.rs](src/profiles.rs)。
+位置：[web/src/generation/params.ts](web/src/generation/params.ts)、[web/src/canvas/nodes/connections.ts](web/src/canvas/nodes/connections.ts)、[web/src/backends/registry.svelte.ts](web/src/backends/registry.svelte.ts)、[web/src/canvas/session.svelte.ts](web/src/canvas/session.svelte.ts)、[src/model.rs](src/model.rs)、[src/profiles.rs](src/profiles.rs)。
 
 `fetchProfiles`、`connectedModelNode`、`uploadAsset`、`fetchGraphStore` 等没有调用方。Rust 模块级 `allow(dead_code)` 掩盖了残留代码。建议按当前功能清理，确需保留的兼容或计划接口使用局部说明。
 

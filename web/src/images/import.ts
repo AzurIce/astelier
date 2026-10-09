@@ -8,13 +8,13 @@ export interface ImportFailure { source: ImageSource; name: string; message: str
 export interface ImportReport { added: number; skipped: number; failures: ImportFailure[] }
 interface ImportTarget {
 	graphId: string
+	upload: (name: string, blob: Blob) => Promise<GraphStoreFileMeta>
 	isActive: () => boolean
 	images: () => ImageRef[]
 	append: (image: ImageRef) => boolean
 }
 interface ImportOptions {
 	target: () => ImportTarget
-	upload: (graphId: string, name: string, blob: Blob) => Promise<GraphStoreFileMeta>
 	onProgress: (progress: ImportProgress | null) => void
 	onReport: (report: ImportReport) => void
 }
@@ -82,12 +82,12 @@ export function createImageImporter(opts: ImportOptions) {
 						continue
 					}
 					let image: ImageRef
-					if (source.kind === 'url' && /^(data:image\/|blob:)/i.test(source.image.url)) {
+					if (source.kind === 'url' && !source.image.backendId && /^(data:image\/|blob:)/i.test(source.image.url)) {
 						// 画布临时产物继续作为会话输入，只有拖进库才永久保存。
 						const dataUrl = source.image.url.startsWith('data:') ? source.image.url : await blobDataUrl(blob)
 						image = { file: `temporary-${prepared.hash}`, name, hash: prepared.hash, dataUrl }
 					} else {
-						const meta = await opts.upload(target.graphId, prepared.name, blob)
+						const meta = await target.upload(prepared.name, blob)
 						image = { file: meta.name, name, w: meta.w, h: meta.h, hash: prepared.hash }
 					}
 					if (disposed || !target.isActive()) continue

@@ -1,134 +1,166 @@
 # Atelier · 生成式艺术工作台
 
-基于 Svelte 5 + Rete.js 2 的节点图创作工具。Model / Prompt / Image / Generate /
-Preview 节点在浏览器中完成参数编辑、输入装配与拓扑执行。
+Svelte 5 + Rete.js 2 节点图创作工具。Model / Prompt / Image / Generate / Preview
+节点在浏览器中完成参数编辑、参考图装配与拓扑执行。前端可以独立部署为静态 HTTPS 站点。
 
-**工作区可选，前端零必需后端：**
+## 多后端与共享资源
 
-- **本地工作区**：数据存浏览器 OPFS，生图由浏览器直连 provider
-  （OpenAI Images 兼容协议）。`web/dist` 部署到任意静态 HTTPS 站点即可使用。
-- **远端工作区**：顶栏填入 server URL（本仓库 Rust/axum 服务或任何兼容
-  实现），数据与生图代理都在服务端，密钥留在服务端进程。
+默认挂载本地 OPFS，可在「添加 / 管理」中添加多个 Rust Server。左侧图树与底部
+图片库按后端分根展示，各自可折叠。打开图不刷新页面，其他后端的资源继续可用。
 
-两种模式共享同一套前端；`WorkspaceStore` / `ImageGenerator` 两个抽象边界
-下的实现可独立替换。未来 SaaS（账号 + 数据同步）将在远端工作区基础上
-演进：服务端加鉴权与按用户存储，前端零改动接入。
+- 图身份为 `{ backendId, id }`；图片路径在所属后端内有效。同名图、图片和 Provider
+  不会相互覆盖。OPFS 和服务器新图都使用稳定 UUID，重命名只改标题。
+- Server 的身份保存在 `data/backend.json`，通过 `GET /api/backend` 发现；不同客户端
+  连接同一个服务会获得相同 ID，使图中 Remote Provider 引用能跨客户端解析。
+  同一服务通过多个地址接入时，只挂载一次。连接列表与显示名存在设备 localStorage。
+- 每个后端独立加载和报告错误，可以刷新 / 重连。已连接服务断线保留来源和 Provider
+  选择；移除连接不删除服务器数据。移除当前图所属连接前会排空保存并打开本地图。
+- 图片可以跨后端拖入任意图，复制进目标图内存储；库之间拖拽同源时移动，跨源时复制
+  （包括目录）。生成结果可拖入任意后端的图片库收藏。
+- 挂载不执行自动同步。账号、权限与云端数据隔离尚未实现；未来云后端使用同一套资源
+  展示、Provider 发现和请求接口。
 
-Graph 保存节点、参数和连线，View 保存布局和视口（自动保存，失败显示
-「保存失败」并阻塞切图）。节点的 busy、error 与生成输出是 Svelte 响应式
-会话状态，不建运行档案、不自动归档；生成结果作为临时图片留在会话中供
-下游与拖拽，拖入库才显式保存。
+## Local / Remote Provider
 
-## 架构
+Provider 与图的存储位置独立：本地图可以使用服务器 Provider，服务器图也可以使用
+浏览器 Provider。Model 节点按来源分组选择，并保存 `providerBackendId`、`provider`、
+`modelId`。旧图缺少来源字段时，载入按图所属后端补齐，后续保存写入明确来源。
 
-```text
-web/（bun + Vite + Svelte 5 + Rete.js 2）
-  src/app/           应用装配、顶栏（工作区切换 / 设置）、Provider 设置
-  src/canvas/        Rete 编辑器、节点、执行、当前图会话与保存队列
-  src/workspace/     WorkspaceStore 接口、工作区选择、持久文档类型与侧栏
-    opfs/            本地实现（fs 原语 / 路径校验 / 对象 URL / zip 导入导出）
-    httpStore.ts     远端实现（/api/* 参数化 baseUrl）
-  src/generation/    ImageGenerator 接口、直连实现、HTTP 代理实现、
-                     模型档案与协议纯逻辑（profiles / protocol）、参数表
-  src/images/        图片引用、拖拽协议、导入队列、内容指纹、字节嗅探
-  src/library/       图片库面板、库 API 与路径处理
-  src/ui/            通用控件、主题、确认框、消息与预览
-        │ main.ts 按 localStorage 选择的工作区装配
-        ├─ 本地：createOpfsStore + createDirectGenerator（浏览器直连）
-        └─ 远端：createHttpStore(baseUrl) + createHttpGenerator(baseUrl)
-                │ fetch {base}/api/*（服务端需允许跨域）
-                ▼
-src/（cargo，axum · 远端工作区服务端）
-  api.rs       图、分组、图片库、配置与直接生成接口
-  adapter.rs   generations JSON / edits multipart，返回全部图片 data URL
-  profiles.rs  模型档案与 override 合并
-  store.rs     JSON、图内参考图和库文件存储
-  main.rs      API、图片路由、CORS 层与 web/dist 托管
-```
+| 类型 | 配置 / 密钥位置 | 上游执行位置 |
+| --- | --- | --- |
+| Local Provider | 设置界面，本地 OPFS `config.json` | 浏览器直连 |
+| Remote Provider | Server `config.json` | 对应服务器 |
 
-前端目录与依赖规则见 [web/README.md](web/README.md)。
+`GET /api/providers` 只返回 Provider ID、名称、模型与参数档案；不返回凭证或上游
+地址。参数控件由所选 Provider 的模型档案派生。服务器执行使用
+`POST /api/providers/{provider_id}/generate`，不依赖图所属后端，也不会回落到其他
+Provider。旧 `/api/config`、通用 `/api/generate` 和 override 管理入口已删除；Server
+配置通过文件管理。
 
-生成响应中的每张图片都保留在 Generate 节点中，可单独预览、拖入 Image
-节点或图片库；下游生成接收全部图片，Preview 展示第一张。执行中切图或
-删除原节点时，晚返回的结果不会写入新图中的节点。
+浏览器在提交时固定图会话、节点、Provider 执行器、参数与参考图快照。参考图解析成
+实际图片数据，远端请求携带 data URL，不要求服务器读取浏览器 blob URL 或其他
+服务器的图片地址。晚返回结果只能写入原会话原节点。
 
-### 本地工作区数据（OPFS，站点私有）
+Local Provider 使用 OpenAI Images 兼容协议：文生图 JSON → `/images/generations`，
+带参考图 multipart → `/images/edits`。结果支持 base64 和图片 URL，保留全部图片。
+浏览器直连及 URL 型结果下载需要上游允许跨域；完整真实付费链路仍待手动验收。
+
+## 保存语义与 OPFS
+
+Graph 保存节点、参数、连线；View 保存布局和视口。自动保存失败显示「保存失败」并
+阻止切图。busy、error 和生成输出只属于会话；拖入图片库才持久保存产物，不建立 Run
+档案，也不在保存图文档时自动归档生成图片。
 
 ```text
-atelier/
-├── config.json              Provider 配置（API key 明文，设置里可清除）
-├── groups.json              图分组
-├── graphs/{uuid}/graph.json 节点与参数（id 稳定，重命名不改身份）
-├── graphs/{uuid}/view.json  位置与视口
-├── graphs/{uuid}/store/     图内参考图
-└── stores/                  用户显式收藏的图片库
+atelier/                       浏览器站点私有 OPFS
+├── config.json                Local Provider 配置与明文 key
+├── groups.json
+├── graphs/{uuid}/
+│   ├── graph.json
+│   ├── view.json
+│   └── store/                  图内参考图
+└── stores/                    显式收藏的图片库
 ```
 
-图身份是稳定 UUID（同步友好）；图片引用保存文件名/路径，展示 URL
-（blob:）一律运行时解析。跨标签页写经 Web Locks 串行化；启动申请
-`navigator.storage.persist()`，设置里可查看配额。**清除站点数据会删除
-本地工作区**——换设备 / 备份用设置里的「导入 / 导出 zip」（图按
-updated_at last-writer-wins 合并；Provider 密钥不随 zip 转移）。
+持久文档不保存展示用 blob URL。图片 URL 在运行时解析并缓存，删除 / 覆盖 / 移动时
+释放。本地读改写经 Web Locks 串行化；启动申请持久存储，设置显示使用量和配额。
+清除站点数据会删除本地工作区。
 
-### 远端服务端数据（ATELIER_DATA_DIR 可覆盖）
+设置中的 zip 导出包含图、View、分组、图内参考图、库图片及空目录；**不包含 Local
+Provider 配置与密钥**。导入图按 `updated_at` 合并，分组按 ID 并集，库按路径覆盖。
+图内参考图恢复和完整 OPFS 往返已由真实浏览器测试覆盖。
+
+## Server 配置
 
 ```text
-data/
-├── config.json              Provider 配置（支持 env:VAR 凭证引用）
-├── groups.json              图分组
-├── graphs/{gid}/…           图文档与图内参考图（id = 目录名）
-├── stores/                  图片库
-└── assets/                  历史遗留（仍可作生成输入）
+data/                         ATELIER_DATA_DIR 可覆盖
+├── backend.json               自动创建的稳定后端身份
+├── config.json                Server Provider 配置
+├── groups.json
+├── graphs/{uuid}/…
+├── stores/
+└── assets/                    已有上传资产
 ```
 
-## API（远端工作区协议）
+`config.json` 示例：
+
+```json
+{
+  "active_provider": "team",
+  "providers": [
+    {
+      "id": "team",
+      "name": "团队 Provider",
+      "base_url": "https://provider.example.com/v1",
+      "api_key": "TEAM_IMAGE_KEY_2",
+      "models": ["gpt-image-2"],
+      "overrides": {}
+    }
+  ]
+}
+```
+
+`api_key` 可直接填环境变量名：`TEAM_IMAGE_KEY_2`，在每次请求时从服务端进程环境读取。
+标识符形式（字母 / 下划线开头，随后字母、数字或下划线）按变量名处理；未设置或为空
+会返回明确错误。字面密钥如 `sk-…` 也支持；已有 `env:VAR` 显式引用仍可读取。解析后的
+密钥不写回配置，不通过发现接口返回。
+
+```sh
+export TEAM_IMAGE_KEY_2='your-key'
+ATELIER_DATA_DIR=/path/to/data ATELIER_ADDR=127.0.0.1:8230 just serve
+```
+
+服务默认允许跨域；可通过 `ATELIER_CORS_ORIGINS="https://a,https://b"` 限定来源。
+当前 Rust 服务面向单用户，未加入账号鉴权。
+
+## Server API
 
 | 端点 | 说明 |
-|---|---|
-| `GET/PUT /api/config` | Provider 配置 |
-| `GET/POST /api/graphs`、`GET/PUT/DELETE /api/graphs/{id}` | 图管理，新图包含最小生成管线 |
+| --- | --- |
+| `GET /api/backend` | 稳定实例身份与能力声明 |
+| `GET /api/providers` | 不含凭证的 Provider / 模型档案列表 |
+| `POST /api/providers/{provider_id}/generate` | 指定 Provider 执行，返回 `{ imageUrls, usage? }` |
+| `GET/POST /api/graphs`、`GET/PUT/DELETE /api/graphs/{id}` | 图管理，新图包含最小管线 |
 | `GET/PUT /api/graphs/{id}/view` | 布局与视口 |
-| `PUT /api/graphs/{id}/title`、`PUT /api/graphs/{id}/group` | 图重命名与移动 |
-| `GET/POST /api/groups`、`PATCH/DELETE /api/groups/{id}`、`PATCH /api/groups/{id}/parent` | 图分组管理 |
+| `PUT /api/graphs/{id}/title`、`PUT /api/graphs/{id}/group` | 重命名与分组移动 |
+| `GET/POST /api/groups`、`PATCH/DELETE /api/groups/{id}`、`PATCH /api/groups/{id}/parent` | 分组管理 |
 | `GET/POST /api/stores`、`POST /api/stores/dirs`、`PATCH/DELETE /api/stores/{path}` | 图片库 |
 | `GET/POST /api/graphs/{id}/store`、`DELETE /api/graphs/{id}/store/{name}` | 图内参考图 |
-| `POST /api/generate` | 直接等待上游，返回 `{ imageUrls: string[], usage? }`，图片为 data URL |
-| `GET /gstore/{gid}/{name}`、`GET /store/{path}`、`GET /asset/{name}` | 已保存图片读取 |
+| `GET /gstore/{gid}/{name}`、`GET /store/{path}`、`GET /asset/{name}` | 图片读取 |
 
-`POST /api/generate` 接收 `{ model, prompt, params?, imageUrls? }`。`model`
-支持 `provider:model`；参考图支持已保存图片路径和临时 data URL。
+生成负载为 `{ model, prompt, params?, imageUrls? }`，model 是模型原始 ID，Provider
+通过 URL 明确指定。响应图片为会话 data URL。可覆盖的路径图片使用重新验证缓存策略。
 
-**CORS**：服务端默认放开全部来源（单用户本地工具、无鉴权，CORS 不构成
-额外暴露），供纯静态部署的前端跨源选用；暴露公网时用
-`ATELIER_CORS_ORIGINS="https://a,https://b"` 收紧。
+## 架构与验证
 
-## 开发与验证
+前端模块与依赖规则见 [web/README.md](web/README.md)。
 
 ```sh
 nix develop
-just dev-web     # Vite 开发服务（本地工作区，无需任何后端）
-just serve       # 可选：cargo run --release 启动远端工作区服务端
-just build-web   # 构建前端（纯静态产物）
-cargo test       # 服务端回归（15 项）
+just dev-web                 # 纯前端，无需 Server
+just build-web               # 静态产物 web/dist
+just serve                   # 可选 Server
+cargo test
+cargo build                  # 浏览器测试启动真实 Server 所需
 cd web
-bun run test     # 前端单测（45 项：路径/嗅探/档案/协议/导入/保存/传输）
+bun run test
 bun run check
 bun run build
 ```
 
-浏览器集成检查使用真实 Svelte/Rete：本地模式走真实 OPFS（生图器为替身、
-保存故障注入），远端模式拦截绝对 URL mock 服务；不调用真实 provider：
+浏览器测试需要运行 Vite 开发服务与 Chromium，允许从仓库外提供 playwright-core：
 
 ```sh
-# 在 web/ 下运行；模块路径可指向仓库外安装的 playwright-core
 PLAYWRIGHT_MODULE=/path/to/playwright-core/index.mjs \
-CHROMIUM_PATH=chromium \
+CHROMIUM_PATH=/path/to/chromium \
 ATELIER_TEST_URL=http://127.0.0.1:5173 \
 bun run test:browser
 ```
 
-实际 provider 的跨域探测见 [CORS spike](spikes/cors/README.md)；浏览器直连
-的协议纯逻辑与错误提取已由单测和免费网关探测（无效密钥 401 可读）覆盖。
+`state-runtime.mjs` 用真实 OPFS 与替身生图器验证响应式、自动保存、收藏与失败时序。
+`backends.mjs` 自动启动两套真实 Rust 服务（独立临时数据目录）及受控生图上游，验证
+多来源同名资源、Local / Remote 交叉执行、环境密钥、跨源参考图与库复制、会话隔离、
+连接恢复 / 移除 / 离线，以及真实 OPFS zip 往返。可用 `ATELIER_SERVER_BIN` 指定服务端
+二进制；测试不访问外部 provider，不使用用户数据或真实密钥。
 
-历史静态实验见 [poke-image-studio](poke-image-studio/)。迁移前的 Run
-模型与运行历史已删除；磁盘上旧的 `data/runs/` 等目录不再读取。
+历史静态实验保留在 [poke-image-studio](poke-image-studio/)。旧 Run 历史目录不再读取。

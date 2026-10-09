@@ -7,6 +7,7 @@ import { factoriesByType, typeOf } from './nodes/model.svelte'
 import { connKeys } from './nodes/connections'
 import { connect } from './nodes/types'
 import { rt } from './runtime'
+import { graphSession } from './session.svelte'
 
 /** 编辑器当前状态 → 结构文档 */
 export function toDoc(): GraphDoc {
@@ -68,7 +69,7 @@ export async function loadDoc(doc: GraphDoc, view?: ViewDoc): Promise<void> {
 		if (!factory) continue
 		const node = factory()
 		node.id = dn.id // id 为公开字段，addNode 前覆盖即保留文档 id
-		applyParams(node, dn.params ?? {})
+		applyParams(node, dn.type === 'model' ? { ...dn.params, providerBackendId: dn.params.providerBackendId ?? graphSession.backendId } : dn.params ?? {})
 		await editor.addNode(node)
 		const pos = view?.positions?.[dn.id] ?? defaultPosition(dn.type, created.length)
 		await area.translate(node.id, pos)

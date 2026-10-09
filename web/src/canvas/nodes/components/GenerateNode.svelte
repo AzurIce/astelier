@@ -3,17 +3,29 @@
 	import Port from './Port.svelte'
 	import Icon from '../../../ui/Icon.svelte'
 	import type { AreaExtra } from '../types'
-	import { OPENAI_IMAGE_PARAMS } from '../../../generation/params'
+	import { OPENAI_IMAGE_PARAMS, profileParams } from '../../../generation/params'
 	import { openLightbox } from '../../../ui/lightbox/lightbox.svelte'
 	import type { ParamDef } from '../../../generation/params'
 	import { editNode, removeNodeCascade } from '../actions'
 	import { noNodeDrag } from '../../dom/noNodeDrag'
-	import type { GenerateNode } from '../model.svelte'
+	import { ModelNode, type GenerateNode } from '../model.svelte'
+	import { rt } from '../../runtime'
+	import { canvasStructure } from '../../structure.svelte'
+	import { backendRegistry } from '../../../backends/registry.svelte'
 	import { writeImageDrag } from '../../../images/drag'
 
 	let { data, emit }: { data: GenerateNode; emit: (p: AreaExtra) => void } = $props()
-	let mainParams = $derived(OPENAI_IMAGE_PARAMS.filter((p) => !p.advanced))
-	let advancedParams = $derived(OPENAI_IMAGE_PARAMS.filter((p) => p.advanced))
+	let params = $derived.by(() => {
+		canvasStructure.revision
+		const edge = rt.editor?.getConnections().find((edge) => edge.target === data.id && edge.targetInput === 'model')
+		const model = edge && rt.editor?.getNode(edge.source)
+		if (!(model instanceof ModelNode)) return OPENAI_IMAGE_PARAMS
+		const source = backendRegistry.entries.find((entry) => entry.id === model.providerBackendId)
+		const profile = source?.providers.find((provider) => provider.id === model.provider)?.profiles[model.modelId]
+		return profile ? profileParams(profile) : OPENAI_IMAGE_PARAMS
+	})
+	let mainParams = $derived(params.filter((p) => !p.advanced))
+	let advancedParams = $derived(params.filter((p) => p.advanced))
 
 	function val(p: ParamDef): string {
 		const v = data.params[p.key]
@@ -34,7 +46,7 @@
 			}
 		})
 	}
-	const sizePresets = OPENAI_IMAGE_PARAMS.find((p) => p.key === 'size')?.options ?? []
+	let sizePresets = $derived(params.find((p) => p.key === 'size')?.options ?? [])
 </script>
 
 <NodeFrame

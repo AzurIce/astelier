@@ -46,9 +46,7 @@ export function releaseGraphStoreObjectUrls(gid: string, name?: string): void {
 }
 
 export function releaseStoreObjectUrl(path: string): void {
-	const url = storeUrls.get(path)
-	if (url) {
-		URL.revokeObjectURL(url)
-		storeUrls.delete(path)
+	for (const [key, url] of storeUrls) {
+		if (key === path || key.startsWith(`${path}/`)) { URL.revokeObjectURL(url); storeUrls.delete(key) }
 	}
 }

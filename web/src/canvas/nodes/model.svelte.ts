@@ -11,6 +11,7 @@ export const sockets = {
 
 export class ModelNode extends ClassicPreset.Node {
 	static type = 'model' as const
+	providerBackendId = $state('local')
 	provider = $state('')
 	modelId = $state('')
 	constructor() {

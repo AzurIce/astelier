@@ -8,7 +8,7 @@
 // - 库文件：字节不同则覆盖（路径即身份）
 // - Provider 配置不导入（密钥是设备本地数据，用户在新设备重新填写）
 import { unzipSync, zipSync } from 'fflate'
-import { listDir, readJson, readBytes, withFsLock, writeBytes, writeJson, WORKSPACE_ROOT, type FsPath } from './fs'
+import { listDir, readJson, readBytes, withFsLock, writeBytes, writeJson, ensureDir, WORKSPACE_ROOT, type FsPath } from './fs'
 import type { GraphGroup } from '../types'
 import { releaseGraphStoreObjectUrls, releaseStoreObjectUrl } from './objectUrls'
 
@@ -31,21 +31,27 @@ export interface GraphBundle {
 export interface ImportPlan {
 	graphs: GraphBundle[]
 	library: ImportEntry[]
+	directories: string[]
 	groups?: ImportEntry
 	rejected: string[]
 }
 
 /** zip 条目路径校验与归类；接受带或不带 atelier/ 前缀 */
 export function planImport(entries: ImportEntry[]): ImportPlan {
-	const plan: ImportPlan = { graphs: [], library: [], rejected: [] }
+	const plan: ImportPlan = { graphs: [], library: [], directories: [], rejected: [] }
 	const bundles = new Map<string, GraphBundle>()
 	for (const entry of entries) {
-		const segs = safeSegments(entry.path)
+		const directory = entry.path.endsWith('/')
+		const segs = safeSegments(directory ? entry.path.slice(0, -1) : entry.path)
 		if (!segs) {
 			plan.rejected.push(entry.path)
 			continue
 		}
 		const rel = segs[0] === 'atelier' ? segs.slice(1) : segs
+		if (directory) {
+			if (rel[0] === 'stores' && rel.length > 1) plan.directories.push(rel.slice(1).join('/'))
+			continue
+		}
 		if (rel.length === 1 && rel[0] === 'groups.json') {
 			plan.groups = entry
 			continue
@@ -59,7 +65,7 @@ export function planImport(entries: ImportEntry[]): ImportPlan {
 			}
 			if (rel.length === 3 && rel[2] === 'graph.json') bundle.graph = entry
 			else if (rel.length === 3 && rel[2] === 'view.json') bundle.view = entry
-			else if (rel.length === 4 && rel[2] === 'store') bundle.store.push(entry)
+			else if (rel.length === 4 && rel[2] === 'store') bundle.store.push({ ...entry, path: rel[3] })
 			else plan.rejected.push(entry.path)
 			continue
 		}
@@ -110,8 +116,9 @@ function updatedAtOf(entry: ImportEntry): number | null {
 
 async function collectDir(dir: FsPath, prefix: string, out: Record<string, Uint8Array>): Promise<void> {
 	const entries = await listDir(dir)
-	for (const name of entries.dirs) await collectDir([...dir, name], `${prefix}${name}/`, out)
+	for (const name of entries.dirs) { out[`${prefix}${name}/`] = new Uint8Array(); await collectDir([...dir, name], `${prefix}${name}/`, out) }
 	for (const name of entries.files) {
+		if (dir.length === WORKSPACE_ROOT.length && name === 'config.json') continue
 		const bytes = await readBytes([...dir, name])
 		if (bytes) out[`${prefix}${name}`] = bytes
 	}
@@ -119,7 +126,7 @@ async function collectDir(dir: FsPath, prefix: string, out: Record<string, Uint8
 
 export async function exportWorkspaceZip(): Promise<string> {
 	const files: Record<string, Uint8Array> = {}
-	await collectDir(WORKSPACE_ROOT, 'atelier/', files)
+	await withFsLock(() => collectDir(WORKSPACE_ROOT, 'atelier/', files))
 	const zipped = zipSync(files)
 	const name = `atelier-workspace-${new Date().toISOString().slice(0, 19).replaceAll(/[:T]/g, '-')}.zip`
 	const url = URL.createObjectURL(new Blob([zipped], { type: 'application/zip' }))
@@ -142,9 +149,15 @@ export interface ImportReport {
 export async function importWorkspaceZip(file: File): Promise<ImportReport> {
 	// fflate 解出的 Uint8Array 由全新 ArrayBuffer 背书
 	const plan = planImport(Object.entries(unzipSync(new Uint8Array(await file.arrayBuffer()))).map(([path, bytes]) => ({ path, bytes: bytes as Uint8Array<ArrayBuffer> })))
+	for (const bundle of plan.graphs) {
+		let graph: { id?: unknown; nodes?: unknown; edges?: unknown }
+		try { graph = JSON.parse(new TextDecoder().decode(bundle.graph!.bytes)) } catch { throw new Error(`图备份无法解析：${bundle.id}`) }
+		if (graph?.id !== bundle.id || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) throw new Error(`图备份格式不正确：${bundle.id}`)
+	}
 	const report: ImportReport = { graphsTaken: 0, graphsSkipped: 0, libraryFiles: plan.library.length, groupsMerged: false, rejected: plan.rejected.length }
 
 	await withFsLock(async () => {
+		for (const directory of plan.directories) await ensureDir([...WORKSPACE_ROOT, 'stores', ...directory.split('/')])
 		for (const bundle of plan.graphs) {
 			const local = await readJson<{ updated_at?: unknown }>([...WORKSPACE_ROOT, 'graphs', bundle.id, 'graph.json'])
 			const localAt = typeof local?.updated_at === 'number' ? local.updated_at : null
@@ -152,9 +165,9 @@ export async function importWorkspaceZip(file: File): Promise<ImportReport> {
 				report.graphsSkipped++
 				continue
 			}
-			await writeBytes([...WORKSPACE_ROOT, 'graphs', bundle.id, 'graph.json'], bundle.graph!.bytes)
 			if (bundle.view) await writeBytes([...WORKSPACE_ROOT, 'graphs', bundle.id, 'view.json'], bundle.view.bytes)
 			for (const entry of bundle.store) await writeBytes([...WORKSPACE_ROOT, 'graphs', bundle.id, 'store', entry.path], entry.bytes)
+			await writeBytes([...WORKSPACE_ROOT, 'graphs', bundle.id, 'graph.json'], bundle.graph!.bytes)
 			releaseGraphStoreObjectUrls(bundle.id)
 			report.graphsTaken++
 		}
@@ -167,18 +180,17 @@ export async function importWorkspaceZip(file: File): Promise<ImportReport> {
 			}
 		}
 		if (plan.groups) {
-			try {
-				const importedGroups = JSON.parse(new TextDecoder().decode(plan.groups.bytes)) as GraphGroup[]
-				if (Array.isArray(importedGroups)) {
-					const localGroups = await readJson<GraphGroup[]>([...WORKSPACE_ROOT, 'groups.json'])
-					const merged = mergeGroups(Array.isArray(localGroups) ? localGroups : [], importedGroups)
-					await writeJson([...WORKSPACE_ROOT, 'groups.json'], merged)
-					report.groupsMerged = true
-				}
-			} catch {
-				// 分组文件损坏：跳过，不影响图与库导入
+			let importedGroups: unknown
+			try { importedGroups = JSON.parse(new TextDecoder().decode(plan.groups.bytes)) }
+			catch { importedGroups = null }
+			if (Array.isArray(importedGroups)) {
+				const localGroups = await readJson<GraphGroup[]>([...WORKSPACE_ROOT, 'groups.json'])
+				const merged = mergeGroups(Array.isArray(localGroups) ? localGroups : [], importedGroups)
+				await writeJson([...WORKSPACE_ROOT, 'groups.json'], merged)
+				report.groupsMerged = true
 			}
 		}
+
 	})
 	return report
 }

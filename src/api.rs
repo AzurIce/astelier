@@ -43,12 +43,12 @@ fn storage_error(msg: String) -> ApiError {
 
 pub fn router() -> Router {
     Router::new()
-        // 配置
-        .route("/config", get(get_config).put(save_config))
-        .route("/providers/{provider_id}/profiles", get(resolve_profiles))
+        // Public provider discovery contains no credentials.
+        .route("/backend", get(backend_info))
+        .route("/providers", get(list_providers))
         .route(
-            "/providers/{provider_id}/models/{model_id}/override",
-            put(set_model_override),
+            "/providers/{provider_id}/generate",
+            post(generate).layer(DefaultBodyLimit::disable()),
         )
         // 节点图
         .route("/graphs", get(list_graphs).post(create_graph))
@@ -84,11 +84,6 @@ pub fn router() -> Router {
             "/graphs/{id}/store/{name}",
             axum::routing::delete(delete_graph_store_file),
         )
-        // 会话内生成
-        .route(
-            "/generate",
-            post(generate).layer(DefaultBodyLimit::disable()),
-        )
         // image-pipeline 模板还有这几个端点；尚未接入，先显式 501
         .route("/upscale", post(unimplemented))
         .route("/ip-adapter", post(unimplemented))
@@ -105,47 +100,20 @@ async fn unimplemented() -> ApiResult<Json<serde_json::Value>> {
 
 // ---------- 配置 ----------
 
-async fn get_config() -> Json<Config> {
-    Json(crate::store::load_config().await)
+async fn backend_info() -> ApiResult<Json<serde_json::Value>> {
+    Ok(Json(
+        json!({ "id": crate::store::backend_id().await.map_err(storage_error)?, "capabilities": { "workspace": true, "providers": true } }),
+    ))
 }
 
-async fn save_config(Json(cfg): Json<Config>) -> ApiResult<()> {
-    crate::store::save_config(&cfg).await;
-    Ok(())
-}
-
-/// provider 的全部模型档案（内置 + override 合并）
-async fn resolve_profiles(Path(provider_id): Path<String>) -> Json<Vec<ModelProfile>> {
+async fn list_providers() -> Json<serde_json::Value> {
     let cfg = crate::store::load_config().await;
-    let Some(provider) = cfg.providers.iter().find(|p| p.id == provider_id) else {
-        return Json(vec![]);
-    };
-    Json(
-        provider
-            .models
-            .iter()
-            .map(|m| crate::profiles::merged(m, provider.overrides.get(m)))
-            .collect(),
-    )
-}
-
-async fn set_model_override(
-    Path((provider_id, model_id)): Path<(String, String)>,
-    Json(override_json): Json<Option<serde_json::Value>>,
-) -> ApiResult<()> {
-    let mut cfg = crate::store::load_config().await;
-    if let Some(p) = cfg.providers.iter_mut().find(|p| p.id == provider_id) {
-        match override_json {
-            None | Some(serde_json::Value::Null) => {
-                p.overrides.remove(&model_id);
-            }
-            Some(v) => {
-                p.overrides.insert(model_id, v);
-            }
-        }
-        crate::store::save_config(&cfg).await;
-    }
-    Ok(())
+    Json(json!(cfg.providers.iter().map(|provider| {
+        let profiles: BTreeMap<String, ModelProfile> = provider.models.iter().map(|model| {
+            (model.clone(), crate::profiles::merged(model, provider.overrides.get(model)))
+        }).collect();
+        json!({ "id": provider.id, "name": provider.name, "models": provider.models, "profiles": profiles })
+    }).collect::<Vec<_>>()))
 }
 
 // ---------- 节点图 ----------
@@ -192,8 +160,8 @@ async fn create_graph(body: Option<Json<CreateGraphBody>>) -> ApiResult<Json<Gra
     let (model_id_node, prompt_id, gen_id, prev_id) =
         (nid("model"), nid("prompt"), nid("gen"), nid("prev"));
     let title = body.title.unwrap_or_else(|| "未命名图".into());
-    // 图目录名 = 图名（净化 + 去重），前端展示与 data/ 目录一致
-    let graph_id = crate::store::unique_graph_dir(&crate::store::sanitize_dir_name(&title));
+    // Stable UUID identity is independent of the title.
+    let graph_id = uuid::Uuid::new_v4().simple().to_string();
     let graph = Graph {
         id: graph_id.clone(),
         title,
@@ -341,34 +309,17 @@ async fn set_graph_group(Path(id): Path<String>, Json(body): Json<GroupBody>) ->
     Ok(())
 }
 
-/// 图重命名 = 目录改名：目录名与图名保持一致；id 随之更新，
-/// 返回新 id。
-async fn rename_graph(
-    Path(id): Path<String>,
-    Json(body): Json<NameBody>,
-) -> ApiResult<Json<serde_json::Value>> {
-    use crate::store::{sanitize_dir_name, sub_dir, unique_graph_dir};
+/// Titles do not change a graph's identity or its image references.
+async fn rename_graph(Path(id): Path<String>, Json(body): Json<NameBody>) -> ApiResult<()> {
     let Some(mut graph) = crate::store::get_graph(&id).await else {
         return Err(bad("图不存在"));
     };
-    let clean = sanitize_dir_name(&body.name);
-    let new_id = if clean == id {
-        id.clone() // 名字没变（或净化后与现名相同），仅更新 title
-    } else {
-        unique_graph_dir(&clean)
-    };
-
-    if new_id != id {
-        tokio::fs::rename(sub_dir(&["graphs", &id]), sub_dir(&["graphs", &new_id]))
-            .await
-            .map_err(|e| bad(format!("目录改名失败：{e}")))?;
-    }
-    graph.id = new_id.clone();
     graph.title = body.name;
+    graph.updated_at = now_ms();
     crate::store::save_graph(&graph)
         .await
         .map_err(storage_error)?;
-    Ok(Json(serde_json::json!({ "id": new_id })))
+    Ok(())
 }
 
 // ---------- 分组 ----------
@@ -692,29 +643,21 @@ async fn read_input_image(url: &str) -> ApiResult<crate::adapter::InputImage> {
     ))
 }
 
-/// model 字符串解析：`provider:model`（前缀命中已配置 provider 时拆开），
-/// 否则整体视作 model_id、走当前激活的 provider。
-async fn resolve_model(cfg: &Config, model: &str) -> ApiResult<(String, String)> {
-    if let Some((pid, mid)) = model.split_once(':') {
-        if cfg.providers.iter().any(|p| p.id == pid) {
-            return Ok((pid.to_string(), mid.to_string()));
-        }
-    }
-    let active = cfg
-        .active()
-        .ok_or_else(|| bad("没有可用的 Provider，请先在设置里配置"))?;
-    Ok((active.id.clone(), model.to_string()))
-}
-
-/// 请求和图片只存活于本次调用；直接等待上游完成。
-async fn generate(Json(p): Json<GenerateParams>) -> ApiResult<Json<GenerateResult>> {
+/// The provider is selected explicitly by the route, independent of graph storage.
+async fn generate(
+    Path(provider_id): Path<String>,
+    Json(p): Json<GenerateParams>,
+) -> ApiResult<Json<GenerateResult>> {
     let cfg = crate::store::load_config().await;
-    let (provider_id, model_id) = resolve_model(&cfg, &p.model).await?;
     let provider = cfg
         .providers
         .iter()
         .find(|p| p.id == provider_id)
         .ok_or_else(|| bad("Provider 不存在"))?;
+    let model_id = p.model;
+    if !provider.models.contains(&model_id) {
+        return Err(bad("Provider 未配置该模型"));
+    }
     let profile = crate::profiles::merged(&model_id, provider.overrides.get(&model_id));
     if p.prompt.trim().is_empty() {
         return Err(bad("Prompt 为空"));
@@ -818,7 +761,7 @@ mod tests {
 
     fn request(images: Vec<String>) -> Json<GenerateParams> {
         Json(GenerateParams {
-            model: "mock:gpt-image-2".into(),
+            model: "gpt-image-2".into(),
             prompt: "a cat".into(),
             params: BTreeMap::new(),
             image_urls: images,
@@ -830,6 +773,58 @@ mod tests {
             "data:image/png;base64,{}",
             base64::engine::general_purpose::STANDARD.encode(PNG)
         )
+    }
+
+    #[tokio::test]
+    async fn provider_discovery_exposes_capabilities_without_credentials() {
+        let (tmp, _guard) = crate::store::store_tests::use_tmp("provider-discovery");
+        configure("https://upstream.example/v1").await;
+        let identity = crate::store::backend_id().await.unwrap();
+        assert_eq!(crate::store::backend_id().await.unwrap(), identity);
+        assert_eq!(backend_info().await.unwrap().0["id"], identity);
+        let Json(public) = list_providers().await;
+        assert_eq!(public[0]["id"], "mock");
+        assert_eq!(public[0]["profiles"]["gpt-image-2"]["id"], "gpt-image-2");
+        let text = public.to_string();
+        assert!(!text.contains("sk-local-test"));
+        assert!(public[0].get("api_key").is_none());
+        assert!(!text.contains("upstream.example"));
+        assert!(generate(Path("missing".into()), request(vec![]))
+            .await
+            .is_err());
+        let mut body = request(vec![]);
+        body.model = "unconfigured".into();
+        assert!(generate(Path("mock".into()), body).await.is_err());
+        std::fs::remove_dir_all(tmp).unwrap();
+    }
+
+    #[tokio::test]
+    async fn graph_titles_do_not_change_identity_or_reference_files() {
+        let (tmp, _guard) = crate::store::store_tests::use_tmp("stable-graph");
+        let Json(graph) = create_graph(None).await.unwrap();
+        assert!(uuid::Uuid::parse_str(&graph.id).is_ok());
+        crate::store::save_graph_store_file(&graph.id, "reference.png", PNG)
+            .await
+            .unwrap();
+        rename_graph(
+            Path(graph.id.clone()),
+            Json(NameBody {
+                name: "新的 / 标题".into(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            crate::store::read_graph_store_file(&graph.id, "reference.png")
+                .await
+                .unwrap(),
+            PNG
+        );
+        assert_eq!(
+            crate::store::get_graph(&graph.id).await.unwrap().title,
+            "新的 / 标题"
+        );
+        std::fs::remove_dir_all(tmp).unwrap();
     }
 
     #[tokio::test]
@@ -845,7 +840,9 @@ mod tests {
         )
         .await;
         configure(&base).await;
-        let Json(result) = generate(request(vec![])).await.unwrap();
+        let Json(result) = generate(Path("mock".into()), request(vec![]))
+            .await
+            .unwrap();
         assert_eq!(result.image_urls, vec![temporary_url(), temporary_url()]);
         assert_eq!(result.usage.unwrap().total_tokens, Some(42));
         let (path, headers, body) = requests.recv().await.unwrap();
@@ -879,7 +876,9 @@ mod tests {
             "/store/%E5%BA%93/%E7%8C%AB.png".into(),
             temporary_url(),
         ];
-        let Json(result) = generate(request(images)).await.unwrap();
+        let Json(result) = generate(Path("mock".into()), request(images))
+            .await
+            .unwrap();
         assert_eq!(result.image_urls, vec![temporary_url()]);
         let (path, headers, body) = requests.recv().await.unwrap();
         assert_eq!(path, "/images/edits");
@@ -905,7 +904,7 @@ mod tests {
         )
         .await;
         configure(&base).await;
-        let error = generate(request(vec![temporary_url()]))
+        let error = generate(Path("mock".into()), request(vec![temporary_url()]))
             .await
             .err()
             .unwrap();
@@ -956,9 +955,9 @@ mod tests {
             base64::engine::general_purpose::STANDARD.encode(vec![0; 2 * 1024 * 1024])
         );
         let response = reqwest::Client::new()
-            .post(format!("{local}/generate"))
+            .post(format!("{local}/providers/mock/generate"))
             .json(&json!({
-                "model": "mock:gpt-image-2", "prompt": "a cat", "imageUrls": [image]
+                "model": "gpt-image-2", "prompt": "a cat", "imageUrls": [image]
             }))
             .send()
             .await

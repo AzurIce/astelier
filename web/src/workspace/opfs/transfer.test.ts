@@ -24,6 +24,7 @@ test('planImport 归类图/库/分组，拒绝穿越、越界与未知顶层', (
 	])
 	assert.deepEqual(plan.graphs.map((g) => g.id).sort(), ['abc', 'def'])
 	assert.equal(plan.graphs.find((g) => g.id === 'abc')?.store.length, 1)
+	assert.equal(plan.graphs.find((g) => g.id === 'abc')?.store[0].path, '猫.png')
 	assert.equal(plan.library.length, 1)
 	assert.equal(plan.library[0].path, '角色/猫.png')
 	assert.ok(plan.groups)
@@ -36,6 +37,13 @@ test('planImport 归类图/库/分组，拒绝穿越、越界与未知顶层', (
 	])
 	assert.ok(plan.rejected.includes('atelier/graphs/bad../graph.json') || plan.graphs.every((g) => g.id !== 'bad..'))
 	assert.ok(!plan.graphs.some((g) => g.id === 'onlyview'))
+})
+
+test('zip directory entries preserve empty library folders without becoming files', () => {
+	const plan = planImport([entry('atelier/'), entry('atelier/stores/'), entry('atelier/stores/空目录/'), entry('atelier/graphs/abc/store/')])
+	assert.deepEqual(plan.directories, ['空目录'])
+	assert.equal(plan.library.length, 0)
+	assert.equal(plan.rejected.length, 0)
 })
 
 test('graphTake：本地缺失或较旧才导入（last-writer-wins）', () => {

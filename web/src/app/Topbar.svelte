@@ -2,12 +2,10 @@
 	import Icon from '../ui/Icon.svelte'
 	import IconButton from '../ui/IconButton.svelte'
 	import SkinSwitcher from '../ui/theme/SkinSwitcher.svelte'
-	import Popover from '../ui/Popover.svelte'
-	import { design } from '../ui/theme/state.svelte'
-	import { toast } from '../ui/toast/toast.svelte'
+		import { design } from '../ui/theme/state.svelte'
 	import type { SaveState } from '../canvas/saveQueue'
-	import { flushNow } from '../canvas/session.svelte'
-	import { saveWorkspaceChoice, validateRemoteWorkspace, workspaceChoice, type WorkspaceChoice } from '../workspace/selection.svelte'
+	import { graphSession } from '../canvas/session.svelte'
+	import { backendRegistry } from '../backends/registry.svelte'
 
 	// 顶栏：品牌 / 图名（内联改名）/ 保存状态 / 工作区 / 皮肤切换 / 明暗 / Run
 	let {
@@ -49,50 +47,7 @@
 		error: '保存失败',
 	}
 
-	// ---------- 工作区切换 ----------
-	let wsOpen = $state(false)
-	let wsAnchor = $state({ x: 0, y: 0 })
-	let remoteUrl = $state('')
-	let connecting = $state(false)
-	const choice = $derived(workspaceChoice.current)
-	const workspaceText = $derived(choice.kind === 'opfs' ? '本地' : '远端')
-
-	function openWorkspace(e: MouseEvent) {
-		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-		wsAnchor = { x: rect.right, y: rect.bottom + 6 }
-		remoteUrl = choice.kind === 'http' ? choice.baseUrl : ''
-		wsOpen = true
-	}
-
-	/** 切换前必须把当前图的待保存修改写完；失败则留在原工作区 */
-	async function switchTo(next: WorkspaceChoice) {
-		if (next.kind === choice.kind && (next.kind === 'opfs' || next.baseUrl === (choice as { baseUrl: string }).baseUrl)) {
-			wsOpen = false
-			return
-		}
-		try {
-			await flushNow()
-		} catch {
-			toast({ kind: 'err', title: '有修改尚未保存', msg: '请先重试保存（保存失败时不能切换工作区）' })
-			return
-		}
-		saveWorkspaceChoice(next)
-		location.reload()
-	}
-
-	async function connectRemote() {
-		const url = remoteUrl.trim()
-		if (!url || connecting) return
-		connecting = true
-		try {
-			await validateRemoteWorkspace(url)
-			await switchTo({ kind: 'http', baseUrl: url })
-		} catch (e) {
-			toast({ kind: 'err', title: '连接远端失败', msg: e instanceof Error ? e.message : String(e) })
-		} finally {
-			connecting = false
-		}
-	}
+	let sourceName = $derived(backendRegistry.entries.find((entry) => entry.id === graphSession.backendId)?.name ?? '来源不可用')
 </script>
 
 <div class="topbar">
@@ -104,7 +59,7 @@
 
 	{#if editing}
 		<input
-			class="rename"
+			class="ui-input rename"
 			bind:value={draft}
 			onkeydown={(e) => {
 				if (e.key === 'Enter') void commit()
@@ -127,45 +82,7 @@
 
 	<div class="spacer"></div>
 
-	<button
-		type="button"
-		class="ws-entry"
-		onclick={openWorkspace}
-		title={choice.kind === 'opfs' ? '本地工作区（OPFS）· 点击切换' : `${choice.baseUrl} · 点击切换`}
-	>
-		<Icon name="layers" size={13} />
-		<span>{workspaceText}</span>
-		<Icon name="chevronDown" size={11} />
-	</button>
-	<Popover bind:open={wsOpen} anchor={wsAnchor} width={288} onclose={() => (wsOpen = false)}>
-		<div class="ws-pop">
-			<button type="button" class="ws-opt" class:active={choice.kind === 'opfs'} onclick={() => void switchTo({ kind: 'opfs' })}>
-				<Icon name="layers" size={15} />
-				<span class="meta"><strong>本地工作区</strong><small>OPFS · 数据保存在本浏览器</small></span>
-				{#if choice.kind === 'opfs'}<Icon name="check" size={14} />{/if}
-			</button>
-			<div class="ws-sep"></div>
-			<div class="ws-remote">
-				<span class="ws-remote-title"><Icon name="graph" size={13} />远端服务</span>
-				{#if choice.kind === 'http'}<small class="ws-current">{choice.baseUrl}</small>{/if}
-				<div class="ws-url">
-					<input
-						bind:value={remoteUrl}
-						placeholder="http://127.0.0.1:8230"
-						spellcheck="false"
-						aria-label="远端服务地址"
-						onkeydown={(e) => {
-							if (e.key === 'Enter') void connectRemote()
-						}}
-					/>
-					<button type="button" class="ui-btn ghost sm" disabled={connecting || !remoteUrl.trim()} onclick={() => void connectRemote()}>
-						{#if connecting}<Icon name="spinner" size={12} class="spin" />{:else}连接{/if}
-					</button>
-				</div>
-				<small class="ws-hint">数据与生图都在服务端；需服务端允许跨域访问</small>
-			</div>
-		</div>
-	</Popover>
+	<button type="button" class="ui-btn ghost sm ws-entry" onclick={onSettings} title="管理后端与 Provider"><Icon name="layers" size={13} /><span>{sourceName}</span></button>
 
 	<SkinSwitcher />
 	{#if onSettings}
@@ -204,122 +121,18 @@
 	.rename {
 		height: 26px;
 		padding: 0 8px;
-		border: 1px solid var(--ui-accent);
-		border-radius: var(--ui-r-control);
-		background: var(--ui-input);
-		color: var(--ui-text);
-		font: inherit;
+		border-color: var(--ui-accent);
 		font-weight: 600;
-		outline: none;
 	}
+	/* 顶栏来源入口：共享 .ui-btn.ghost.sm 的底，只加固定宽度与省略 */
 	.ws-entry {
-		display: flex;
-		align-items: center;
-		gap: 5px;
-		height: 24px;
-		padding: 0 8px;
-		border: 1px solid var(--ui-border-fade);
-		border-radius: var(--ui-r-control);
-		background: var(--ui-input);
-		color: var(--ui-dim);
-		font: inherit;
-		font-size: 11px;
-		cursor: pointer;
-	}
-	.ws-entry:hover {
-		color: var(--ui-text);
-		border-color: var(--ui-accent-fade);
+		max-width: 180px;
 	}
 	.ws-entry :global(.ui-icon:first-child) {
 		color: var(--ui-accent);
 	}
-	.ws-pop {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-		padding: 6px;
-	}
-	.ws-opt {
-		display: flex;
-		align-items: center;
-		gap: 9px;
-		width: 100%;
-		padding: 7px 8px;
-		border: none;
-		border-radius: var(--ui-r-control);
-		background: none;
-		color: var(--ui-text);
-		font: inherit;
-		font-size: 12px;
-		text-align: left;
-		cursor: pointer;
-	}
-	.ws-opt:hover {
-		background: var(--ui-input);
-	}
-	.ws-opt.active {
-		background: var(--ui-accent-weak);
-	}
-	.ws-opt.active :global(.ui-icon:last-child) {
-		margin-left: auto;
-		color: var(--ui-accent);
-	}
-	.ws-opt .meta {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-	}
-	.ws-opt small {
-		font-size: 10px;
-		color: var(--ui-faint);
-	}
-	.ws-sep {
-		height: 1px;
-		margin: 2px 4px;
-		background: var(--ui-border-fade);
-	}
-	.ws-remote {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-		padding: 4px 8px 6px;
-	}
-	.ws-remote-title {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		font-size: 12px;
-		font-weight: 600;
-		color: var(--ui-text);
-	}
-	.ws-current {
-		font-family: var(--ui-mono, monospace);
-		font-size: 10px;
-		color: var(--ui-accent);
-		overflow-wrap: anywhere;
-	}
-	.ws-url {
-		display: flex;
-		gap: 6px;
-	}
-	.ws-url input {
-		flex: 1;
-		min-width: 0;
-		height: 26px;
-		padding: 0 8px;
-		border: 1px solid var(--ui-border-fade);
-		border-radius: var(--ui-r-control);
-		background: var(--ui-input);
-		color: var(--ui-text);
-		font-family: var(--ui-mono, monospace);
-		font-size: 11px;
-		outline: none;
-	}
-	.ws-url input:focus {
-		border-color: var(--ui-accent);
-	}
-	.ws-hint {
-		font-size: 10px;
-		color: var(--ui-faint);
+	.ws-entry :global(span) {
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 </style>

@@ -182,6 +182,10 @@ body {
 .ui-btn.primary:hover {
 	filter: brightness(1.08);
 }
+/* 实心按钮里的图标跟随按钮文字色，保持对比度 */
+.ui-btn.primary .ui-icon {
+	color: currentColor;
+}
 .ui-btn.ghost {
 	color: var(--ui-dim);
 	border-color: var(--ui-border-fade);
@@ -222,6 +226,21 @@ body {
 }
 .ui-btn.icon.sm {
 	width: 22px;
+}
+/* 自绘按钮（节点内容、库、顶栏等）统一按这套给底：浏览器默认的
+   立体边框/灰底不应该出现在任何自绘控件上 */
+.ui-btn.icon,
+.viewport-controls .zoom-label,
+.graph-title,
+.skin-entry,
+.tree-row,
+.crumb,
+.dock-rail {
+	border: none;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
 }
 
 /* 键盘提示 */
@@ -441,7 +460,7 @@ body {
 	background: var(--ui-accent);
 }
 /* 调宽期间：全局禁选中 + 统一光标 */
-:global(body.resizing-sidebar) {
+body.resizing-sidebar {
 	cursor: col-resize;
 	user-select: none;
 	-webkit-user-select: none;
@@ -463,6 +482,10 @@ body {
 }
 .side-head .label {
 	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .tree {
@@ -1086,6 +1109,38 @@ body {
 	font-size: 11px;
 }
 
+/* 表单排版原语：标签在上 / 控件在下；两个以上控件并排时只保留最小间距 */
+.ui-field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+	font-size: 10.5px;
+	color: var(--ui-dim);
+}
+.ui-field > .ui-input,
+.ui-field > .ui-select,
+.ui-field > .ui-textarea {
+	width: 100%;
+}
+.ui-field-row {
+	display: flex;
+	align-items: flex-end;
+	flex-wrap: wrap;
+	gap: 6px;
+	min-width: 0;
+}
+.ui-field-row > .ui-field {
+	flex: 1 1 140px;
+}
+.ui-field-row > .ui-btn {
+	flex: none;
+}
+/* 默认隐藏的文件选择框（用按钮触发） */
+.ui-file {
+	display: none;
+}
+
 /* 离散滑块（质量等）+ 档位刻度 */
 .slider-wrap {
 	flex: 1;
@@ -1422,6 +1477,30 @@ body {
 	font-weight: 650;
 	white-space: nowrap;
 }
+/* 状态徽章：带状态点的连接 / 持久化提示 */
+.ui-badge .dot {
+	width: 5px;
+	height: 5px;
+	flex: none;
+	border-radius: 50%;
+	background: currentColor;
+}
+.ui-badge.ok {
+	color: var(--ui-ok);
+	background: color-mix(in srgb, var(--ui-ok) 14%, transparent);
+}
+.ui-badge.warn {
+	color: var(--ui-warn);
+	background: color-mix(in srgb, var(--ui-warn) 14%, transparent);
+}
+.ui-badge.err {
+	color: var(--ui-danger);
+	background: color-mix(in srgb, var(--ui-danger) 14%, transparent);
+}
+.ui-badge.quiet {
+	color: var(--ui-faint);
+	background: color-mix(in srgb, var(--ui-faint) 12%, transparent);
+}
 
 /* ============================================================
    浮层 / 菜单 / 命令面板
@@ -1465,11 +1544,17 @@ body {
 	white-space: nowrap;
 }
 .ui-menu-item:hover,
-.ui-menu-item.active {
+.ui-menu-item.active,
+.ui-menu-item:focus-visible {
 	background: var(--ui-hover);
 }
 .ui-menu-item.danger {
 	color: var(--ui-danger);
+}
+.ui-menu-item.danger:hover,
+.ui-menu-item.danger.active,
+.ui-menu-item.danger:focus-visible {
+	background: color-mix(in srgb, var(--ui-danger) 14%, transparent);
 }
 .ui-menu-item .ui-icon {
 	color: var(--ui-dim);
@@ -1779,10 +1864,14 @@ body {
 	color: var(--ui-danger);
 }
 .ui-dialog .body {
-	padding: 9px 16px 16px;
+	padding: 12px 16px 16px;
 	color: var(--ui-dim);
 	font-size: 12.5px;
 	line-height: 1.65;
+}
+/* 多个 body（message + 自定义内容）之间不留双份内边距 */
+.ui-dialog .body:not(:last-child) {
+	padding-bottom: 0;
 }
 .ui-dialog .body .mono {
 	font-family: var(--ui-mono);

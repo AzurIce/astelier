@@ -1,5 +1,5 @@
 {
-  description = "atelier — generative art studio (rust server + react/tldraw web)";
+  description = "atelier — generative art studio (OPFS + Rust backends, Svelte/Rete web)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

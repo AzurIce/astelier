@@ -1,30 +1,33 @@
 # 前端代码组织
 
-`src/main.ts` 按 localStorage 的工作区选择装配 `WorkspaceStore` 与
-`ImageGenerator`（本地 OPFS + 直连，或远端 HTTP + 服务端代理），再挂载
-`app/App.svelte`。`window.__atelierRuntime` 是浏览器集成测试的注入缝。
+`main.ts` 初始化后端注册表并挂载 Svelte 应用。应用加载本地资源，同时连接设备保存的
+Server；图会话与生图执行不依赖全局活动后端。
 
-| 目录 | 职责 | 主要入口 |
-| --- | --- | --- |
-| `app/` | 装配侧栏、画布、图片库与通用浮层；顶栏（工作区切换）、Provider 设置 | `App.svelte`、`Topbar.svelte`、`SettingsDialog.svelte` |
-| `canvas/` | Rete 编辑器、当前画布会话、节点执行与保存 | `editor.ts`、`session.svelte.ts`、`execute.ts` |
-| `workspace/` | `WorkspaceStore` 抽象、工作区选择、图/分组 API、图内参考图与侧栏；`opfs/` 为本地实现（fs 原语、路径校验、对象 URL 缓存、zip 导入导出），`httpStore.ts` 为远端实现 | `store.ts`、`selection.svelte.ts`、`api.ts`、`opfs/store.ts` |
-| `generation/` | `ImageGenerator` 抽象（`generator.ts`）、浏览器直连（`direct.ts`）、HTTP 代理（`api.ts`）、模型档案与协议纯逻辑（`profiles.ts` / `protocol.ts`）、UI 参数表（`params.ts`，由档案派生）与 Provider 配置状态 | `direct.ts`、`profiles.ts` |
-| `images/` | 图片引用类型、拖拽载荷、导入队列、内容指纹、字节嗅探（格式/宽高） | `types.ts`、`import.ts`、`sniff.ts` |
-| `library/` | 用户收藏的图片库面板、库 API（委托 store）与路径操作 | `LibraryDock.svelte`、`api.ts`、`paths.ts` |
-| `ui/` | 通用控件、图标、主题、确认框、消息和图片预览 | `theme/`、`confirm/`、`toast/`、`lightbox/` |
-
-`canvas/nodes/model.svelte.ts` 只负责节点身份、端口和响应式字段。参数保存与恢复放在 `nodes/serialization.svelte.ts`，Graph/View 与 Rete 的转换放在 `document.ts`。Svelte runes 所在模块使用 `.svelte.ts`。
-
-`canvas/editor.ts` 负责初始化和连接 Rete 插件。视口控制放在 `viewport.ts`，指针与连线选择放在 `interactions.ts`；画布组件直接依赖这些模块，避免反向依赖初始化模块。`dom/` 集中处理控件事件与 Rete 原生事件的接合。
+| 目录 | 职责与入口 |
+| --- | --- |
+| `backends/` | `connections.ts` 校验 / 保存连接配置、发现稳定 Server 身份；`registry.svelte.ts` 管理连接状态、独立存储实例与 Provider 执行器；`types.ts` 定义后端、图定位与 Provider 能力 |
+| `app/` | 应用装配、顶栏、后端管理 / 本地 Provider 设置 / OPFS 备份 |
+| `workspace/` | `store.ts` 存储接口，`httpStore.ts` 与 `opfs/store.ts` 实现；`Sidebar.svelte` 挂载后端根，`BackendGraphs.svelte` 管理每棵图树 |
+| `canvas/` | Rete 编辑器、会话 / 保存队列、Graph/View 转换与执行；`session.svelte.ts` 将会话固定到 `{ backendId, id }` |
+| `generation/` | `generator.ts` 执行契约、`direct.ts` 浏览器执行、`remote.ts` 服务器执行；`localConfig.ts` 管理 Local Provider；`profiles.ts` 参数协议档案，`params.ts` 从当前模型档案派生 UI 控件 |
+| `images/` | 图片引用、拖拽载荷、导入队列、字节嗅探与内容指纹；持久拖拽带 `backendId`，临时产物只带会话 URL |
+| `library/` | `LibraryDock.svelte` 汇总各后端目录根并浏览所选来源；`transfer.ts` 显式跨后端复制文件 / 目录 |
+| `ui/` | 通用控件、主题、确认框、消息与图片预览 |
 
 依赖规则：
 
-- `workspace/store.ts` 是存储抽象边界：组件与画布不感知 OPFS / HTTP 实现与磁盘路径；图片展示 URL 由 store 解析（本地为缓存 blob: URL）。
-- `generation/generator.ts` 是生图抽象边界：执行引擎不感知直连 / 代理；参数定义单一来源于 `generation/profiles.ts`，`params.ts` 仅做 UI 派生。
-- `workspace/types.ts` 是纯数据契约，不引入 Svelte、Rete 或 HTTP。
-- `images/` 不依赖画布节点或会话；导入器通过参数接收上传与节点更新操作。`sniff.ts` 的格式/宽高嗅探被存储与生图协议共用。
-- `ui/` 不依赖业务模块。图片库组件放在 `library/`，画布组件放在 `canvas/`。
-- HTTP 请求按功能放到对应模块；从具体模块直接导入，不设聚合转发入口或旧路径兼容文件。
+- `WorkspaceStore` 只负责图、View、分组、库与图内参考图。调用方拿到明确后端实例，
+  保存、上传与删除前捕获所属后端；Local Provider 配置由 `generation/localConfig.ts` 管理。
+- 每个 Provider 有独立 `ImageGenerator`。执行前固定其来源与实例，Graph 存储位置不影响
+  执行路由。Remote Provider 只发现模型档案，前端不读取 Server 凭证配置。
+- Provider 节点持久保存 `providerBackendId`、`provider`、`modelId`。服务端稳定身份跨客户端
+  保持一致；设备只保存挂载地址和显示名。
+- 结构文档不保存运行状态、产物、data/blob 图片 URL。参考图复制到目标图，展示 URL 运行时解析。
+- 导入器每批任务固定上传目标与原节点，切图后不能提交异步结果；执行也检查会话 epoch，
+  即使切走再回到同一个图也不接收旧结果。
+- 参数 UI 从所选 Provider 模型档案派生。连线结构变更通过 `structure.svelte.ts` 通知控件；
+  Svelte runes 模块使用 `.svelte.ts`。
+- `ui/` 不依赖业务模块；不保留旧工作区切换、全局 API 包装和旧路径兼容入口。
 
-开发、构建和测试命令见根目录 [README](../README.md#开发与验证)。浏览器检查使用真实 Svelte/Rete 与真实 OPFS（本地模式）或 mock 远端服务（远端模式），不发起真实生图请求。
+`window.__atelierRuntime` 仅供浏览器测试包装存储失败和注入替身生图器。正常应用不注入。
+开发与完整验证命令见根目录 [README](../README.md#架构与验证)。

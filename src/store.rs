@@ -79,6 +79,29 @@ async fn write_json<T: serde::Serialize>(rel: &[&str], value: &T) -> Result<(), 
     write_json_at(&sub_dir(rel), value).await
 }
 
+/// Persistent instance identity allows graph/provider references to resolve across clients.
+pub async fn backend_id() -> Result<String, String> {
+    let _guard = STORE_LOCK.lock().await;
+    let path = sub_dir(&["backend.json"]);
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => {
+            let value: serde_json::Value =
+                serde_json::from_slice(&bytes).map_err(|_| "backend.json 无法解析".to_string())?;
+            let id = value
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .filter(|id| uuid::Uuid::parse_str(id).is_ok())
+                .ok_or_else(|| "backend.json 的后端身份无效".to_string())?;
+            return Ok(id.to_string());
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("读取后端身份失败：{error}")),
+    }
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    write_json_at_unlocked(&path, &serde_json::json!({ "id": id })).await?;
+    Ok(id)
+}
+
 // ---------- config ----------
 
 pub async fn load_config() -> Config {
@@ -223,39 +246,6 @@ pub async fn delete_graph(id: &str) {
     let _ = tokio::fs::remove_dir_all(sub_dir(&["graphs", id])).await;
 }
 
-// ---------- 目录命名（图目录名 = 图名，人类可读） ----------
-
-/// 图目录名净化：替换文件系统非法字符、折叠空白、限长；空则回退默认名
-pub fn sanitize_dir_name(title: &str) -> String {
-    let cleaned: String = title
-        .trim()
-        .chars()
-        .map(|c| match c {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
-            _ => c,
-        })
-        .collect();
-    let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut s: String = collapsed.chars().take(64).collect();
-    s = s.trim().trim_matches('.').to_string();
-    if s.is_empty() {
-        "未命名图".into()
-    } else {
-        s
-    }
-}
-
-/// 目录名去重：已存在则追加 -2 / -3…
-pub fn unique_graph_dir(base: &str) -> String {
-    let root = sub_dir(&["graphs"]);
-    for cand in std::iter::once(base.to_string()).chain((2..).map(|i| format!("{base}-{i}"))) {
-        if !root.join(&cand).exists() {
-            return cand;
-        }
-    }
-    unreachable!()
-}
-
 // ---------- graph view（表现文档：布局/视口） ----------
 
 pub async fn get_view(id: &str) -> Option<GraphView> {
@@ -331,10 +321,7 @@ pub async fn serve_asset(axum::extract::Path(name): axum::extract::Path<String>)
             (
                 [
                     (header::CONTENT_TYPE, mime.to_string()),
-                    (
-                        header::CACHE_CONTROL,
-                        "public, max-age=31536000, immutable".into(),
-                    ),
+                    (header::CACHE_CONTROL, "no-cache".into()),
                 ],
                 bytes,
             )
@@ -793,7 +780,7 @@ pub async fn delete_global_store_file(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// GET /store/*path —— 全局库图片（immutable 缓存）
+/// GET /store/*path —— 全局库图片（覆盖后必须重新读取）
 pub async fn serve_global_store_file(
     axum::extract::Path(path): axum::extract::Path<String>,
 ) -> Response {
@@ -858,7 +845,7 @@ pub async fn read_graph_store_file(gid: &str, name: &str) -> Result<Vec<u8>, Str
         .map_err(|_| "图 store 里没有这个文件".into())
 }
 
-/// GET /gstore/{gid}/{name} —— 图私有 store 图片（immutable 缓存）
+/// GET /gstore/{gid}/{name} —— 图私有 store 图片
 pub async fn serve_graph_store_file(
     axum::extract::Path((gid, name)): axum::extract::Path<(String, String)>,
 ) -> Response {
@@ -871,7 +858,7 @@ pub async fn serve_graph_store_file(
     }
 }
 
-/// 图片响应（按扩展名取 mime + immutable 缓存）
+/// 图片响应（按扩展名取 mime，路径资源允许覆盖）
 fn image_response(name: &str, bytes: Vec<u8>) -> Response {
     let mime = match name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()) {
         Some(e) => match e.as_str() {
@@ -886,10 +873,7 @@ fn image_response(name: &str, bytes: Vec<u8>) -> Response {
     (
         [
             (header::CONTENT_TYPE, mime.to_string()),
-            (
-                header::CACHE_CONTROL,
-                "public, max-age=31536000, immutable".into(),
-            ),
+            (header::CACHE_CONTROL, "no-cache".into()),
         ],
         bytes,
     )

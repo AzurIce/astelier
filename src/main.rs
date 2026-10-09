@@ -34,7 +34,7 @@ fn cors_layer() -> CorsLayer {
 
 #[tokio::main]
 async fn main() {
-    let addr = std::env::var("ATLIER_ADDR").unwrap_or_else(|_| "127.0.0.1:8230".into());
+    let addr = std::env::var("ATELIER_ADDR").unwrap_or_else(|_| "127.0.0.1:8230".into());
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .expect("端口被占用");

@@ -97,7 +97,7 @@ test('validateRequest 校验模型、图片上限、数值范围与枚举取值'
 	assert.equal(validateRequest(profile, 'gpt-image-2', { ...base, mystery: { t: 'text', v: 'whatever' } }, 0), null)
 })
 
-test('coerceParamValue 按 /api/generate 的规则收窄标量', () => {
+test('coerceParamValue 按 /api/providers/{provider_id}/generate 的规则收窄标量', () => {
 	assert.deepEqual(coerceParamValue('hi'), { t: 'text', v: 'hi' })
 	assert.deepEqual(coerceParamValue(3), { t: 'number', v: 3 })
 	assert.deepEqual(coerceParamValue(true), { t: 'text', v: 'true' })

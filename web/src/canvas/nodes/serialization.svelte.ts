@@ -1,12 +1,11 @@
 // 节点参数的持久化与恢复，以及持久图片引用的提取。
-import { OPENAI_IMAGE_PARAMS } from '../../generation/params'
 import { ModelNode, PromptNode, LoadImageNode, GenerateNode, type NodeTypes } from './model.svelte'
 import type { ImageRef } from '../../images/types'
 
 /** 业务参数（影响执行结果的结构信息，存文档；不含 UI/运行时状态） */
 export function nodeParams(node: NodeTypes): Record<string, string | number | boolean | object | null> {
 	if (node instanceof ModelNode)
-		return { provider: node.provider, modelId: node.modelId }
+		return { providerBackendId: node.providerBackendId, provider: node.provider, modelId: node.modelId }
 	if (node instanceof PromptNode) return { text: node.text }
 	if (node instanceof LoadImageNode) return { images: node.images.filter((i) => !i.dataUrl).map((i) => ({ ...i })) }
 	if (node instanceof GenerateNode) return $state.snapshot(node.params)
@@ -15,6 +14,7 @@ export function nodeParams(node: NodeTypes): Record<string, string | number | bo
 
 export function applyParams(node: NodeTypes, params: Record<string, unknown>) {
 	if (node instanceof ModelNode) {
+		node.providerBackendId = String(params.providerBackendId ?? 'local')
 		node.provider = String(params.provider ?? '')
 		node.modelId = String(params.modelId ?? '')
 	} else if (node instanceof PromptNode) {
@@ -69,12 +69,7 @@ export function applyParams(node: NodeTypes, params: Record<string, unknown>) {
 			if (v === '' || v == null) continue
 			node.params[k] = typeof v === 'number' ? v : String(v)
 		}
-		// 始终完整发送：缺失的协议参数按档案默认补齐（老图 / 直连接口兜底，
-		// 与后端生成请求的归一化同规则）
-		for (const p of OPENAI_IMAGE_PARAMS) {
-			if (p.key in node.params) continue
-			node.params[p.key] = typeof p.def === 'number' ? p.def : String(p.def ?? '')
-		}
+
 	}
 }
 

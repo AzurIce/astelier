@@ -379,7 +379,7 @@ pub struct Viewport {
 
 /// 请求级校验：模型已选、图片总数上限、参数取值（按 profile 元数据）。
 /// 把缺失的协议参数补齐为档案默认值（「始终完整发送」）。
-/// UI 侧同样会填默认，这里是兜底：老图、直接调 /api/generate 的路径
+/// UI 侧同样会填默认，这里是兜底：老图、直接调 /api/providers/{provider_id}/generate 的路径
 /// 都保证发出的请求参数完整。text 类（default_value=None）不补。
 pub fn with_defaults(profile: &ModelProfile, params: &ParamMap) -> ParamMap {
     let mut out = params.clone();

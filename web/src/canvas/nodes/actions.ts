@@ -6,8 +6,8 @@
 import { rt } from '../runtime'
 import { connKeys } from './connections'
 import { imageRefsOf } from './serialization.svelte'
-import { scheduleSave, activeGraphId } from '../session.svelte'
-import { deleteGraphStoreFile } from '../../workspace/imageFiles'
+import { scheduleSave, activeGraph, flushNow } from '../session.svelte'
+import { backendStore } from '../../backends/registry.svelte'
 
 /**
  * 删除节点并级联清理相邻连线。
@@ -44,16 +44,19 @@ export async function releaseGraphStoreFiles(files: string[]): Promise<void> {
 
 /** 删除一组图内引用文件（跳过仍被其他节点引用的） */
 async function cleanupGraphStoreRefs(refs: Set<string>): Promise<void> {
-	const gid = activeGraphId()
+	const location = activeGraph()
+	const gid = location.id
+	const store = backendStore(location.backendId)
 	const editor = rt.editor
 	if (!gid || !editor) return
 	// 图内其余节点的现役引用
 	for (const n of editor.getNodes()) {
 		for (const f of imageRefsOf(n)) refs.delete(f)
 	}
+	try { await flushNow() } catch { return }
 	for (const name of refs) {
 		try {
-			await deleteGraphStoreFile(gid, name)
+			await store.deleteGraphStoreFile(gid, name)
 		} catch {
 			// 后台回收失败无碍：文件只是残留磁盘，下次删图会跟着清
 		}

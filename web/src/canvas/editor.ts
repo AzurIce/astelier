@@ -13,6 +13,7 @@ import EmptySocket from './nodes/components/EmptySocket.svelte'
 import { type Schemes, type AreaExtra } from './nodes/types'
 import { connKeys } from './nodes/connections'
 import { rt } from './runtime'
+import { canvasStructure } from './structure.svelte'
 import { refreshNodeSockets, removeNodeCascade } from './nodes/actions'
 import { graphSession, scheduleSave, scheduleViewSave } from './session.svelte'
 import { notifyPointer, selectConnection, removeSelectedConnection } from './interactions'
@@ -257,7 +258,7 @@ export function createEditor(container: HTMLElement) {
 	editor.addPipe((ctx) => {
 		if (structural.has(ctx.type)) {
 			scheduleSave()
-			rt.onStructureChange?.()
+			canvasStructure.revision++; rt.onStructureChange?.()
 		}
 		return ctx
 	})

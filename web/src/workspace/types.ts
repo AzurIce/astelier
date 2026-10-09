@@ -42,25 +42,6 @@ export interface GraphSummary {
 	updated_at: number
 }
 
-// ---------- Provider 配置（config.json） ----------
-
-export interface ProviderEntry {
-	id: string
-	name: string
-	/** 含 /v1 的根地址，如 https://api.openai.com/v1 */
-	base_url: string
-	/** 本地模式明文保存（可在设置里清除）；远端模式留在服务端 */
-	api_key: string
-	models: string[]
-	/** 模型档案覆盖（model_id → ModelProfile 子集） */
-	overrides: Record<string, unknown>
-}
-
-export interface ProviderConfig {
-	providers: ProviderEntry[]
-	active_provider: string
-}
-
 // ---------- 图片库（stores/） ----------
 
 export interface StoreFileEntry {

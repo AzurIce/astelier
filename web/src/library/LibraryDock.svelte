@@ -891,16 +891,18 @@
 		gap: 6px;
 		width: 78px;
 		height: 24px;
-		border: 1px solid var(--ui-border-fade);
+		border: none;
 		border-radius: var(--ui-r-control);
-		background: var(--ui-hover);
-		color: var(--ui-dim);
+		background: transparent;
+		color: var(--ui-text);
 		font: inherit;
 		font-size: 11px;
+		font-weight: 600;
 		cursor: pointer;
 		pointer-events: auto;
 	}
-	.dock-toggle:hover { color: var(--ui-accent); }
+	.dock-toggle:hover { color: var(--ui-accent); background: var(--ui-accent-weak); }
+	.dock-toggle:focus-visible { outline: 1px solid var(--ui-accent); outline-offset: 2px; }
 	.dock-toggle > :global(.ui-icon) { color: var(--ui-accent); }
 	.dock.collapsed .dock-toggle { height: 22px; border-bottom: none; border-radius: var(--ui-r-menu) var(--ui-r-menu) 0 0; background: var(--ui-panel); }
 	.expand-chevron { transform: rotate(180deg); }

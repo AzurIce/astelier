@@ -9,18 +9,18 @@ const entry = (path: string, updated_at?: number): ImportEntry => ({
 
 test('planImport 归类图/库/分组，拒绝穿越、越界与未知顶层', () => {
 	const plan = planImport([
-		entry('atelier/graphs/abc/graph.json'),
-		entry('atelier/graphs/abc/view.json'),
-		entry('atelier/graphs/abc/store/猫.png'),
+		entry('astelier/graphs/abc/graph.json'),
+		entry('astelier/graphs/abc/view.json'),
+		entry('astelier/graphs/abc/store/猫.png'),
 		entry('graphs/def/graph.json'),
-		entry('atelier/stores/角色/猫.png'),
-		entry('atelier/groups.json'),
+		entry('astelier/stores/角色/猫.png'),
+		entry('astelier/groups.json'),
 		entry('../evil.png'),
 		entry('/abs/x.png'),
-		entry('atelier/config.json'),
-		entry('atelier/runs/legacy.json'),
-		entry('atelier/graphs/bad../graph.json'),
-		entry('atelier/graphs/onlyview/view.json'),
+		entry('astelier/config.json'),
+		entry('astelier/runs/legacy.json'),
+		entry('astelier/graphs/bad../graph.json'),
+		entry('astelier/graphs/onlyview/view.json'),
 	])
 	assert.deepEqual(plan.graphs.map((g) => g.id).sort(), ['abc', 'def'])
 	assert.equal(plan.graphs.find((g) => g.id === 'abc')?.store.length, 1)
@@ -29,18 +29,18 @@ test('planImport 归类图/库/分组，拒绝穿越、越界与未知顶层', (
 	assert.equal(plan.library[0].path, '角色/猫.png')
 	assert.ok(plan.groups)
 	// config 不导入、runs 拒绝、无 graph.json 的目录不成图、路径穿越拒绝
-	assert.deepEqual(plan.rejected.filter((p) => !p.includes('onlyview') && p !== 'atelier/graphs/bad../graph.json').sort(), [
+	assert.deepEqual(plan.rejected.filter((p) => !p.includes('onlyview') && p !== 'astelier/graphs/bad../graph.json').sort(), [
 		'../evil.png',
 		'/abs/x.png',
-		'atelier/config.json',
-		'atelier/runs/legacy.json',
+		'astelier/config.json',
+		'astelier/runs/legacy.json',
 	])
-	assert.ok(plan.rejected.includes('atelier/graphs/bad../graph.json') || plan.graphs.every((g) => g.id !== 'bad..'))
+	assert.ok(plan.rejected.includes('astelier/graphs/bad../graph.json') || plan.graphs.every((g) => g.id !== 'bad..'))
 	assert.ok(!plan.graphs.some((g) => g.id === 'onlyview'))
 })
 
 test('zip directory entries preserve empty library folders without becoming files', () => {
-	const plan = planImport([entry('atelier/'), entry('atelier/stores/'), entry('atelier/stores/空目录/'), entry('atelier/graphs/abc/store/')])
+	const plan = planImport([entry('astelier/'), entry('astelier/stores/'), entry('astelier/stores/空目录/'), entry('astelier/graphs/abc/store/')])
 	assert.deepEqual(plan.directories, ['空目录'])
 	assert.equal(plan.library.length, 0)
 	assert.equal(plan.rejected.length, 0)

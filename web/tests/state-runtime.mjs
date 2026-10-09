@@ -1,5 +1,5 @@
 // Browser regression: real Svelte/Rete rendering against the real OPFS workspace.
-// The generator is stubbed and save failures are injected via window.__atelierRuntime
+// The generator is stubbed and save failures are injected via window.__astelierRuntime
 // (see main.ts); no provider/key is used and no /api request is made.
 import assert from 'node:assert/strict'
 import { pathToFileURL } from 'node:url'
@@ -8,7 +8,7 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(
 
 const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0S8AAAAASUVORK5CYII='
 const fixtureNodes = () => ([
-  { id: 'model', type: 'model', params: { provider: 'mock', modelId: 'gpt-image-2' } },
+  { id: 'model', type: 'model', params: { providerBackendId: 'local', provider: 'mock', modelId: 'gpt-image-2' } },
   { id: 'prompt', type: 'prompt', params: { text: 'Original prompt' } },
   { id: 'generate', type: 'generate', params: { n: 2, quality: 'low' } },
   { id: 'preview', type: 'preview', params: {} },
@@ -28,7 +28,7 @@ page.on('pageerror', (error) => pageErrors.push(error.message))
 await page.addInitScript(({ png }) => {
   window.__png = png
   window.__generateCalls = []
-  window.__atelierRuntime = {
+  window.__astelierRuntime = {
     generate: async (params) => {
       window.__generateCalls.push(JSON.parse(JSON.stringify(params)))
       if (window.__generateGate) await window.__generateGate.promise
@@ -64,12 +64,12 @@ const loadModules = async () => evaluate(async () => {
 try {
   // 首次加载：应用在空白 OPFS 上自动建种子图；随后种入带固定节点 id 的 A/B
   // 两张图（A 的视图带 legacy outputs），删掉种子图后刷新加载 A。
-  await page.goto(process.env.ATELIER_TEST_URL ?? 'http://127.0.0.1:5173')
+  await page.goto(process.env.ASTELIER_TEST_URL ?? 'http://127.0.0.1:5173')
   await page.waitForSelector('.ui-node')
   const ids = await evaluate(async ({ png, nodes, edges }) => {
     const api = (await import('/src/backends/registry.svelte.ts')).backendStore('local')
     const fs = await import('/src/workspace/opfs/fs.ts')
-    const seedId = JSON.parse(localStorage.getItem('atelier-active-graph') ?? 'null')?.id
+    const seedId = JSON.parse(localStorage.getItem('astelier-active-graph') ?? 'null')?.id
     await (await import('/src/generation/localConfig.ts')).saveLocalConfig({ active_provider: 'mock', providers: [{ id: 'mock', name: 'Mock', models: ['gpt-image-2'], base_url: 'https://mock.example/v1', api_key: 'sk-fake', overrides: {} }] })
     const idA = (await api.createGraph(null, 'Graph A')).id
     const idB = (await api.createGraph(null, 'Graph B')).id
@@ -82,7 +82,7 @@ try {
       outputs: { generate: png, preview: png },
     })
     if (seedId && seedId !== idA && seedId !== idB) await api.deleteGraph(seedId)
-    localStorage.setItem('atelier-active-graph', JSON.stringify({ backendId: 'local', id: idA }))
+    localStorage.setItem('astelier-active-graph', JSON.stringify({ backendId: 'local', id: idA }))
     return { idA, idB }
   }, { png, nodes: fixtureNodes(), edges: fixtureEdges() })
 

@@ -26,10 +26,10 @@ const DATA_DIR: &str = "data";
 
 static STORE_LOCK: Mutex<()> = Mutex::const_new(());
 
-/// 数据根目录。可用 ATELIER_DATA_DIR 覆盖（多实例隔离 / 测试用），
+/// 数据根目录。可用 ASTELIER_DATA_DIR 覆盖（多实例隔离 / 测试用），
 /// 默认 data/。注意多个实例共用同一目录时互相对彼此的图和图片库可见。
 fn dir() -> PathBuf {
-    let root = std::env::var("ATELIER_DATA_DIR").unwrap_or_else(|_| DATA_DIR.to_string());
+    let root = std::env::var("ASTELIER_DATA_DIR").unwrap_or_else(|_| DATA_DIR.to_string());
     Path::new(&root).to_path_buf()
 }
 
@@ -373,7 +373,7 @@ fn sniff_dimensions(bytes: &[u8]) -> (Option<u32>, Option<u32>) {
 //                                 删图不动它；由用户显式删。
 //   data/graphs/{gid}/store/     图私有：内联感知，UI 零暴露。删图级联删。
 //
-// 两层都是「受控命名空间」：目录名 = 显示名，manifest.json 存 w/h/bytes，
+// 两层都是「受控命名空间」：文件名 = 显示名，尺寸从文件头读取，
 // 引用是相对文件名。画布节点只引用图私有层；全局库与画布之间经
 // 「拖入即复制」打通（复制进 graphs/{gid}/store/ 后被节点引用）。
 
@@ -453,7 +453,6 @@ async fn remove_store_file(root: &std::path::Path, name: &str) -> Result<(), Str
 
 /// 列出目录下全部图片（磁盘即唯一真相：逐文件读头 sniff 尺寸，按名排序）
 pub async fn list_store_files(root: &std::path::Path) -> Vec<StoreFile> {
-    drop_legacy_manifest(root).await;
     let mut out: Vec<StoreFile> = Vec::new();
     if let Ok(mut rd) = tokio::fs::read_dir(root).await {
         while let Ok(Some(entry)) = rd.next_entry().await {
@@ -482,16 +481,9 @@ async fn sniff_dimensions_file(path: &std::path::Path) -> (Option<u32>, Option<u
     sniff_dimensions(&buf[..n])
 }
 
-/// 一次性清理 legacy manifest.json：早期版本库有独立的 manifest，造成
-/// 「磁盘改了名 manifest 还是旧 key」的双事实来源；现在磁盘即真相，见到就删。
-async fn drop_legacy_manifest(root: &std::path::Path) {
-    let _ = tokio::fs::remove_file(root.join("manifest.json")).await;
-}
-
 // ---------- 全局库（data/stores/，层级：任意深度子目录） ----------
 //
-// 单个根 manifest.json（key = 相对路径，如 "角色/猫.png"）只提供 w/h 覆盖；
-// 目录与文件以递归走磁盘为准（外部直接放入的文件也能被拾取）。
+// 目录与文件以递归走磁盘为准，尺寸从文件头读取，外部放入的图片也能被拾取。
 
 /// 库条目：目录或图片（前端据此建树 + 网格）
 #[derive(Serialize, Clone, Debug)]
@@ -564,7 +556,6 @@ pub fn safe_store_path(path: &str) -> Option<String> {
 /// 列全树：磁盘即唯一真相（逐文件 sniff 尺寸）
 pub async fn list_global_store() -> StoreTree {
     let root = stores_root();
-    drop_legacy_manifest(&root).await;
     let mut dirs: Vec<String> = Vec::new();
     let mut files: Vec<StoreFileEntry> = Vec::new();
     collect_tree(&root, "", &mut dirs, &mut files).await;
@@ -588,9 +579,6 @@ async fn collect_tree(
     };
     while let Ok(Some(entry)) = rd.next_entry().await {
         let name = entry.file_name().to_string_lossy().to_string();
-        if name == "manifest.json" {
-            continue;
-        }
         let child_rel = if rel.is_empty() {
             name.clone()
         } else {
@@ -690,7 +678,7 @@ pub async fn make_global_store_dir(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 重命名 / 移动：文件或目录整体搬到新相对路径。manifest 同步改 key。
+/// 重命名 / 移动：文件或目录整体搬到新相对路径。
 pub async fn move_global_store_path(from: &str, to: &str) -> Result<(), String> {
     let from = resolve_store_dir_path(from).ok_or("源路径不合法")?;
     let to = resolve_store_dir_path(to).ok_or("目标路径不合法")?;
@@ -749,7 +737,7 @@ fn resolve_store_dir_path(path: &str) -> Option<String> {
     Some(out.join("/"))
 }
 
-/// 删除文件或目录（目录递归）；manifest 同步清理（含子文件前缀）。
+/// 删除文件或目录（目录递归）。
 pub async fn delete_global_store_file(name: &str) -> Result<(), String> {
     // 文件路径（带扩展名）或目录路径都接受
     let rel = if safe_store_path(name).is_some() {
@@ -774,7 +762,7 @@ pub async fn delete_global_store_file(name: &str) -> Result<(), String> {
                 .map_err(|e| format!("删除文件失败：{e}"))?;
         }
         Err(_) => {
-            // 磁盘上已不存在：可能是 manifest 残留，继续清 manifest
+            // 删除不存在的路径视为成功。
         }
     }
     Ok(())
@@ -885,7 +873,7 @@ pub(crate) mod store_tests {
     use super::*;
 
     /// 测试全部走独立数据目录，绝不碰真实 data/。
-    /// ATELIER_DATA_DIR 是进程级环境变量、多个 #[tokio::test] 并行跑会互相踩，
+    /// ASTELIER_DATA_DIR 是进程级环境变量、多个 #[tokio::test] 并行跑会互相踩，
     /// 故用全局锁串行化（曾出现「这轮失败下轮又过」的灵异现象，根因就在此）。
     /// 返回的 guard 必须活到测试结束（`let (p, _g) = use_tmp(..)`）：一旦提前松手，
     /// 后来的测试会永远排在锁上，整个 cargo test 挂住。
@@ -893,10 +881,10 @@ pub(crate) mod store_tests {
 
     pub(crate) fn use_tmp(tag: &str) -> (std::path::PathBuf, std::sync::MutexGuard<'static, ()>) {
         let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let p = std::env::temp_dir().join(format!("atelier-store-{}-{}", tag, std::process::id()));
+        let p = std::env::temp_dir().join(format!("astelier-store-{}-{}", tag, std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
-        unsafe { std::env::set_var("ATELIER_DATA_DIR", &p) };
+        unsafe { std::env::set_var("ASTELIER_DATA_DIR", &p) };
         (p, guard)
     }
 
@@ -975,7 +963,7 @@ pub(crate) mod store_tests {
         // 禁移入自身子目录
         assert!(move_global_store_path("猫", "猫/子").await.is_err());
 
-        // 删目录递归（同时清 manifest 前缀）
+        // 删目录递归
         delete_global_store_file("猫").await.unwrap();
         let t3 = list_global_store().await;
         assert!(!t3.files.iter().any(|f| f.path.starts_with("猫/")));
@@ -1004,7 +992,7 @@ pub(crate) mod store_tests {
         assert!(t6.files.iter().any(|f| f.path == "外部/改名后.png"));
         assert!(!t6.files.iter().any(|f| f.path == "外部/x.png"));
 
-        // legacy manifest.json：一次性清理（双事实来源时代的残留）
+        // 非图片文件不参与图片库枚举，读取不修改磁盘。
         std::fs::write(
             tmp.join("stores/manifest.json"),
             r#"{"files":{"幽灵.png":{"name":"幽灵.png","bytes":1}}}"#,
@@ -1016,8 +1004,8 @@ pub(crate) mod store_tests {
             "manifest 不得再作为数据来源"
         );
         assert!(
-            !tmp.join("stores/manifest.json").exists(),
-            "legacy manifest 应被清理"
+            tmp.join("stores/manifest.json").exists(),
+            "枚举图片库不得删除其他文件"
         );
 
         // 静态服务：层级路径（改名后的新路径）+ 缓存头；旧路径 404
@@ -1075,9 +1063,9 @@ pub(crate) mod store_tests {
     #[tokio::test]
     async fn graph_store_same_name_never_overwrites() {
         // 只测「同名不互相覆盖」的判定（显式 root，不碰 data/：
-        // 不设 ATELIER_DATA_DIR，免得和其他测试抢进程级环境变量）
+        // 不设 ASTELIER_DATA_DIR，免得和其他测试抢进程级环境变量）
         let root =
-            std::env::temp_dir().join(format!("atelier-gstore-collide-{}", std::process::id()));
+            std::env::temp_dir().join(format!("astelier-gstore-collide-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let first = b"first".to_vec();
@@ -1085,7 +1073,7 @@ pub(crate) mod store_tests {
 
         // 还没有 dup.png：落原名
         put_store_file(&root, "dup.png", &first).await.unwrap();
-        // 已存在 → 让位 dup-2.png（manifest 与磁盘都算占用）
+        // 已存在 → 让位 dup-2.png
         assert_eq!(free_store_name(&root, "dup.png").await, "dup-2.png");
         put_store_file(&root, "dup-2.png", &second).await.unwrap();
         put_store_file(&root, "dup-3.png", &second).await.unwrap();

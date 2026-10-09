@@ -1,4 +1,4 @@
-// 工作区导入/导出：把整个 OPFS 工作区（atelier/）打包为 zip 下载，
+// 工作区导入/导出：把整个 OPFS 工作区（astelier/）打包为 zip 下载，
 // 或从 zip 合并导入。这是账号体系出现前数据离开浏览器的唯一通道，
 // 也是换设备/换域名迁移的保底。
 //
@@ -36,7 +36,7 @@ export interface ImportPlan {
 	rejected: string[]
 }
 
-/** zip 条目路径校验与归类；接受带或不带 atelier/ 前缀 */
+/** zip 条目路径校验与归类；接受带或不带 astelier/ 前缀。 */
 export function planImport(entries: ImportEntry[]): ImportPlan {
 	const plan: ImportPlan = { graphs: [], library: [], directories: [], rejected: [] }
 	const bundles = new Map<string, GraphBundle>()
@@ -47,7 +47,7 @@ export function planImport(entries: ImportEntry[]): ImportPlan {
 			plan.rejected.push(entry.path)
 			continue
 		}
-		const rel = segs[0] === 'atelier' ? segs.slice(1) : segs
+		const rel = segs[0] === WORKSPACE_ROOT[0] ? segs.slice(1) : segs
 		if (directory) {
 			if (rel[0] === 'stores' && rel.length > 1) plan.directories.push(rel.slice(1).join('/'))
 			continue
@@ -126,9 +126,9 @@ async function collectDir(dir: FsPath, prefix: string, out: Record<string, Uint8
 
 export async function exportWorkspaceZip(): Promise<string> {
 	const files: Record<string, Uint8Array> = {}
-	await withFsLock(() => collectDir(WORKSPACE_ROOT, 'atelier/', files))
+	await withFsLock(() => collectDir(WORKSPACE_ROOT, 'astelier/', files))
 	const zipped = zipSync(files)
-	const name = `atelier-workspace-${new Date().toISOString().slice(0, 19).replaceAll(/[:T]/g, '-')}.zip`
+	const name = `astelier-workspace-${new Date().toISOString().slice(0, 19).replaceAll(/[:T]/g, '-')}.zip`
 	const url = URL.createObjectURL(new Blob([zipped], { type: 'application/zip' }))
 	const anchor = document.createElement('a')
 	anchor.href = url

@@ -14,6 +14,9 @@ Server；图会话与生图执行不依赖全局活动后端。
 | `library/` | `LibraryDock.svelte` 汇总各后端目录根并浏览所选来源；`transfer.ts` 显式跨后端复制文件 / 目录 |
 | `ui/` | 通用控件、主题、确认框、消息与图片预览 |
 
+`settings.ts` 定义设备 localStorage 键和读取方法，保持零依赖；主题、后端注册表和
+图会话共同使用它，避免模块求值循环。启动直接装配当前工作区，不执行历史迁移。
+
 依赖规则：
 
 - `WorkspaceStore` 只负责图、View、分组、库与图内参考图。调用方拿到明确后端实例，
@@ -29,5 +32,5 @@ Server；图会话与生图执行不依赖全局活动后端。
   Svelte runes 模块使用 `.svelte.ts`。
 - `ui/` 不依赖业务模块；不保留旧工作区切换、全局 API 包装和旧路径兼容入口。
 
-`window.__atelierRuntime` 仅供浏览器测试包装存储失败和注入替身生图器。正常应用不注入。
+`window.__astelierRuntime` 仅供浏览器测试包装存储失败和注入替身生图器。正常应用不注入。
 开发与完整验证命令见根目录 [README](../README.md#架构与验证)。

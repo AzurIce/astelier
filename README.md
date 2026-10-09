@@ -1,4 +1,4 @@
-# Atelier · 生成式艺术工作台
+# Astelier · 生成式艺术工作台
 
 Svelte 5 + Rete.js 2 节点图创作工具。Model / Prompt / Image / Generate / Preview
 节点在浏览器中完成参数编辑、参考图装配与拓扑执行。前端可以独立部署为静态 HTTPS 站点。
@@ -24,7 +24,7 @@ Svelte 5 + Rete.js 2 节点图创作工具。Model / Prompt / Image / Generate /
 
 Provider 与图的存储位置独立：本地图可以使用服务器 Provider，服务器图也可以使用
 浏览器 Provider。Model 节点按来源分组选择，并保存 `providerBackendId`、`provider`、
-`modelId`。旧图缺少来源字段时，载入按图所属后端补齐，后续保存写入明确来源。
+`modelId`。新图明确保存模型来源，执行不会推断或回落到其他后端。
 
 | 类型 | 配置 / 密钥位置 | 上游执行位置 |
 | --- | --- | --- |
@@ -34,8 +34,7 @@ Provider 与图的存储位置独立：本地图可以使用服务器 Provider�
 `GET /api/providers` 只返回 Provider ID、名称、模型与参数档案；不返回凭证或上游
 地址。参数控件由所选 Provider 的模型档案派生。服务器执行使用
 `POST /api/providers/{provider_id}/generate`，不依赖图所属后端，也不会回落到其他
-Provider。旧 `/api/config`、通用 `/api/generate` 和 override 管理入口已删除；Server
-配置通过文件管理。
+Provider。Server 配置通过文件管理。
 
 浏览器在提交时固定图会话、节点、Provider 执行器、参数与参考图快照。参考图解析成
 实际图片数据，远端请求携带 data URL，不要求服务器读取浏览器 blob URL 或其他
@@ -52,7 +51,7 @@ Graph 保存节点、参数、连线；View 保存布局和视口。自动保存
 档案，也不在保存图文档时自动归档生成图片。
 
 ```text
-atelier/                       浏览器站点私有 OPFS
+astelier/                      浏览器站点私有 OPFS
 ├── config.json                Local Provider 配置与明文 key
 ├── groups.json
 ├── graphs/{uuid}/
@@ -70,10 +69,25 @@ atelier/                       浏览器站点私有 OPFS
 Provider 配置与密钥**。导入图按 `updated_at` 合并，分组按 ID 并集，库按路径覆盖。
 图内参考图恢复和完整 OPFS 往返已由真实浏览器测试覆盖。
 
+## GitHub Pages 部署
+
+[Pages workflow](.github/workflows/pages.yml) 在推送到 `main` 时部署，也可以在 Actions
+页面手动触发。先在仓库 **Settings → Pages → Build and deployment → Source** 选择
+**GitHub Actions**。仓库套餐需要支持当前仓库可见性的 Pages 托管。
+
+Workflow 使用 Node 24 与 Bun 1.4.2，按锁文件安装依赖，运行类型检查和单元测试，
+再构建、上传 `web/dist` 并部署。资源基础路径由 Pages 配置提供，适用于仓库子路径、
+用户主页和自定义域名；本地开发与 Rust 静态托管默认仍使用 `/`。
+
+部署产物只包含前端，不包含 `data/`、Provider 配置或 Rust 服务。页面使用自己的
+OPFS 工作区，也可以在后端管理中连接已有 Rust Server。Pages 使用 HTTPS，公网
+Server 也应提供 HTTPS 并允许站点来源的 CORS；可用 `ASTELIER_CORS_ORIGINS` 配置。
+本机 / 局域网服务的访问还取决于浏览器的本地网络权限。
+
 ## Server 配置
 
 ```text
-data/                         ATELIER_DATA_DIR 可覆盖
+data/                         ASTELIER_DATA_DIR 可覆盖
 ├── backend.json               自动创建的稳定后端身份
 ├── config.json                Server Provider 配置
 ├── groups.json
@@ -107,10 +121,10 @@ data/                         ATELIER_DATA_DIR 可覆盖
 
 ```sh
 export TEAM_IMAGE_KEY_2='your-key'
-ATELIER_DATA_DIR=/path/to/data ATELIER_ADDR=127.0.0.1:8230 just serve
+ASTELIER_DATA_DIR=/path/to/data ASTELIER_ADDR=127.0.0.1:8230 just serve
 ```
 
-服务默认允许跨域；可通过 `ATELIER_CORS_ORIGINS="https://a,https://b"` 限定来源。
+服务默认允许跨域；可通过 `ASTELIER_CORS_ORIGINS="https://a,https://b"` 限定来源。
 当前 Rust 服务面向单用户，未加入账号鉴权。
 
 ## Server API
@@ -153,14 +167,22 @@ bun run build
 ```sh
 PLAYWRIGHT_MODULE=/path/to/playwright-core/index.mjs \
 CHROMIUM_PATH=/path/to/chromium \
-ATELIER_TEST_URL=http://127.0.0.1:5173 \
+ASTELIER_TEST_URL=http://127.0.0.1:5173 \
 bun run test:browser
 ```
 
 `state-runtime.mjs` 用真实 OPFS 与替身生图器验证响应式、自动保存、收藏与失败时序。
 `backends.mjs` 自动启动两套真实 Rust 服务（独立临时数据目录）及受控生图上游，验证
 多来源同名资源、Local / Remote 交叉执行、环境密钥、跨源参考图与库复制、会话隔离、
-连接恢复 / 移除 / 离线，以及真实 OPFS zip 往返。可用 `ATELIER_SERVER_BIN` 指定服务端
+连接恢复 / 移除 / 离线，以及真实 OPFS zip 往返。可用 `ASTELIER_SERVER_BIN` 指定服务端
 二进制；测试不访问外部 provider，不使用用户数据或真实密钥。
 
-历史静态实验保留在 [poke-image-studio](poke-image-studio/)。旧 Run 历史目录不再读取。
+## 命名与数据格式
+
+项目名为 **Astelier**（`astelier`）。二进制、crate、浏览器存储命名空间和 zip 导出
+根目录均使用 `astelier`；服务环境变量使用 `ASTELIER_*`，图片拖拽类型使用
+`application/x-astelier-*`。应用只读取当前格式，不执行旧名称或旧文档的自动迁移。
+
+Model 节点保存明确的后端来源；Image 节点只保存 `images[]` 相对文件引用。图片库
+从磁盘枚举图片和读取尺寸，不维护或自动删除 manifest。旧配方与运行历史不属于
+当前工作区；需要保留的内容应先整理为图和库图片，原始记录独立备份。

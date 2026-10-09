@@ -1,5 +1,5 @@
 // WorkspaceStore 的远端 HTTP 实现：对接现有 Rust 服务 /api/*，
-// 语义与旧版直连 fetch 模块一致。图片 URL 为服务端绝对地址；
+// 图片 URL 为服务端绝对地址；
 // 密钥、档案校验与参考图解析都在服务端完成。
 import type { GraphDoc, GraphDocWithId, GraphGroup, GraphSummary, StoreFileEntry, StoreTree, ViewDoc } from './types'
 import type { WorkspaceStore } from './store'

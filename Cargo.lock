@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "atelier"
+name = "astelier"
 version = "0.1.0"
 dependencies = [
  "axum",

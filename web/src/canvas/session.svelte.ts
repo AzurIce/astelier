@@ -5,8 +5,8 @@ import { backendStore, backend, connectBackend, removeBackend } from '../backend
 import { LOCAL_BACKEND_ID } from '../backends/connections'
 import { rt, runningNodes } from './runtime'
 import { SaveQueue, type SaveState } from './saveQueue'
+import { GRAPH_KEY, readSetting } from '../settings'
 
-const KEY = 'atelier-active-graph'
 export const graphSession = $state({ backendId: LOCAL_BACKEND_ID, id: '', title: '未命名图', saveState: 'saved' as SaveState, loading: false, epoch: 0 })
 let restoring = false
 
@@ -26,7 +26,7 @@ function setActiveGraph(location: GraphLocation, title: string): void {
 	graphSession.backendId = location.backendId
 	graphSession.id = location.id
 	graphSession.title = title
-	localStorage.setItem(KEY, JSON.stringify(location))
+	localStorage.setItem(GRAPH_KEY, JSON.stringify(location))
 }
 
 async function restore(backendId: string, doc: GraphDocWithId, view?: ViewDoc): Promise<void> {
@@ -46,7 +46,7 @@ export async function ensureGraphAndLoad(): Promise<GraphDocWithId> {
 	try {
 		let location: GraphLocation | null = null
 		try {
-			const parsed = JSON.parse(localStorage.getItem(KEY) ?? 'null')
+			const parsed = JSON.parse(readSetting(GRAPH_KEY) ?? 'null')
 			if (typeof parsed?.backendId === 'string' && typeof parsed?.id === 'string') { backend(parsed.backendId); location = parsed }
 		} catch { /* Invalid preferences use local storage. */ }
 		let doc: GraphDocWithId | null = null

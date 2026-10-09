@@ -2,7 +2,8 @@
 	import { backendRegistry, connectBackend } from '../backends/registry.svelte'
 	import BackendGraphs from './BackendGraphs.svelte'
 	import Icon from '../ui/Icon.svelte'
-	let width = $state(Number(localStorage.getItem('atelier-sidebar-w')) || 244)
+	import { SIDEBAR_WIDTH_KEY as WIDTH_KEY, readSetting } from '../settings'
+	let width = $state(Number(readSetting(WIDTH_KEY)) || 244)
 	let resizing = $state(false)
 	const children = new Map<string, BackendGraphs>()
 	let { onManage }: { onManage: () => void } = $props()
@@ -13,7 +14,7 @@
 		const start = e.clientX, initial = width
 		resizing = true
 		const move = (ev: PointerEvent) => { width = Math.max(180, Math.min(480, initial + ev.clientX - start)) }
-		const up = () => { resizing = false; localStorage.setItem('atelier-sidebar-w', String(width)); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
+		const up = () => { resizing = false; localStorage.setItem(WIDTH_KEY, String(width)); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
 		window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
 	}
 </script>
@@ -30,7 +31,7 @@
 		{/each}
 	</div>
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="resizer" onpointerdown={resize} ondblclick={() => { width = 244; localStorage.setItem('atelier-sidebar-w', '244') }}></div>
+	<div class="resizer" onpointerdown={resize} ondblclick={() => { width = 244; localStorage.setItem(WIDTH_KEY, '244') }}></div>
 </aside>
 <style>
 	.sidebar { position: relative; flex: none; display: flex; flex-direction: column; min-height: 0; background: var(--ui-panel); border-right: 1px solid var(--ui-border-fade); }

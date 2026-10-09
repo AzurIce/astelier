@@ -53,7 +53,7 @@
 <div class="topbar">
 	<div class="brand">
 		<Icon name="logo" size={17} />
-		<span>Atelier</span>
+		<span>Astelier</span>
 	</div>
 	<div class="divider"></div>
 

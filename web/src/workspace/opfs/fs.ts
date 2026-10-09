@@ -8,7 +8,7 @@
 export type FsPath = string[]
 
 /** 工作区在 OPFS 根下的命名空间（同源多应用互不干扰） */
-export const WORKSPACE_ROOT: FsPath = ['atelier']
+export const WORKSPACE_ROOT: FsPath = ['astelier']
 
 export async function opfsRoot(): Promise<FileSystemDirectoryHandle> {
 	return navigator.storage.getDirectory()
@@ -70,7 +70,7 @@ export async function readJson<T>(path: FsPath): Promise<T | null> {
  */
 export async function withFsLock<T>(fn: () => Promise<T>): Promise<T> {
 	if (typeof navigator !== 'undefined' && 'locks' in navigator) {
-		return navigator.locks.request('atelier-opfs-write', fn)
+		return navigator.locks.request('astelier-opfs-write', fn)
 	}
 	return fn()
 }

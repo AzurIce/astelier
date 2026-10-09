@@ -18,6 +18,6 @@ test('connections retain stable IDs, one local root and distinct server roots', 
 })
 
 test('server URLs reject credentials, query strings and unsupported protocols', () => {
-	assert.equal(normalizeServerUrl(' https://server.example/atelier/ '), 'https://server.example/atelier')
+	assert.equal(normalizeServerUrl(' https://server.example/astelier/ '), 'https://server.example/astelier')
 	for (const url of ['ftp://server.example', 'https://user:secret@server.example', 'https://server.example?key=secret', 'https://server.example#fragment']) assert.throws(() => normalizeServerUrl(url))
 })

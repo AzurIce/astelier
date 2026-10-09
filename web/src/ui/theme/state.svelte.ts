@@ -3,23 +3,21 @@
 // 读 `design.skin` / `design.mode` / `design.tokens`，切 `design.setSkin(id)` /
 // `design.toggleMode()`。切换即写入 CSS 自定义属性（--ui-*）。
 import { skinById, type Mode, type Skin, type TokenSet } from './tokens'
-
-const SKIN_KEY = 'atelier-skin'
-const MODE_KEY = 'atelier-mode'
+import { MODE_KEY, SKIN_KEY, readSetting } from '../../settings'
 
 function readInitialSkin(): Skin {
 	if (typeof localStorage === 'undefined') return skinById('studio')
 	// ?skin=aurora 临时覆盖（调试 / 分享外观，不落盘）
 	const q = new URLSearchParams(location.search).get('skin')
 	if (q) return skinById(q)
-	return skinById(localStorage.getItem(SKIN_KEY) ?? '')
+	return skinById(readSetting(SKIN_KEY) ?? '')
 }
 
 function readInitialMode(): Mode {
 	if (typeof localStorage === 'undefined') return 'dark'
 	const q = new URLSearchParams(location.search).get('mode')
 	if (q === 'light' || q === 'dark') return q
-	const stored = localStorage.getItem(MODE_KEY)
+	const stored = readSetting(MODE_KEY)
 	if (stored === 'light' || stored === 'dark') return stored
 	return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
 }
@@ -127,7 +125,7 @@ export const design = {
 // 用户未显式选过明暗时，跟随系统
 if (typeof window !== 'undefined') {
 	window.matchMedia?.('(prefers-color-scheme: light)').addEventListener?.('change', (e) => {
-		if (localStorage.getItem(MODE_KEY)) return
+		if (readSetting(MODE_KEY)) return
 		design.setMode(e.matches ? 'light' : 'dark')
 	})
 }

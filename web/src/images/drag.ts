@@ -9,9 +9,9 @@ export interface DragImagePayload {
 	h?: number
 }
 
-export const IMAGE_DRAG_MIME = 'application/x-atelier-images'
-export const STORE_DRAG_MIME = 'application/x-atelier-store'
-export const IMAGE_ORDER_MIME = 'application/x-atelier-image-order'
+export const IMAGE_DRAG_MIME = 'application/x-astelier-images'
+export const STORE_DRAG_MIME = 'application/x-astelier-store'
+export const IMAGE_ORDER_MIME = 'application/x-astelier-image-order'
 
 /** 图片列表保留元信息；普通 URI 作为浏览器 / 外部应用的回退。 */
 export function writeImageDrag(transfer: DataTransfer, images: DragImagePayload[]): void {
@@ -28,13 +28,14 @@ function imageUrl(value: unknown): value is string {
 export function readImageDrag(transfer: Pick<DataTransfer, 'getData'>): DragImagePayload[] {
 	let images: DragImagePayload[] = []
 	try {
-		const payload: unknown = JSON.parse(transfer.getData(IMAGE_DRAG_MIME) || 'null')
+		const raw = transfer.getData(IMAGE_DRAG_MIME) || 'null'
+		const payload: unknown = JSON.parse(raw)
 		if (Array.isArray(payload)) {
 			images = payload.filter((item): item is DragImagePayload =>
 				item?.kind === 'store' && imageUrl(item.url) && typeof item.file === 'string',
 			)
 		}
-	} catch { /* 旧版本或外部应用仍可以走 URI 列表 */ }
+	} catch { /* 坏载荷仍可以走外部应用的 URI 列表。 */ }
 	if (!images.length) {
 		const raw = transfer.getData('text/uri-list') || transfer.getData('text/plain')
 		images = raw.split(/\r?\n/).map((url) => url.trim())

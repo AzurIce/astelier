@@ -24,7 +24,7 @@ export function sourceName(source: ImageSource): string {
 	let raw = source.image.file
 	if (!raw) {
 		if (/^(data:|blob:)/i.test(source.image.url)) return 'image.png'
-		try { raw = new URL(source.image.url, 'http://atelier.local').pathname }
+		try { raw = new URL(source.image.url, 'http://astelier.local').pathname }
 		catch { return 'image.png' }
 	}
 	try { return decodeURIComponent(raw.split('/').pop() || 'image.png') }

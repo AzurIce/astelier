@@ -309,8 +309,6 @@ pub enum NodeType {
     Prompt,
     Image,
     Generate,
-    /// 图库节点：不参与执行，只是显式资产库的落点
-    Store,
     Preview,
 }
 
@@ -557,10 +555,7 @@ mod tests {
     }
 
     #[test]
-    fn param_value_serde_roundtrip_and_compat() {
-        // 旧数据格式（内部标签的 unset）必须仍可读
-        let old: ParamValue = serde_json::from_str(r#"{"t":"unset"}"#).unwrap();
-        assert_eq!(old, ParamValue::Unset);
+    fn param_value_serde_roundtrip() {
         // 带值变体必须可序列化（此前内部标签下会直接 Err 导致静默丢写）
         for v in [
             ParamValue::Text("hello".into()),

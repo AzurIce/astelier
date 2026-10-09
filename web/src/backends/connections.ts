@@ -1,7 +1,6 @@
 import type { BackendConfig } from './types'
 
 export const LOCAL_BACKEND_ID = 'local'
-export const CONNECTIONS_KEY = 'atelier-backends'
 export const LOCAL_BACKEND: BackendConfig = { id: LOCAL_BACKEND_ID, name: '本地', kind: 'opfs' }
 
 export function normalizeServerUrl(raw: string): string {

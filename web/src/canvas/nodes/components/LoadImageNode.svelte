@@ -144,10 +144,12 @@
 	function sortTarget(node: HTMLElement, initial: { file: string; index: number }) {
 		let target = initial
 		function over(e: DragEvent) {
-			if (!dragging || !e.dataTransfer?.types.includes(IMAGE_ORDER_MIME)) return
+			const transfer = e.dataTransfer
+			const orderTypes = transfer?.types ?? []
+		if (!dragging || !transfer || !orderTypes.includes(IMAGE_ORDER_MIME)) return
 			e.preventDefault()
 			e.stopPropagation()
-			e.dataTransfer.dropEffect = 'move'
+			transfer.dropEffect = 'move'
 			sortOver = target.file === dragging ? null : target.file
 		}
 		function leave(e: DragEvent) {

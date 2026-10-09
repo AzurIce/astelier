@@ -14,9 +14,9 @@ const WEB_DIST: &str = "web/dist";
 
 /// 跨域：前端可作为纯静态站点部署在其他源上，把本服务选为「远端工作区」。
 /// 默认放开全部来源（单用户本地工具、无鉴权，CORS 不构成额外暴露）；
-/// 暴露公网时用 ATELIER_CORS_ORIGINS="https://a,https://b" 收紧。
+/// 暴露公网时用 ASTELIER_CORS_ORIGINS="https://a,https://b" 收紧。
 fn cors_layer() -> CorsLayer {
-    let Ok(list) = std::env::var("ATELIER_CORS_ORIGINS") else {
+    let Ok(list) = std::env::var("ASTELIER_CORS_ORIGINS") else {
         return CorsLayer::permissive();
     };
     let origins = list
@@ -34,7 +34,7 @@ fn cors_layer() -> CorsLayer {
 
 #[tokio::main]
 async fn main() {
-    let addr = std::env::var("ATELIER_ADDR").unwrap_or_else(|_| "127.0.0.1:8230".into());
+    let addr = std::env::var("ASTELIER_ADDR").unwrap_or_else(|_| "127.0.0.1:8230".into());
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .expect("端口被占用");
@@ -57,6 +57,6 @@ async fn main() {
         .layer(axum::extract::DefaultBodyLimit::max(128 * 1024 * 1024))
         .layer(cors_layer());
 
-    println!("atelier → http://{addr}（API /api · 资产 /asset · 前端 {WEB_DIST}）");
+    println!("astelier → http://{addr}（API /api · 资产 /asset · 前端 {WEB_DIST}）");
     axum::serve(listener, app).await.unwrap();
 }

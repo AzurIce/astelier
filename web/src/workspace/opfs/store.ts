@@ -1,6 +1,6 @@
 // WorkspaceStore 的 OPFS 实现。目录结构沿用原 Rust 服务 data/ 布局：
 //
-//   atelier/
+//   astelier/
 //   ├── config.json            Provider 配置（key 明文，设置里可清除）
 //   ├── groups.json            图分组
 //   ├── graphs/{uuid}/
@@ -14,6 +14,7 @@
 // store.rs / api.rs，逐条对齐；磁盘即唯一事实来源，无索引清单。
 import type { GraphDoc, GraphDocWithId, GraphGroup, GraphSummary, StoreFileEntry, ViewDoc, DocNode, DocEdge } from '../types'
 import type { WorkspaceStore } from '../store'
+import { LOCAL_BACKEND_ID } from '../../backends/connections'
 import { readLocalConfigUnlocked } from '../../generation/localConfig'
 import { sniffDimensions } from '../../images/sniff'
 
@@ -143,7 +144,6 @@ async function collectTree(dir: FsPath, rel: string, dirs: string[], files: Stor
 		await collectTree([...dir, name], childRel, dirs, files, budget)
 	}
 	for (const name of entries.files) {
-		if (name === 'manifest.json') continue
 		const safe = safeStoreFile(name)
 		if (!safe) continue
 		if (budget.left-- <= 0) return
@@ -189,7 +189,7 @@ export function createOpfsStore(): WorkspaceStore {
 				if (groupId && !(await readGroups()).some((g) => g.id === groupId)) throw new Error('目标目录不存在')
 				const config = await readLocalConfigUnlocked()
 				const active = config.providers.find((p) => p.id === config.active_provider) ?? config.providers[0]
-				const modelParams = active ? { provider: active.id, modelId: active.models[0] ?? '' } : { provider: '', modelId: '' }
+				const modelParams = { providerBackendId: LOCAL_BACKEND_ID, provider: active?.id ?? '', modelId: active?.models[0] ?? '' }
 				const id = uuid()
 				const { record, view } = seedGraph(id, title?.trim() || '未命名图', groupId, modelParams)
 				// view 先落盘：结构文档存在即视为完整图

@@ -171,6 +171,7 @@ async fn create_graph(body: Option<Json<CreateGraphBody>>) -> ApiResult<Json<Gra
                 id: model_id_node.clone(),
                 r#type: NodeType::Model,
                 params: serde_json::json!({
+                    "providerBackendId": crate::store::backend_id().await.map_err(storage_error)?,
                     "provider": provider_id,
                     "modelId": model_id
                 })
@@ -803,6 +804,15 @@ mod tests {
         let (tmp, _guard) = crate::store::store_tests::use_tmp("stable-graph");
         let Json(graph) = create_graph(None).await.unwrap();
         assert!(uuid::Uuid::parse_str(&graph.id).is_ok());
+        let model = graph
+            .nodes
+            .iter()
+            .find(|node| node.r#type == NodeType::Model)
+            .unwrap();
+        assert_eq!(
+            model.params["providerBackendId"],
+            crate::store::backend_id().await.unwrap()
+        );
         crate::store::save_graph_store_file(&graph.id, "reference.png", PNG)
             .await
             .unwrap();

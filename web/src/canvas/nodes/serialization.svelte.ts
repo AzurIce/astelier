@@ -14,7 +14,7 @@ export function nodeParams(node: NodeTypes): Record<string, string | number | bo
 
 export function applyParams(node: NodeTypes, params: Record<string, unknown>) {
 	if (node instanceof ModelNode) {
-		node.providerBackendId = String(params.providerBackendId ?? 'local')
+		node.providerBackendId = String(params.providerBackendId ?? '')
 		node.provider = String(params.provider ?? '')
 		node.modelId = String(params.modelId ?? '')
 	} else if (node instanceof PromptNode) {
@@ -43,25 +43,6 @@ export function applyParams(node: NodeTypes, params: Record<string, unknown>) {
 				typeof r.hash === 'string' ? r.hash : undefined,
 			)
 		}
-		// 过渡：旧文档存的 fileName / refFile / {store,file} / /gstore/… 引用
-		// 一律折叠成 images[0]。data URL（base64 内联）不再支持 → 视为空引用。
-		if (!list.length) {
-			const ref = params.ref as { file?: unknown } | undefined
-			const legacy =
-				(typeof params.refFile === 'string' ? params.refFile : '') ||
-				(ref && typeof ref.file === 'string' ? decodeURIComponent(ref.file) : '') ||
-				(typeof params.assetUrl === 'string' &&
-				(params.assetUrl as string).startsWith('/gstore/')
-					? decodeURIComponent((params.assetUrl as string).split('/').pop() ?? '')
-					: '')
-			const name = typeof params.fileName === 'string' ? params.fileName : ''
-			push(
-				legacy,
-				name || legacy,
-				typeof params.w === 'number' ? params.w : undefined,
-				typeof params.h === 'number' ? params.h : undefined,
-			)
-		}
 		node.images = list
 	} else if (node instanceof GenerateNode) {
 		node.params = {}
@@ -75,10 +56,9 @@ export function applyParams(node: NodeTypes, params: Record<string, unknown>) {
 
 /**
  * 读任意节点的图片引用（不 import 具体类，供回收清理 / 执行引擎用）。
- * 旧实例（LoadImageNode 的单一 refFile）也兼容。
  */
 export function imageRefsOf(node: unknown): string[] {
-	const n = node as { images?: unknown; refFile?: unknown } | null | undefined
+	const n = node as { images?: unknown } | null | undefined
 	if (!n) return []
 	const out: string[] = []
 	if (Array.isArray(n.images)) {
@@ -89,6 +69,5 @@ export function imageRefsOf(node: unknown): string[] {
 		}
 		return out
 	}
-	if (typeof n.refFile === 'string' && n.refFile) out.push(n.refFile)
 	return out
 }

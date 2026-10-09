@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { unzipSync } from 'fflate'
+import { randomUUID } from 'node:crypto'
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE)).href : 'playwright')
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0S8AAAAASUVORK5CYII='
 const png = `data:image/png;base64,${PNG}`
@@ -26,8 +27,8 @@ const upstream = createServer(async (req, res) => {
 const listen = (server) => new Promise((done) => server.listen(0, '127.0.0.1', done))
 const close = (server) => new Promise((done) => server.close(done))
 const until = async (check) => { for (let i = 0; i < 500; i++) { if (await check()) return; await new Promise((r) => setTimeout(r, 10)) } throw new Error('Timed out waiting for controlled server') }
-const nodes = (name) => [
-  { id: 'model', type: 'model', params: { provider: 'mock', modelId: 'gpt-image-2' } },
+const nodes = (name, backendId = 'local') => [
+  { id: 'model', type: 'model', params: { providerBackendId: backendId, provider: 'mock', modelId: 'gpt-image-2' } },
   { id: 'prompt', type: 'prompt', params: { text: name } },
   { id: 'generate', type: 'generate', params: {} },
   { id: 'preview', type: 'preview', params: {} },
@@ -42,18 +43,20 @@ try {
   await listen(upstream)
   const providerUrl = `http://127.0.0.1:${upstream.address().port}/v1`
   for (const name of ['A', 'B']) {
-    const root = await mkdtemp(resolve(tmpdir(), 'atelier-backend-')); roots.push(root)
+    const root = await mkdtemp(resolve(tmpdir(), 'astelier-backend-')); roots.push(root)
     const socket = createServer(); await listen(socket); const port = socket.address().port; await close(socket)
     const base = `http://127.0.0.1:${port}`
+    const backendId = randomUUID().replaceAll('-', '')
+    await writeFile(resolve(root, 'backend.json'), JSON.stringify({ id: backendId }))
     await mkdir(resolve(root, 'graphs/shared'), { recursive: true })
-    await writeFile(resolve(root, 'graphs/shared/graph.json'), JSON.stringify({ id: 'shared', title: `Server ${name}`, group_id: null, nodes: nodes(name), edges, created_at: 1, updated_at: 1 }))
-    await writeFile(resolve(root, 'config.json'), JSON.stringify({ active_provider: 'mock', providers: [{ id: 'mock', name: `Remote ${name}`, base_url: providerUrl, api_key: 'ATELIER_TEST_KEY_2', models: ['gpt-image-2'], overrides: { 'gpt-image-2': { label: `Profile ${name}` } } }] }))
-    const child = spawn(resolve(process.env.ATELIER_SERVER_BIN ?? fileURLToPath(new URL('../../target/debug/atelier', import.meta.url))), [], { env: { ...process.env, ATELIER_ADDR: `127.0.0.1:${port}`, ATELIER_DATA_DIR: root, ATELIER_TEST_KEY_2: `sk-server-${name}` }, stdio: ['ignore', 'pipe', 'pipe'] })
+    await writeFile(resolve(root, 'graphs/shared/graph.json'), JSON.stringify({ id: 'shared', title: `Server ${name}`, group_id: null, nodes: nodes(name, backendId), edges, created_at: 1, updated_at: 1 }))
+    await writeFile(resolve(root, 'config.json'), JSON.stringify({ active_provider: 'mock', providers: [{ id: 'mock', name: `Remote ${name}`, base_url: providerUrl, api_key: 'ASTELIER_TEST_KEY_2', models: ['gpt-image-2'], overrides: { 'gpt-image-2': { label: `Profile ${name}` } } }] }))
+    const child = spawn(resolve(process.env.ASTELIER_SERVER_BIN ?? fileURLToPath(new URL('../../target/debug/astelier', import.meta.url))), [], { env: { ...process.env, ASTELIER_ADDR: `127.0.0.1:${port}`, ASTELIER_DATA_DIR: root, ASTELIER_TEST_KEY_2: `sk-server-${name}` }, stdio: ['ignore', 'pipe', 'pipe'] })
     let log = ''; child.stdout.on('data', (chunk) => { log += chunk }); child.stderr.on('data', (chunk) => { log += chunk });
     child.on('error', (error) => { log += error.message }); children.push(child)
     await until(async () => { if (child.exitCode !== null) throw new Error(log); try { return (await fetch(`${base}/api/providers`)).ok } catch { return false } })
     const discovery = await (await fetch(`${base}/api/providers`)).text()
-    assert(!discovery.includes('ATELIER_TEST_KEY_2')); assert(!discovery.includes(`sk-server-${name}`)); assert(JSON.parse(discovery).every((provider) => !('api_key' in provider)))
+    assert(!discovery.includes('ASTELIER_TEST_KEY_2')); assert(!discovery.includes(`sk-server-${name}`)); assert(JSON.parse(discovery).every((provider) => !('api_key' in provider)))
     roots[roots.length - 1] = { root, base }
   }
   const [a, b] = roots
@@ -61,7 +64,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1100 }, acceptDownloads: true })
   page.on('pageerror', (error) => errors.push(error.message))
   page.on('request', (req) => { if (new URL(req.url()).pathname.startsWith('/api/')) apiRequests.push(new URL(req.url()).pathname) })
-  await page.goto(process.env.ATELIER_TEST_URL ?? 'http://127.0.0.1:5173')
+  await page.goto(process.env.ASTELIER_TEST_URL ?? 'http://127.0.0.1:5173')
   await page.waitForFunction(() => document.querySelector('.run-btn') && !document.querySelector('.run-btn').disabled)
   const localId = await page.evaluate(async ({ providerUrl, nodes, edges }) => {
     const registry = await import('/src/backends/registry.svelte.ts')
@@ -78,8 +81,8 @@ try {
 
   // Add A through the actual connection UI, B through the same underlying operation.
   await page.getByRole('button', { name: '添加 / 管理', exact: true }).click()
-  await page.getByRole('textbox', { name: '新后端名称', exact: true }).fill('Server A')
-  await page.getByRole('textbox', { name: '后端服务地址', exact: true }).fill(a.base)
+  await page.locator('.connection-add').getByRole('textbox', { name: '名称', exact: true }).fill('Server A')
+  await page.locator('.connection-add').getByRole('textbox', { name: '服务地址', exact: true }).fill(a.base)
   await page.getByRole('button', { name: '添加服务器', exact: true }).click()
   await page.waitForFunction(() => [...document.querySelectorAll('.connection')].some((el) => el.textContent.includes('Remote A')))
   await page.getByRole('button', { name: '关闭', exact: true }).click()
@@ -122,7 +125,7 @@ try {
     const r = await import('/src/backends/registry.svelte.ts')
     return { kind: 'store', backendId: 'local', store: '', file: 'reference.png', url: await r.backendStore('local').storeUrl('共享/reference.png') }
   })
-  await page.locator('.ui-node[data-node-id="reference"] .image-editor').evaluate((el, image) => { const transfer = new DataTransfer(); transfer.setData('application/x-atelier-images', JSON.stringify([image])); el.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer })) }, libraryReference)
+  await page.locator('.ui-node[data-node-id="reference"] .image-editor').evaluate((el, image) => { const transfer = new DataTransfer(); transfer.setData('application/x-astelier-images', JSON.stringify([image])); el.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer })) }, libraryReference)
   await page.waitForFunction(async () => { const { rt } = await import('/src/canvas/runtime.ts'); return rt.editor.getNode('reference').images.length === 1 })
   const reference = await page.evaluate(async ({ backendId }) => {
     const { rt } = await import('/src/canvas/runtime.ts'); const { connect } = await import('/src/canvas/nodes/types.ts')
@@ -154,14 +157,14 @@ try {
   await page.evaluate(async () => (await import('/src/workspace/opfs/transfer.ts')).exportWorkspaceZip())
   const stream = await (await downloadPending).createReadStream(); const chunks = []; for await (const chunk of stream) chunks.push(chunk)
   const zipped = Buffer.concat(chunks), entries = unzipSync(zipped)
-  assert(!entries['atelier/config.json']); assert(!zipped.includes(Buffer.from('sk-browser')))
-  assert(entries[`atelier/graphs/${localId}/store/${reference.file}`]); assert(entries['atelier/stores/空目录/'])
+  assert(!entries['astelier/config.json']); assert(!zipped.includes(Buffer.from('sk-browser')))
+  assert(entries[`astelier/graphs/${localId}/store/${reference.file}`]); assert(entries['astelier/stores/空目录/'])
   const imported = await browser.newPage()
   imported.on('pageerror', (error) => errors.push(error.message))
-  await imported.goto(process.env.ATELIER_TEST_URL ?? 'http://127.0.0.1:5173'); await imported.waitForSelector('.ui-node')
+  await imported.goto(process.env.ASTELIER_TEST_URL ?? 'http://127.0.0.1:5173'); await imported.waitForSelector('.ui-node')
   const restored = await imported.evaluate(async ({ zip, localId, referenceFile }) => {
     const session = await import('/src/canvas/session.svelte.ts'); await session.flushNow()
-    const fs = await import('/src/workspace/opfs/fs.ts'); await (await navigator.storage.getDirectory()).removeEntry('atelier', { recursive: true })
+    const fs = await import('/src/workspace/opfs/fs.ts'); await (await navigator.storage.getDirectory()).removeEntry('astelier', { recursive: true })
     const report = await (await import('/src/workspace/opfs/transfer.ts')).importWorkspaceZip(new File([Uint8Array.from(zip)], 'backup.zip'))
     const r = await import('/src/backends/registry.svelte.ts'); const store = r.backendStore('local')
     return { report, graph: await store.fetchGraph(localId), view: await store.fetchView(localId), tree: await store.storeTree(), reference: await store.graphStoreUrl(localId, referenceFile), configAbsent: !(await fs.readJson([...fs.WORKSPACE_ROOT, 'config.json'])) }
@@ -175,7 +178,7 @@ try {
   assert.equal(await page.locator('.backend-root').count(), 3)
   assert.equal(await page.locator('.result-img').count(), 0)
   await page.evaluate(async (id) => (await import('/src/canvas/session.svelte.ts')).openGraph({ backendId: id, id: 'shared' }), ids.a)
-  await page.screenshot({ path: process.env.ATELIER_TEST_SCREENSHOT ?? '/tmp/atelier-multiple-backends.png' })
+  await page.screenshot({ path: process.env.ASTELIER_TEST_SCREENSHOT ?? '/tmp/astelier-multiple-backends.png' })
   await page.evaluate(async (id) => (await import('/src/canvas/session.svelte.ts')).detachBackend(id), ids.a)
   assert.equal(await page.locator('.backend-root').count(), 2)
   assert.equal((await (await fetch(`${a.base}/api/graphs/shared`)).json()).id, 'shared')

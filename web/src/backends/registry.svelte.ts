@@ -1,18 +1,19 @@
 import { createOpfsStore } from '../workspace/opfs/store'
 import { createHttpStore } from '../workspace/httpStore'
+import { CONNECTIONS_KEY, readSetting } from '../settings'
 import type { WorkspaceStore } from '../workspace/store'
 import { loadLocalConfig } from '../generation/localConfig'
 import { createDirectGenerator } from '../generation/direct'
 import { createRemoteGenerator } from '../generation/remote'
 import type { ImageGenerator } from '../generation/generator'
 import { mergedProfile } from '../generation/profiles'
-import { CONNECTIONS_KEY, LOCAL_BACKEND_ID, normalizeServerUrl, parseConnections, serverIdentity } from './connections'
+import { LOCAL_BACKEND_ID, normalizeServerUrl, parseConnections, serverIdentity } from './connections'
 import type { BackendConfig, BackendConnection, ProviderDescriptor, ProviderLocation } from './types'
 
 export const backendRegistry = $state<{ entries: BackendConnection[] }>({ entries: [] })
 const runtimes = new Map<string, { store: WorkspaceStore; generators: Map<string, ImageGenerator> }>()
 const pending = new Map<string, Promise<void>>()
-const overrides = () => (window as { __atelierRuntime?: { wrapStore?: (store: WorkspaceStore, backendId: string) => WorkspaceStore; generate?: ImageGenerator['generate'] } }).__atelierRuntime
+const overrides = () => (window as { __astelierRuntime?: { wrapStore?: (store: WorkspaceStore, backendId: string) => WorkspaceStore; generate?: ImageGenerator['generate'] } }).__astelierRuntime
 
 function register(config: BackendConfig): void {
 	const store = config.kind === 'opfs' ? createOpfsStore() : createHttpStore(config.baseUrl!)
@@ -20,9 +21,10 @@ function register(config: BackendConfig): void {
 	backendRegistry.entries.push({ ...config, status: 'connecting', error: null, providerError: null, providers: [], revision: 0 })
 }
 
+/** 同步注册设备保存的后端连接；连接时再异步读取各自的存储。 */
 export function initializeBackends(): void {
 	if (runtimes.size) return
-	for (const config of parseConnections(localStorage.getItem(CONNECTIONS_KEY))) register(config)
+	for (const config of parseConnections(readSetting(CONNECTIONS_KEY))) register(config)
 }
 
 export function backend(id: string): BackendConnection {

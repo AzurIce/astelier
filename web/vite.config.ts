@@ -2,7 +2,7 @@ import { svelte } from '@sveltejs/vite-plugin-svelte'
 import { defineConfig } from 'vite'
 
 // 前端是纯静态应用：本地工作区走 OPFS，远端工作区直接请求服务端绝对
-// 地址，开发不再需要代理。远端服务需自行允许跨域（ATELIER_CORS_ORIGINS）。
+// 地址，开发不再需要代理。远端服务需自行允许跨域（ASTELIER_CORS_ORIGINS）。
 export default defineConfig({
 	plugins: [svelte()],
 	css: {

@@ -29,6 +29,7 @@ export interface WorkspaceStore {
 	deleteGroup(id: string): Promise<void>
 
 	// ---------- 图内参考图 ----------
+	listGraphStoreFiles(gid: string): Promise<GraphStoreFileMeta[]>
 	uploadGraphStoreFile(gid: string, name: string, blob: Blob): Promise<GraphStoreFileMeta>
 	/** 展示/拖拽用 URL：OPFS 为缓存 blob: URL（文件缺失返回 null）；HTTP 为绝对地址 */
 	graphStoreUrl(gid: string, name: string): Promise<string | null>

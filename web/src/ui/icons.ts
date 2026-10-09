@@ -20,6 +20,9 @@ export const ICONS = {
 
 	// 操作
 	plus: '<path d="M5 12h14M12 5v14" />',
+	more: '<circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" />',
+	sidebarCollapse: '<rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16m7-12-4 4 4 4" />',
+	sidebarExpand: '<rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16m4-12 4 4-4 4" />',
 	grip: '<circle cx="8" cy="5" r="1" /><circle cx="16" cy="5" r="1" /><circle cx="8" cy="12" r="1" /><circle cx="16" cy="12" r="1" /><circle cx="8" cy="19" r="1" /><circle cx="16" cy="19" r="1" />',
 	play: '<path d="M7 4.5v15l12-7.5z" />',
 	stop: '<rect x="6" y="6" width="12" height="12" rx="2" />',
@@ -38,6 +41,7 @@ export const ICONS = {
 	info: '<circle cx="12" cy="12" r="9.5" /><path d="M12 11v5M12 8h.01" />',
 	spinner: '<path d="M21 12a9 9 0 1 1-6.2-8.6" />',
 	upload: '<path d="M21 15.5V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2.5M17 8.5 12 3.5 7 8.5M12 3.5V16" />',
+	download: '<path d="M21 15.5V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2.5M7 10.5l5 5 5-5M12 3.5V16" />',
 	pencil: '<path d="M17.5 3.5a2.1 2.1 0 0 1 3 3L7.5 19.5 2.5 21l1.5-5z" />',
 	settings:
 		'<path d="M12.2 2.5h-.4a2 2 0 0 0-2 2v.2a2 2 0 0 1-1 1.7l-.4.3a2 2 0 0 1-2 0l-.2-.1a2 2 0 0 0-2.7.7l-.2.4a2 2 0 0 0 .7 2.7l.2.1a2 2 0 0 1 1 1.7v.5a2 2 0 0 1-1 1.8l-.2.1a2 2 0 0 0-.7 2.7l.2.4a2 2 0 0 0 2.7.7l.2-.1a2 2 0 0 1 2 0l.4.3a2 2 0 0 1 1 1.7v.2a2 2 0 0 0 2 2h.4a2 2 0 0 0 2-2v-.2a2 2 0 0 1 1-1.7l.4-.3a2 2 0 0 1 2 0l.2.1a2 2 0 0 0 2.7-.7l.2-.4a2 2 0 0 0-.7-2.7l-.2-.1a2 2 0 0 1-1-1.8v-.5a2 2 0 0 1 1-1.8l.2-.1a2 2 0 0 0 .7-2.7l-.2-.4a2 2 0 0 0-2.7-.7l-.2.1a2 2 0 0 1-2 0l-.4-.3a2 2 0 0 1-1-1.7v-.2a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="2.8" />',

@@ -92,7 +92,7 @@ export interface Skin {
 
 const studio: Skin = {
 	id: 'studio',
-	name: '工作台',
+	name: '默认',
 	blurb: '深色优先 · 高密度 · 克制专业',
 	swatch: ['#5b8def', '#1b1d23', '#101114'],
 	dark: {

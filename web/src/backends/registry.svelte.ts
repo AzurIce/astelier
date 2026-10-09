@@ -115,10 +115,24 @@ export function removeBackend(id: string): void {
 	persistConnections()
 }
 
-export function renameBackend(id: string, name: string): void {
+export async function updateServer(id: string, name: string, rawUrl: string): Promise<void> {
+	if (id === LOCAL_BACKEND_ID) throw new Error('浏览器存储名称不可修改')
 	if (!name.trim()) throw new Error('名称不能为空')
-	backend(id).name = name.trim()
+	await pending.get(id)
+	const entry = backend(id)
+	const baseUrl = normalizeServerUrl(rawUrl)
+	if (backendRegistry.entries.some((other) => other.id !== id && other.baseUrl === baseUrl)) throw new Error('该服务地址已经添加')
+	if (baseUrl !== entry.baseUrl) {
+		if (await serverIdentity(baseUrl) !== id) throw new Error('此地址属于另一个后端，请添加新连接')
+		const store = createHttpStore(baseUrl)
+		await store.listGraphs()
+		if (backend(id) !== entry) throw new Error('后端连接已改变')
+		runtimes.set(id, { store: overrides()?.wrapStore?.(store, id) ?? store, generators: new Map() })
+		entry.baseUrl = baseUrl
+	}
+	entry.name = name.trim()
 	persistConnections()
+	await connectBackend(id)
 }
 
 export function generatorFor(location: ProviderLocation): ImageGenerator {

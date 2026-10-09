@@ -69,6 +69,7 @@ try {
   const localId = await page.evaluate(async ({ providerUrl, nodes, edges }) => {
     const registry = await import('/src/backends/registry.svelte.ts')
     const session = await import('/src/canvas/session.svelte.ts')
+    window.backendTestSession = session.graphSession
     await session.flushNow()
     await (await import('/src/generation/localConfig.ts')).saveLocalConfig({ active_provider: 'mock', providers: [{ id: 'mock', name: 'Browser', base_url: providerUrl, api_key: 'sk-browser', models: ['gpt-image-2'], overrides: {} }] })
     await registry.refreshProviders('local')
@@ -80,19 +81,62 @@ try {
   }, { providerUrl, nodes: nodes('Local'), edges })
 
   // Add A through the actual connection UI, B through the same underlying operation.
-  await page.getByRole('button', { name: '添加 / 管理', exact: true }).click()
+  await page.getByRole('button', { name: '管理后端', exact: true }).click()
   await page.locator('.connection-add').getByRole('textbox', { name: '名称', exact: true }).fill('Server A')
   await page.locator('.connection-add').getByRole('textbox', { name: '服务地址', exact: true }).fill(a.base)
   await page.getByRole('button', { name: '添加服务器', exact: true }).click()
   await page.waitForFunction(() => [...document.querySelectorAll('.connection')].some((el) => el.textContent.includes('Remote A')))
-  await page.getByRole('button', { name: '关闭', exact: true }).click()
+  await page.getByRole('dialog', { name: '设置', exact: true }).getByRole('button', { name: '关闭', exact: true }).click()
   const ids = await page.evaluate(async (base) => {
     const r = await import('/src/backends/registry.svelte.ts')
     const a = r.backendRegistry.entries.find((entry) => entry.name === 'Server A').id
     const b = await r.addServer('Server B', base)
     return { a, b }
   }, b.base)
+  // Edit existing connections without changing the stable backend identity.
+  await page.getByRole('button', { name: '管理后端', exact: true }).click()
+  const connectionA = page.locator(`[data-connection-id="${ids.a}"]`)
+  await connectionA.getByRole('button', { name: '编辑', exact: true }).click()
+  await connectionA.getByRole('textbox', { name: '后端服务地址', exact: true }).fill(b.base.replace('127.0.0.1', 'localhost'))
+  await connectionA.getByRole('button', { name: '保存连接', exact: true }).click()
+  await page.getByText(/此地址属于另一个后端，请添加新连接/).waitFor()
+  assert.equal(await page.evaluate(async (id) => (await import('/src/backends/registry.svelte.ts')).backend(id).baseUrl, ids.a), a.base)
+  const aliasA = a.base.replace('127.0.0.1', 'localhost')
+  await connectionA.getByRole('textbox', { name: '后端服务地址', exact: true }).fill(aliasA)
+  await connectionA.getByRole('textbox', { name: '后端名称', exact: true }).fill('Server A revised')
+  await connectionA.getByRole('button', { name: '保存连接', exact: true }).click()
+  await connectionA.locator('.connection-edit').waitFor({ state: 'detached' })
+  assert.deepEqual(await page.evaluate(async (id) => {
+    const entry = (await import('/src/backends/registry.svelte.ts')).backend(id)
+    return { name: entry.name, url: entry.baseUrl, id: entry.id }
+  }, ids.a), { name: 'Server A revised', url: aliasA, id: ids.a })
+  assert.equal(await connectionA.locator('.provider-tag').innerText(), 'Remote A')
+  assert.equal(await connectionA.locator('.model-tag').innerText(), 'gpt-image-2')
+  await connectionA.getByRole('button', { name: '编辑', exact: true }).click()
+  await connectionA.getByRole('textbox', { name: '后端名称', exact: true }).fill('Server A')
+  await connectionA.getByRole('button', { name: '保存连接', exact: true }).click()
+  await connectionA.locator('.connection-edit').waitFor({ state: 'detached' })
+  await page.getByRole('dialog', { name: '设置', exact: true }).getByRole('button', { name: '关闭', exact: true }).click()
+  console.log('PASS connection name/address editing, stable identity checks and Provider/model badges')
   assert.equal(await page.locator('.backend-root').count(), 3)
+  const rootBounds = await page.locator('.backend-root').evaluateAll((roots) => roots.map((root) => ({ top: root.getBoundingClientRect().top, height: root.getBoundingClientRect().height })))
+  assert(rootBounds[0].height < 250, 'backend roots should size to their content')
+  assert(rootBounds[1].top - rootBounds[0].top - rootBounds[0].height < 20, 'backend roots should stay together without empty panels')
+  await page.locator(`.sidebar [data-backend-id="${ids.a}"] summary`).click({ button: 'right' })
+  assert.equal(await page.getByRole('menu').locator('.ui-menu-label').textContent(), 'Server A')
+  await page.keyboard.press('Escape')
+  const disposableId = await page.evaluate(async (id) => {
+    const r = await import('/src/backends/registry.svelte.ts')
+    const graph = await r.backendStore(id).createGraph(null, 'Remote delete test')
+    r.backend(id).revision++
+    return graph.id
+  }, ids.a)
+  await page.locator(`.sidebar [data-backend-id="${ids.a}"] [data-row-id="${disposableId}"]`).getByRole('button', { name: '更多操作：Remote delete test', exact: true }).click()
+  await page.getByRole('menuitem', { name: '删除', exact: true }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: '删除', exact: true }).click()
+  await page.locator(`.sidebar [data-row-id="${disposableId}"]`).waitFor({ state: 'detached' })
+  assert(!(await (await fetch(`${a.base}/api/graphs`)).json()).some((graph) => graph.id === disposableId))
+  console.log('PASS compact backend layout and remote graph deletion through sidebar menu')
   assert.equal(await page.locator('.dock .tree-row').filter({ hasText: 'Server A' }).count(), 1)
   await page.locator('.ui-node[data-node-id="model"] select[aria-label="Provider"]').selectOption(JSON.stringify([ids.a, 'mock']))
   await page.locator('.run-btn').click(); await page.waitForSelector('.result-img')
@@ -101,6 +145,10 @@ try {
   console.log('PASS local graph uses Remote Provider A; server resolves its environment key')
 
   await page.evaluate(async (backendId) => (await import('/src/canvas/session.svelte.ts')).openGraph({ backendId, id: 'shared' }), ids.b)
+  const sidebarRoots = page.locator('.sidebar .roots')
+  await sidebarRoots.click({ button: 'right', position: { x: 80, y: await sidebarRoots.evaluate((el) => el.clientHeight) - 14 } })
+  assert.equal(await page.getByRole('menu').locator('.ui-menu-label').textContent(), 'Server B')
+  await page.keyboard.press('Escape')
   await page.locator('.ui-node[data-node-id="model"] select[aria-label="Provider"]').selectOption(JSON.stringify(['local', 'mock']))
   await page.locator('.run-btn').click(); await page.waitForSelector('.result-img')
   assert.equal(requests.at(-1).key, 'Bearer sk-browser')
@@ -108,6 +156,39 @@ try {
   assert.equal((await (await fetch(`${b.base}/api/graphs/shared`)).json()).nodes.find((n) => n.id === 'prompt').params.text, 'Edited B')
   assert.equal((await (await fetch(`${a.base}/api/graphs/shared`)).json()).nodes.find((n) => n.id === 'prompt').params.text, 'A')
   console.log('PASS server graph uses Local Provider; same graph/node/provider IDs stay isolated by backend')
+
+  // Package every private asset on server A, then drop the graph onto server B.
+  await page.evaluate(async ({ backendId, png }) => {
+    const store = (await import('/src/backends/registry.svelte.ts')).backendStore(backendId)
+    await store.uploadGraphStoreFile('shared', 'bundle-extra.png', new Blob([Uint8Array.from(atob(png), (c) => c.charCodeAt(0))], { type: 'image/png' }))
+  }, { backendId: ids.a, png: PNG })
+  const graphDownloadPending = page.waitForEvent('download')
+  await page.locator(`.sidebar [data-backend-id="${ids.a}"] [data-row-id="shared"]`).getByRole('button', { name: '更多操作：Server A', exact: true }).click()
+  await page.getByRole('menuitem', { name: '导出 .astelier', exact: true }).click()
+  const graphDownload = await graphDownloadPending
+  assert.equal(graphDownload.suggestedFilename(), 'Server A.astelier')
+  const graphStream = await graphDownload.createReadStream(), graphChunks = []
+  for await (const chunk of graphStream) graphChunks.push(chunk)
+  const graphZip = Buffer.concat(graphChunks)
+  assert(unzipSync(graphZip)['store/bundle-extra.png'])
+  await page.locator(`.sidebar [data-backend-id="${ids.b}"] summary`).evaluate((el, zip) => {
+    const transfer = new DataTransfer()
+    transfer.items.add(new File([Uint8Array.from(zip)], 'Server A.astelier', { type: 'application/zip' }))
+    el.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }))
+  }, [...graphZip])
+  await page.waitForFunction((id) => {
+    const graphSession = window.backendTestSession
+    return graphSession.backendId === id && graphSession.id !== 'shared' && !document.querySelector('.topbar button[title="导入 .astelier 图包"]').disabled
+  }, ids.b)
+  const copiedGraph = await page.evaluate(async () => {
+    const r = await import('/src/backends/registry.svelte.ts'), { graphSession } = await import('/src/canvas/session.svelte.ts')
+    return { graph: await r.backendStore(graphSession.backendId).fetchGraph(graphSession.id), assets: await r.backendStore(graphSession.backendId).listGraphStoreFiles(graphSession.id) }
+  })
+  assert.notEqual(copiedGraph.graph.id, 'shared')
+  assert.equal(copiedGraph.graph.nodes.find((node) => node.id === 'prompt').params.text, 'A')
+  assert(copiedGraph.assets.some((asset) => asset.name === 'bundle-extra.png'))
+  await page.evaluate(async (backendId) => (await import('/src/canvas/session.svelte.ts')).openGraph({ backendId, id: 'shared' }), ids.b)
+  console.log('PASS remote .astelier export preserves private assets and sidebar drop imports into the selected backend')
 
   // Cross-backend library copies and persistent OPFS blob references.
   await page.evaluate(async ({ ids, png, localId }) => {

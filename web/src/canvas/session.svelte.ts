@@ -1,7 +1,7 @@
 import { toDoc, toViewDoc, loadDoc } from './document'
 import type { ViewDoc, GraphDocWithId } from '../workspace/types'
 import type { GraphLocation } from '../backends/types'
-import { backendStore, backend, connectBackend, removeBackend } from '../backends/registry.svelte'
+import { backendStore, backend, connectBackend, removeBackend, updateServer } from '../backends/registry.svelte'
 import { LOCAL_BACKEND_ID } from '../backends/connections'
 import { rt, runningNodes } from './runtime'
 import { SaveQueue, type SaveState } from './saveQueue'
@@ -131,6 +131,20 @@ export function detachBackend(id: string): Promise<void> {
 			} finally { graphSession.loading = false }
 		}
 		removeBackend(id)
+	})
+}
+
+export function updateBackendConnection(id: string, name: string, baseUrl: string): Promise<void> {
+	return changeGraph(async () => {
+		graphSession.loading = true
+		try {
+			await flushNow()
+			await updateServer(id, name, baseUrl)
+			if (graphSession.backendId === id) {
+				const store = backendStore(id)
+				await restore(id, await store.fetchGraph(graphSession.id), await store.fetchView(graphSession.id))
+			}
+		} finally { graphSession.loading = false }
 	})
 }
 

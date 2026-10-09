@@ -8,7 +8,7 @@
 		"build": "vite build",
 		"check": "svelte-check --tsconfig ./tsconfig.json",
 		"test": "bun test src",
-		"test:browser": "node tests/state-runtime.mjs && node tests/backends.mjs",
+		"test:browser": "node tests/sidebar-ui.mjs && node tests/workspace-ui.mjs && node tests/state-runtime.mjs && node tests/backends.mjs",
 		"preview": "vite preview"
 	},
 	"dependencies": {

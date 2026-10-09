@@ -1,7 +1,7 @@
 import type { BackendConfig } from './types'
 
 export const LOCAL_BACKEND_ID = 'local'
-export const LOCAL_BACKEND: BackendConfig = { id: LOCAL_BACKEND_ID, name: '本地', kind: 'opfs' }
+export const LOCAL_BACKEND: BackendConfig = { id: LOCAL_BACKEND_ID, name: '浏览器存储', kind: 'opfs' }
 
 export function normalizeServerUrl(raw: string): string {
 	const url = new URL(raw.trim())
@@ -15,8 +15,6 @@ export function parseConnections(raw: string | null): BackendConfig[] {
 		const entries: unknown = JSON.parse(raw ?? '[]')
 		if (!Array.isArray(entries)) return result
 		for (const entry of entries) {
-			if (entry?.kind === 'opfs' && entry.id === LOCAL_BACKEND_ID && typeof entry.name === 'string' && entry.name.trim()) { result[0].name = entry.name.trim(); continue }
-
 			if (entry?.kind !== 'http' || typeof entry.id !== 'string' || !entry.id || entry.id === LOCAL_BACKEND_ID || typeof entry.baseUrl !== 'string') continue
 			try {
 				const baseUrl = normalizeServerUrl(entry.baseUrl)

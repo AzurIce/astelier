@@ -1,6 +1,6 @@
 // 工作区导入/导出：把整个 OPFS 工作区（astelier/）打包为 zip 下载，
-// 或从 zip 合并导入。这是账号体系出现前数据离开浏览器的唯一通道，
-// 也是换设备/换域名迁移的保底。
+// 或从 zip 合并导入，用于换设备/换域名迁移和完整备份。
+// 单图可移植包由 workspace/graphArchive.ts 管理。
 //
 // 合并规则（对齐未来同步的 last-writer-wins）：
 // - 图：按 id 对应本地目录；本地较新（updated_at 更大）则跳过，否则整目录覆盖
@@ -11,6 +11,7 @@ import { unzipSync, zipSync } from 'fflate'
 import { listDir, readJson, readBytes, withFsLock, writeBytes, writeJson, ensureDir, WORKSPACE_ROOT, type FsPath } from './fs'
 import type { GraphGroup } from '../types'
 import { releaseGraphStoreObjectUrls, releaseStoreObjectUrl } from './objectUrls'
+import { downloadFile } from '../../ui/download'
 
 const GRAPH_DIR = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
 
@@ -129,12 +130,7 @@ export async function exportWorkspaceZip(): Promise<string> {
 	await withFsLock(() => collectDir(WORKSPACE_ROOT, 'astelier/', files))
 	const zipped = zipSync(files)
 	const name = `astelier-workspace-${new Date().toISOString().slice(0, 19).replaceAll(/[:T]/g, '-')}.zip`
-	const url = URL.createObjectURL(new Blob([zipped], { type: 'application/zip' }))
-	const anchor = document.createElement('a')
-	anchor.href = url
-	anchor.download = name
-	anchor.click()
-	setTimeout(() => URL.revokeObjectURL(url), 10_000)
+	downloadFile(new File([zipped], name, { type: 'application/zip' }))
 	return name
 }
 

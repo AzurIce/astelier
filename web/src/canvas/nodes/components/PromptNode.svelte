@@ -59,6 +59,7 @@
 </NodeFrame>
 
 <style>
+	textarea { overscroll-behavior: contain; }
 	.prompt-wrap {
 		display: flex;
 		flex-direction: column;

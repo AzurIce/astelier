@@ -24,7 +24,7 @@ export interface ViewDoc {
 	viewport?: { x: number; y: number; zoom: number }
 }
 
-export type GraphDocWithId = GraphDoc & { id: string; title?: string; group_id?: string | null }
+export type GraphDocWithId = GraphDoc & { id: string; title?: string; group_id?: string | null; created_at?: number; updated_at?: number }
 
 export interface GraphGroup {
 	id: string

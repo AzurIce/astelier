@@ -5,12 +5,12 @@
 	import { SKINS } from './tokens'
 	import type { TokenSet } from './tokens'
 
-	// 皮肤切换：按钮上带当前皮肤三色板 + 名称；浮层三选一
+	// 主题切换：按钮上显示用途与当前主题；浮层三选一
 	let open = $state(false)
 	let anchor = $state({ x: 0, y: 0 })
 
 	function openFrom(e: MouseEvent) {
-		const r = (e.target as HTMLElement).getBoundingClientRect()
+		const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
 		anchor = { x: r.right, y: r.bottom + 6 }
 		open = true
 	}
@@ -21,13 +21,13 @@
 	}
 </script>
 
-<button type="button" class="skin-entry" onclick={openFrom} title="切换外观">
+<button type="button" class="skin-entry" onclick={openFrom} title="切换主题" aria-haspopup="dialog" aria-expanded={open}>
 	<span class="dots">
 		{#each design.skin.swatch as c, i (i)}
 			<i style:background={c}></i>
 		{/each}
 	</span>
-	<span class="name">{design.skin.name}</span>
+	<span class="name">主题：{design.skin.name}</span>
 	<Icon name="chevronDown" size={12} />
 </button>
 
@@ -38,7 +38,7 @@
 			type="button"
 			class="skin-opt"
 			class:active={s.id === design.skin.id}
-			onclick={() => design.setSkin(s.id)}
+			onclick={() => { design.setSkin(s.id); open = false }}
 		>
 			<span class="preview">
 				{#each cells(t) as c, i (i)}

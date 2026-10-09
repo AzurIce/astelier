@@ -4,6 +4,7 @@ export const MODE_KEY = 'astelier-mode'
 export const GRAPH_KEY = 'astelier-active-graph'
 export const CONNECTIONS_KEY = 'astelier-backends'
 export const SIDEBAR_WIDTH_KEY = 'astelier-sidebar-w'
+export const SIDEBAR_COLLAPSED_KEY = 'astelier-sidebar-collapsed'
 
 export function readSetting(key: string): string | null {
 	try {

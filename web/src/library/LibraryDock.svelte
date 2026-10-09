@@ -35,6 +35,8 @@
 	let query = $state('')
 	let maximized = $state(false)
 	let panelH = $state(320)
+	let panelResizing = $state(false)
+	let viewportHeight = $state(window.innerHeight)
 	let renaming = $state<string | null>(null)
 	let renameValue = $state('')
 	let renameEl = $state<HTMLInputElement>()
@@ -43,6 +45,8 @@
 	let dropTarget = $state<string | null>(null) // 拖拽悬停的目录（'' = 根，null = 无）
 	let ctx = $state<{ x: number; y: number; kind: 'tile' | 'blank'; path: string } | null>(null)
 	let uploadRef = $state<HTMLInputElement>()
+	const motionDuration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 220
+	$effect(() => { if (collapsed) { hovered = false; ctx = null; dropTarget = null; renaming = null } })
 	let gridEl = $state<HTMLDivElement>()
 
 	// ---------- 数据 ----------
@@ -451,6 +455,7 @@
 	let resizeStart: { y: number; h: number } | null = null
 	function onResizeDown(e: PointerEvent) {
 		e.preventDefault()
+		panelResizing = true
 		resizeStart = { y: e.clientY, h: panelH }
 		window.addEventListener('pointermove', onResizeMove)
 		window.addEventListener('pointerup', onResizeUp)
@@ -461,6 +466,7 @@
 		panelH = Math.max(220, Math.min(max, resizeStart.h - (e.clientY - resizeStart.y)))
 	}
 	function onResizeUp() {
+		panelResizing = false
 		resizeStart = null
 		window.removeEventListener('pointermove', onResizeMove)
 		window.removeEventListener('pointerup', onResizeUp)
@@ -485,21 +491,17 @@
 	function tileTitle(path: string, w?: number, h?: number): string { return `${baseName(path)}${w && h ? ` · ${w}×${h}` : ''}` }
 </script>
 
-<svelte:window onpointerdowncapture={onWindowPointerDownCapture} />
+<svelte:window onpointerdowncapture={onWindowPointerDownCapture} onresize={() => viewportHeight = window.innerHeight} />
 
-{#if collapsed}
-	<button type="button" class="dock-rail" onclick={() => ontoggle?.()} title="展开「库」面板">
-		<Icon name="layers" size={14} />
-		<span>库</span>
-		<Icon name="chevronDown" size={12} />
-	</button>
-{:else}
 	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 	<section
 		class="dock"
 		class:maximized
+		class:collapsed
+		class:resizing={panelResizing}
 		class:dragover={dropTarget !== null}
-		style="height:{maximized ? '100%' : panelH + 'px'}"
+		style:height="{collapsed ? 22 : maximized ? viewportHeight : Math.min(panelH, Math.max(80, viewportHeight - 180))}px"
+		style:--dock-duration="{motionDuration}ms"
 		aria-label="库"
 		onmouseenter={() => (hovered = true)}
 		onmouseleave={() => {
@@ -510,14 +512,16 @@
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="resize-handle"
-			class:hidden={maximized}
+			class:hidden={maximized || collapsed}
 			onpointerdown={onResizeDown}
 			title="拖拽调整高度"
 		></div>
 
 		<header class="dock-head">
+			<button type="button" class="dock-toggle" onclick={() => ontoggle?.()} title={collapsed ? '展开「库」面板' : '收起「库」面板'} aria-label={collapsed ? '展开面板' : '收起面板'} aria-expanded={!collapsed} aria-controls="library-content"><Icon name="layers" size={14} /><span>库</span><span class:expand-chevron={collapsed}><Icon name="chevronDown" size={12} /></span></button>
+			{#if !collapsed}
 			<Icon name="layers" size={14} />
-			<strong>库 · {backendRegistry.entries.find((entry) => entry.id === selectedBackendId)?.name}</strong>
+			<strong>{backendRegistry.entries.find((entry) => entry.id === selectedBackendId)?.name}</strong>
 			{#if loading}
 				<Icon name="spinner" size={13} class="spin" />
 			{/if}
@@ -582,11 +586,11 @@
 					onclick={() => (maximized = !maximized)}
 				/>
 				<IconButton icon="refresh" label="刷新" sm onclick={() => void refresh()} />
-				<IconButton icon="chevronDown" label="收起面板" sm onclick={() => ontoggle?.()} />
 			</div>
+			{/if}
 		</header>
 
-		<div class="dock-body">
+		<div id="library-content" class="dock-body" inert={collapsed} aria-hidden={collapsed}>
 			<!-- 侧边目录树 -->
 			<aside class="tree" aria-label="目录树">
 				{#each treeRows as row (row.backendId + row.path)}
@@ -753,7 +757,7 @@
 		</div>
 
 		<!-- 状态栏 -->
-		<footer class="dock-foot">
+		<footer class="dock-foot" aria-hidden={collapsed}>
 			<span class="mono">{totalHere} 项</span>
 			<span class="sep"></span>
 			<span class="mono" class:hl={selCount > 0}>选中 {selCount}</span>
@@ -873,37 +877,33 @@
 			</div>
 		{/if}
 	</section>
-{/if}
 
 <style>
-	/* ---- 收起态：一条细轨 ---- */
-	.dock-rail {
-		position: fixed;
+	.dock-toggle {
+		position: absolute;
 		left: 50%;
-		bottom: 0;
-		transform: translateX(-50%);
+		top: 50%;
+		transform: translate(-50%, -50%);
+		z-index: 3;
 		display: flex;
 		align-items: center;
+		justify-content: center;
 		gap: 6px;
-		height: 22px;
-		padding: 0 14px;
-		border: none;
-		border-radius: var(--ui-r-menu) var(--ui-r-menu) 0 0;
-		background: var(--ui-panel);
+		width: 78px;
+		height: 24px;
 		border: 1px solid var(--ui-border-fade);
-		border-bottom: none;
+		border-radius: var(--ui-r-control);
+		background: var(--ui-hover);
 		color: var(--ui-dim);
 		font: inherit;
 		font-size: 11px;
 		cursor: pointer;
-		z-index: 40;
+		pointer-events: auto;
 	}
-	.dock-rail:hover {
-		color: var(--ui-text);
-	}
-	.dock-rail :global(.ui-icon:first-child) {
-		color: var(--ui-accent);
-	}
+	.dock-toggle:hover { color: var(--ui-accent); }
+	.dock-toggle > :global(.ui-icon) { color: var(--ui-accent); }
+	.dock.collapsed .dock-toggle { height: 22px; border-bottom: none; border-radius: var(--ui-r-menu) var(--ui-r-menu) 0 0; background: var(--ui-panel); }
+	.expand-chevron { transform: rotate(180deg); }
 
 	/* ---- 面板 ---- */
 	.dock {
@@ -913,17 +913,24 @@
 		flex-direction: column;
 		border-top: 1px solid var(--ui-border-fade);
 		background: var(--ui-panel);
+		overflow: clip;
+		transition: height var(--dock-duration) var(--ui-ease), margin-top var(--dock-duration) var(--ui-ease);
 	}
+	.dock.collapsed { background: transparent; border-top: none; margin-top: -22px; pointer-events: none; }
+	.dock.collapsed .dock-body, .dock.collapsed .dock-foot { visibility: hidden; pointer-events: none; }
+	.dock.resizing { transition: none; }
 	.dock.maximized {
 		position: fixed;
-		inset: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
 		z-index: 60;
-		height: 100% !important;
 		border-top: none;
+		margin-top: 0;
 	}
 	.resize-handle {
 		position: absolute;
-		top: -3px;
+		top: 0;
 		left: 0;
 		right: 0;
 		height: 6px;
@@ -948,6 +955,7 @@
 
 	/* ---- 头部 ---- */
 	.dock-head {
+		position: relative;
 		display: flex;
 		align-items: center;
 		gap: 8px;
@@ -955,7 +963,11 @@
 		padding: 0 12px;
 		flex: none;
 		border-bottom: 1px solid var(--ui-border-fade);
+		transition: height var(--dock-duration) var(--ui-ease);
 	}
+	.dock.collapsed .dock-head { height: 22px; border-bottom: none; }
+	@media (max-width: 1000px) { .zoom { display: none; } }
+	@media (max-width: 800px) { .crumbs { display: none; } .search input { width: 58px; } }
 	.dock-head :global(.ui-icon:first-of-type) {
 		color: var(--ui-accent);
 	}

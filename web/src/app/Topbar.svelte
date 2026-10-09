@@ -2,12 +2,12 @@
 	import Icon from '../ui/Icon.svelte'
 	import IconButton from '../ui/IconButton.svelte'
 	import SkinSwitcher from '../ui/theme/SkinSwitcher.svelte'
-		import { design } from '../ui/theme/state.svelte'
+	import { design } from '../ui/theme/state.svelte'
 	import type { SaveState } from '../canvas/saveQueue'
 	import { graphSession } from '../canvas/session.svelte'
 	import { backendRegistry } from '../backends/registry.svelte'
 
-	// 顶栏：品牌 / 图名（内联改名）/ 保存状态 / 工作区 / 皮肤切换 / 明暗 / Run
+	// 顶栏：侧栏开关 / 来源与图名 / 保存状态 / 图包 / 主题 / 明暗 / Run
 	let {
 		title,
 		saveState = 'saved',
@@ -15,7 +15,12 @@
 		ready = false,
 		onRename,
 		onRun,
-		onSettings,
+		onManage,
+		sidebarOpen,
+		onToggleSidebar,
+		onExport,
+		onImport,
+		transferring = false,
 	}: {
 		title: string
 		saveState?: SaveState
@@ -23,7 +28,12 @@
 		ready?: boolean
 		onRename: (title: string) => void | Promise<void>
 		onRun: () => void
-		onSettings?: () => void
+		onManage: () => void
+		sidebarOpen: boolean
+		onToggleSidebar: () => void
+		onExport: () => void
+		onImport: () => void
+		transferring?: boolean
 	} = $props()
 
 	let editing = $state(false)
@@ -51,11 +61,9 @@
 </script>
 
 <div class="topbar">
-	<div class="brand">
-		<Icon name="logo" size={17} />
-		<span>Astelier</span>
-	</div>
-	<div class="divider"></div>
+	<button type="button" class="ui-btn icon ghost sidebar-toggle" aria-label={sidebarOpen ? '收起侧栏' : '展开侧栏'} aria-expanded={sidebarOpen} aria-controls="workspace-sidebar" title={sidebarOpen ? '收起侧栏' : '展开侧栏'} onclick={onToggleSidebar}><Icon name={sidebarOpen ? 'sidebarCollapse' : 'sidebarExpand'} size={17} /></button>
+	<span class="source-entry" title={sourceName}><Icon name="layers" size={14} /><span>{sourceName}</span></span>
+	<Icon name="chevronRight" size={12} />
 
 	{#if editing}
 		<input
@@ -82,11 +90,12 @@
 
 	<div class="spacer"></div>
 
-	<button type="button" class="ui-btn ghost sm ws-entry" onclick={onSettings} title="管理后端与 Provider"><Icon name="layers" size={13} /><span>{sourceName}</span></button>
+	<button type="button" class="ui-btn ghost sm" disabled={!ready || transferring} onclick={onImport} title="导入 .astelier 图包"><Icon name="download" size={13} />导入图</button>
+	<button type="button" class="ui-btn ghost sm" disabled={!ready || transferring} onclick={onExport} title="导出当前图为 .astelier"><Icon name="upload" size={13} />导出图</button>
 
 	<SkinSwitcher />
-	{#if onSettings}
-		<IconButton icon="settings" label="设置" size={15} variant="ghost" onclick={onSettings} />
+	{#if !sidebarOpen}
+		<button type="button" class="ui-btn ghost sm" aria-label="管理后端" title="后端与 Provider 设置" onclick={onManage}><Icon name="settings" size={13} />管理</button>
 	{/if}
 	<IconButton
 		icon={design.mode === 'dark' ? 'sun' : 'moon'}
@@ -124,15 +133,7 @@
 		border-color: var(--ui-accent);
 		font-weight: 600;
 	}
-	/* 顶栏来源入口：共享 .ui-btn.ghost.sm 的底，只加固定宽度与省略 */
-	.ws-entry {
-		max-width: 180px;
-	}
-	.ws-entry :global(.ui-icon:first-child) {
-		color: var(--ui-accent);
-	}
-	.ws-entry :global(span) {
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
+	.source-entry { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 150px; color: var(--ui-dim); font-size: 12px; }
+	.source-entry > :global(.ui-icon) { color: var(--ui-accent); }
+	.source-entry span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

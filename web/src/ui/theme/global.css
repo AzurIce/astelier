@@ -1,10 +1,11 @@
 /* ============================================================
    Astelier 设计系统
-   分层：:root 兜底令牌（= 工作台·暗）→ 组件样式（只引用 --ui-*）
+   分层：:root 兜底令牌（= 默认·暗）→ 组件样式（只引用 --ui-*）
    皮肤差异全部由 design/store.svelte.ts 写入 <html> 内联样式。
    ============================================================ */
 
 :root {
+	--ui-app-header-h: 48px;
 	/* —— 兜底令牌（JS 未执行时也不难看）：studio dark —— */
 	--ui-bg: #101114;
 	--ui-panel: #16181d;
@@ -235,7 +236,7 @@ body {
 .skin-entry,
 .tree-row,
 .crumb,
-.dock-rail {
+.dock-toggle {
 	border: none;
 	background: transparent;
 	color: inherit;
@@ -268,7 +269,7 @@ body {
 	display: flex;
 	align-items: center;
 	gap: 10px;
-	height: 48px;
+	height: var(--ui-app-header-h);
 	padding: 0 12px;
 	flex: none;
 	border-bottom: 1px solid var(--ui-border-fade);
@@ -570,30 +571,6 @@ body.resizing-sidebar {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-}
-.tree-row .row-actions {
-	display: none;
-	gap: 2px;
-	flex: none;
-}
-.tree-row:hover .row-actions {
-	display: inline-flex;
-}
-.tree-row .row-actions button {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 20px;
-	height: 20px;
-	border: none;
-	border-radius: 5px;
-	background: transparent;
-	color: var(--ui-dim);
-	cursor: pointer;
-}
-.tree-row .row-actions button:hover {
-	background: var(--ui-track);
-	color: var(--ui-text);
 }
 .tree-row input.rename {
 	flex: 1;

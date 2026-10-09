@@ -106,7 +106,7 @@ async function readGraphRecord(id: string): Promise<GraphRecord | null> {
 }
 
 function toDocWithId(record: GraphRecord): GraphDocWithId {
-	return { version: 1, id: record.id, title: record.title, group_id: record.group_id, nodes: record.nodes, edges: record.edges }
+	return { version: 1, ...record }
 }
 
 async function readGroups(): Promise<GraphGroup[]> {
@@ -307,6 +307,15 @@ export function createOpfsStore(): WorkspaceStore {
 					}
 				}
 			})
+		},
+
+		async listGraphStoreFiles(gid) {
+			const files = []
+			for (const name of (await listDir(graphStoreDir(gid))).files) {
+				const file = await readFile(graphStoreFile(gid, name))
+				if (file) files.push({ name, bytes: file.size })
+			}
+			return files
 		},
 
 		async uploadGraphStoreFile(gid, name, blob) {

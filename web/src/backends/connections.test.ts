@@ -12,7 +12,7 @@ test('connections retain stable IDs, one local root and distinct server roots', 
 		{ id: 'invalid', kind: 'http', baseUrl: 'javascript:alert(1)' },
 	]))
 	assert.deepEqual(entries.map((entry) => entry.id), ['local', 'a', 'b'])
-	assert.equal(entries[0].name, '我的本地')
+	assert.equal(entries[0].name, '浏览器存储')
 	assert.equal(entries[1].baseUrl, 'https://a.example/v1')
 	assert.deepEqual(parseConnections('{broken').map((entry) => entry.id), ['local'])
 })

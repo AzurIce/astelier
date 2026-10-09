@@ -2,8 +2,9 @@
 	import Icon from '../ui/Icon.svelte'
 	import { toast } from '../ui/toast/toast.svelte'
 	import { untrack } from 'svelte'
-	import { backendRegistry, addServer, renameBackend, connectBackend, refreshProviders } from '../backends/registry.svelte'
-	import { detachBackend, flushNow } from '../canvas/session.svelte'
+	import { backendRegistry, addServer, connectBackend, refreshProviders } from '../backends/registry.svelte'
+	import { detachBackend, flushNow, updateBackendConnection } from '../canvas/session.svelte'
+	import type { BackendConnection } from '../backends/types'
 	import { loadLocalConfig, saveLocalConfig } from '../generation/localConfig'
 	import { exportWorkspaceZip, importWorkspaceZip } from '../workspace/opfs/transfer'
 	import type { ProviderConfig, ProviderEntry } from '../generation/localConfig'
@@ -14,6 +15,17 @@
 	let serverName = $state('')
 	let serverUrl = $state('')
 	let connecting = $state(false)
+	let connectionDraft = $state<{ id: string; name: string; baseUrl: string } | null>(null)
+	let updatingConnection = $state(false)
+	function editConnection(entry: BackendConnection) { connectionDraft = { id: entry.id, name: entry.name, baseUrl: entry.baseUrl ?? '' } }
+	async function updateConnection() {
+		if (!connectionDraft || updatingConnection) return
+		const next = { ...connectionDraft }
+		updatingConnection = true
+		try { await updateBackendConnection(next.id, next.name, next.baseUrl); connectionDraft = null; toast({ kind: 'ok', title: '后端连接已更新' }) }
+		catch (error) { toast({ kind: 'err', title: '修改连接失败', msg: String(error) }) }
+		finally { updatingConnection = false }
+	}
 
 	/** 后端状态 → 徽章文案与色调（与 .ui-badge 变体同名） */
 	function statusOf(status: string): { label: string; tone: 'ok' | 'warn' | 'err' } {
@@ -42,6 +54,7 @@
 
 	$effect(() => {
 		if (open) untrack(() => void reload())
+		else connectionDraft = null
 	})
 
 	async function reload() {
@@ -192,14 +205,27 @@
 							{@const status = statusOf(entry.status)}
 							<div class="connection" data-connection-id={entry.id}>
 								<div class="connection-row">
-									<input class="ui-input" aria-label="后端名称" value={entry.name} onchange={(e) => renameBackend(entry.id, e.currentTarget.value)} />
+									<strong class="connection-name">{entry.name}</strong>
 									<span class="ui-badge {status.tone}" title={status.label}><i class="dot"></i>{status.label}</span>
 									<button type="button" class="ui-btn ghost sm" onclick={() => void connectBackend(entry.id)}>刷新 / 重连</button>
-									{#if entry.kind === 'http'}<button type="button" class="ui-btn ghost sm danger" onclick={() => void detach(entry.id)}>移除连接</button>{/if}
+									{#if entry.kind === 'http'}
+										<button type="button" class="ui-btn ghost sm" disabled={updatingConnection} onclick={() => editConnection(entry)}>编辑</button>
+										<button type="button" class="ui-btn ghost sm danger" disabled={updatingConnection} onclick={() => void detach(entry.id)}>移除连接</button>
+									{/if}
 								</div>
-								<p class="hint mono">{entry.baseUrl ?? '本浏览器存储'}</p>
+								{#if connectionDraft?.id === entry.id}
+									<div class="connection-edit">
+										<label class="ui-field"><span>名称</span><input class="ui-input" aria-label="后端名称" bind:value={connectionDraft.name} disabled={updatingConnection} /></label>
+										<label class="ui-field"><span>服务地址</span><input class="ui-input mono" aria-label="后端服务地址" bind:value={connectionDraft.baseUrl} disabled={updatingConnection} /></label>
+										<div class="edit-actions"><button type="button" class="ui-btn ghost sm" disabled={updatingConnection} onclick={() => connectionDraft = null}>取消</button><button type="button" class="ui-btn primary sm" disabled={updatingConnection || !connectionDraft.name.trim() || !connectionDraft.baseUrl.trim()} onclick={() => void updateConnection()}>{updatingConnection ? '保存中…' : '保存连接'}</button></div>
+									</div>
+								{:else if entry.baseUrl}<p class="hint mono">{entry.baseUrl}</p>{/if}
+								{#if entry.kind === 'opfs'}<p class="hint">数据存储由浏览器管理。即使获准持久存储，也不保证永久保留；清除站点数据会删除内容，建议定期导出备份。</p>{/if}
 								{#if entry.error || entry.providerError}<p class="hint err">{entry.error ?? entry.providerError}</p>{/if}
-								{#if entry.kind === 'http'}<p class="hint">Provider：{entry.providers.map((p) => p.name).join('、') || '暂无'}。配置与密钥由服务器管理。</p>{/if}
+								{#each entry.providers as provider (provider.id)}
+									<div class="provider-tags"><span class="ui-badge provider-tag" title="Provider：{provider.id}">{provider.name}</span>{#each provider.models as model}<span class="model-tag" title={model}>{model}</span>{/each}</div>
+								{/each}
+								{#if entry.kind === 'http'}<p class="hint">{entry.providers.length ? '' : '暂无 Provider。'}配置与密钥由服务器管理。</p>{/if}
 							</div>
 						{/each}
 						<div class="connection-add">
@@ -322,6 +348,11 @@
 {/if}
 
 <style>
+	.connection-edit { display: grid; gap: 8px; padding-top: 8px; }
+	.edit-actions { display: flex; gap: 6px; justify-content: flex-end; }
+	.provider-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+	.provider-tag { background: var(--ui-accent-weak); color: var(--ui-accent); }
+	.model-tag { max-width: 100%; overflow-wrap: anywhere; border: 1px solid var(--ui-border-fade); border-radius: 999px; padding: 2px 7px; color: var(--ui-dim); font-size: 10px; }
 	.connection {
 		display: flex;
 		flex-direction: column;
@@ -344,6 +375,7 @@
 		min-width: 0;
 		max-width: 220px;
 	}
+	.connection-name { flex: 1 1 150px; font-size: 12px; }
 	.connection-row .ui-badge {
 		flex: none;
 	}

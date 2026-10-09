@@ -95,6 +95,10 @@ export function createHttpStore(rawBase: string): WorkspaceStore {
 			await api(`/api/groups/${encodeURIComponent(id)}`, { method: 'DELETE' })
 		},
 
+		async listGraphStoreFiles(gid) {
+			return api<GraphStoreFileMeta[]>(`/api/graphs/${encodeURIComponent(gid)}/store`)
+		},
+
 		async uploadGraphStoreFile(gid, name, blob): Promise<GraphStoreFileMeta> {
 			return api<GraphStoreFileMeta>(
 				`/api/graphs/${encodeURIComponent(gid)}/store?filename=${encodeURIComponent(name)}`,

@@ -1,15 +1,17 @@
 <script lang="ts">
-	import { untrack } from 'svelte'
+	import { tick, untrack } from 'svelte'
 	import { autoFocusSelect } from '../ui/actions/autoFocusSelect'
 	import Icon from '../ui/Icon.svelte'
-	import IconButton from '../ui/IconButton.svelte'
 	import { confirmDialog } from '../ui/confirm/confirm.svelte'
 	import { toast } from '../ui/toast/toast.svelte'
 	import { backend, backendStore } from '../backends/registry.svelte'
-	let { backendId }: { backendId: string } = $props()
+	let { backendId, dropPreview = null }: { backendId: string; dropPreview?: GraphDropPreview | null } = $props()
 	const store = untrack(() => backendStore(backendId))
 	import { type GraphGroup, type GraphSummary } from './types'
-	import { graphSession, openGraph, renameGraphAndSync, deleteGraph } from '../canvas/session.svelte'
+	import { graphSession, openGraph, renameGraphAndSync, deleteGraph, flushNow } from '../canvas/session.svelte'
+	import { createGraphArchive } from './graphArchive'
+	import { downloadFile } from '../ui/download'
+	import type { GraphDropPreview } from './graphDrop'
 
 	interface Row {
 		kind: 'dir' | 'graph'
@@ -24,6 +26,14 @@
 	let activeId = $derived(graphSession.backendId === backendId ? graphSession.id : '')
 	let expanded: Record<string, boolean> = $state({})
 	let loadError: string | null = $state(null)
+	let exporting = $state(false)
+	async function exportGraph(row: Row) {
+		if (exporting) return
+		exporting = true
+		try { await flushNow(); downloadFile(await createGraphArchive(store, row.id)) }
+		catch (error) { toast({ kind: 'err', title: '导出图失败', msg: String(error) }) }
+		finally { exporting = false }
+	}
 
 	// 内联新建 / 重命名（draft = 输入框当前值，供 window pointerdown 提交）
 	let creating: { kind: 'dir' | 'graph'; parentId: string | null } | null = $state(null)
@@ -33,6 +43,20 @@
 
 	// 右键菜单（视口内翻转）
 	let menu: { x: number; y: number; target: Row | null } | null = $state(null)
+	let menuElement: HTMLDivElement | undefined = $state()
+	let menuTrigger: HTMLElement | null = null
+
+	$effect(() => {
+		const current = menu
+		if (!current || !menuElement) return
+		void tick().then(() => {
+			if (menu !== current || !menuElement) return
+			const rect = menuElement.getBoundingClientRect()
+			menuElement.style.left = `${Math.max(8, Math.min(current.x, window.innerWidth - rect.width - 8))}px`
+			menuElement.style.top = `${Math.max(8, Math.min(current.y, window.innerHeight - rect.height - 8))}px`
+			menuElement.querySelector<HTMLButtonElement>('button')?.focus()
+		})
+	})
 
 	// 拖拽移动
 	let dragging: { kind: 'dir' | 'graph'; id: string } | null = $state(null)
@@ -96,7 +120,7 @@
 
 	// ---------- 新建 / 重命名 ----------
 
-	function startCreate(kind: 'dir' | 'graph', parentId: string | null) {
+	export function startCreate(kind: 'dir' | 'graph', parentId: string | null = null) {
 		expanded = { ...expanded, [parentId ?? 'root']: true }
 		creating = { kind, parentId }
 		renaming = null
@@ -156,7 +180,7 @@
 				dirs.some((d) => d.parent_id === row.id) ||
 				graphs.some((g) => g.group_id === row.id)
 			const msg = hasContent
-				? `删除文件夹「${row.name}」？其中的图将移动到根目录。`
+				? `删除文件夹「${row.name}」及其子文件夹？其中的图将保留并移动到根目录。`
 				: `删除空文件夹「${row.name}」？`
 			if (!(await confirmDialog({ title: '删除文件夹', message: msg, confirmText: '删除', danger: true })))
 				return
@@ -245,28 +269,49 @@
 
 	// ---------- 右键菜单 ----------
 
+	export function openRootMenu(e: MouseEvent) { onContext(e, null) }
+
 	function onContext(e: MouseEvent, row: Row | null) {
 		e.preventDefault()
 		e.stopPropagation()
-		// 视口内翻转，避免菜单超出屏幕
-		const x = Math.min(e.clientX, window.innerWidth - 180)
-		const y = Math.min(e.clientY, window.innerHeight - 230)
-		menu = { x, y, target: row }
+		menuTrigger = e.currentTarget as HTMLElement
+		menu = { x: e.clientX, y: e.clientY, target: row }
 	}
-	function closeMenu() {
+	function showRowMenu(e: MouseEvent, row: Row) {
+		e.stopPropagation()
+		const trigger = e.currentTarget as HTMLElement
+		const rect = trigger.getBoundingClientRect()
+		menuTrigger = trigger
+		menu = { x: rect.left, y: rect.bottom + 4, target: row }
+	}
+	export function closeMenu(restoreFocus = false) {
+		if (!menu) return
 		menu = null
+		if (restoreFocus) menuTrigger?.focus()
+	}
+	function onMenuKeydown(e: KeyboardEvent) {
+		const buttons = [...(menuElement?.querySelectorAll<HTMLButtonElement>('button') ?? [])]
+		const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+		if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Home' || e.key === 'End') {
+			e.preventDefault()
+			const next = e.key === 'Home' ? 0 : e.key === 'End' ? buttons.length - 1 : (index + (e.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
+			buttons[next]?.focus()
+		} else if (e.key === 'Tab') closeMenu()
 	}
 	/** 点击输入框之外的任何地方：提交重命名 / 新建（blur 路径不可靠） */
 	function onWinPointerDown(e: PointerEvent) {
+		// 捕获阶段不能卸载菜单内的按钮，否则后续 click 无法执行。
+		if (menuElement?.contains(e.target as Node)) return
 		closeMenu()
 		const inInput = (e.target as HTMLElement | null)?.closest?.('.rename')
 		if (renaming && !inInput) void commitRename(renameDraft)
 		else if (creating && !inInput) void commitCreate(createDraft)
 	}
-	async function menuAct(fn: () => void, row: Row | null) {
-		closeMenu()
+	function menuAct(fn: () => void, row: Row | null) {
 		if (row?.kind === 'dir') expanded = { ...expanded, [row.id]: true }
+		// 菜单模板的行引用依赖 menu，先将目标传给操作，再卸载菜单。
 		fn()
+		closeMenu()
 	}
 </script>
 
@@ -276,26 +321,11 @@
 	onpointerdowncapture={onWinPointerDown}
 	onpointermove={onWinPointerMove}
 	onpointerup={onWinPointerUp}
-	onkeydown={(e) => e.key === 'Escape' && closeMenu()}
+	onkeydown={(e) => e.key === 'Escape' && closeMenu(true)}
+	onresize={() => closeMenu()}
 />
 
-<div class="backend-graphs" data-graph-backend={backendId} oncontextmenu={(e) => onContext(e, null)} role="navigation">
-	<div class="side-head">
-		<span class="label">图与分组</span>
-		<IconButton
-			icon="plus"
-			label="新建图（根目录）"
-			sm
-			onclick={() => startCreate('graph', null)}
-		/>
-		<IconButton
-			icon="folder"
-			label="新建文件夹（根目录）"
-			sm
-			onclick={() => startCreate('dir', null)}
-		/>
-	</div>
-
+<div class="backend-graphs" data-graph-backend={backendId} oncontextmenu={openRootMenu} role="navigation">
 	{#if loadError}
 		<div class="side-err">{loadError}</div>
 	{/if}
@@ -308,7 +338,7 @@
 			{@render CreateRow(0)}
 		{/if}
 		{#if tree.length === 0 && !creating}
-			<div class="side-empty">还没有图。<br />点上方 + 或右键新建。</div>
+			<div class="side-empty">还没有图，点上方 + 新建。</div>
 		{/if}
 	</div>
 
@@ -329,11 +359,14 @@
 
 	{#if menu}
 		<div
+			bind:this={menuElement}
 			class="ui-menu"
 			role="menu"
 			tabindex="-1"
 			style:left="{menu.x}px"
 			style:top="{menu.y}px"
+			onkeydown={onMenuKeydown}
+			oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation() }}
 		>
 			{#if menu.target?.kind === 'dir'}
 				{@const row = menu.target}
@@ -351,6 +384,7 @@
 				</button>
 			{:else if menu.target?.kind === 'graph'}
 				{@const row = menu.target}
+				<button type="button" class="ui-menu-item" role="menuitem" disabled={exporting} onclick={() => menuAct(() => void exportGraph(row), row)}><Icon name="upload" size={14} />导出 .astelier</button>
 				<button type="button" class="ui-menu-item" role="menuitem" onclick={() => menuAct(() => startRename(row), row)}>
 					<Icon name="pencil" size={14} />重命名
 				</button>
@@ -358,6 +392,7 @@
 					<Icon name="trash" size={14} />删除
 				</button>
 			{:else}
+				<div class="ui-menu-label">{backend(backendId).name}</div>
 				<button type="button" class="ui-menu-item" role="menuitem" onclick={() => menuAct(() => startCreate('graph', null), null)}>
 					<Icon name="plus" size={14} />新建图
 				</button>
@@ -370,18 +405,28 @@
 </div>
 
 {#snippet RowEl(row: Row, depth: number)}
-	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div
 		class="tree-row"
 		data-row-id={row.id}
 		data-row-kind={row.kind}
+		data-row-name={row.name}
 		aria-selected={row.kind === 'graph' && row.id === activeId}
+		aria-expanded={row.kind === 'dir' ? expanded[row.id] !== false : undefined}
 		class:active={row.kind === 'graph' && row.id === activeId}
 		class:droppable={dropTarget === row.id && row.kind === 'dir'}
 		class:dragging={dragging?.id === row.id}
+		class:archive-folder={dropPreview?.groupId === row.id && row.kind === 'dir'}
 		style:padding-left="{8 + depth * 14}px"
 		role="treeitem"
-		tabindex="-1"
+		tabindex="0"
+		onkeydown={(e) => {
+			if (e.target !== e.currentTarget) return
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault()
+				if (row.kind === 'dir') expanded = { ...expanded, [row.id]: expanded[row.id] === false }
+				else open(row)
+			} else if (e.key === 'F2') { e.preventDefault(); startRename(row) }
+		}}
 		onpointerdown={(e) => onRowPointerDown(e, row)}
 		oncontextmenu={(e) => onContext(e, row)}
 		onclick={() => {
@@ -401,7 +446,7 @@
 				aria-label="展开/折叠"
 				onclick={(e) => {
 					e.stopPropagation()
-					expanded = { ...expanded, [row.id]: !expanded[row.id] }
+					expanded = { ...expanded, [row.id]: expanded[row.id] === false }
 				}}
 			>
 				<Icon name="chevronDown" size={12} />
@@ -428,33 +473,19 @@
 				onblur={(e) => void commitRename((e.target as HTMLInputElement).value)}
 			/>
 		{:else}
-			<span class="name">{row.name}</span>
-			<span class="row-actions">
-				<button
-					type="button"
-					title="重命名"
-					aria-label="重命名"
-					onpointerdown={(e) => e.stopPropagation()}
-					onclick={(e) => {
-						e.stopPropagation()
-						startRename(row)
-					}}
-				>
-					<Icon name="pencil" size={12} />
-				</button>
-				<button
-					type="button"
-					title="删除"
-					aria-label="删除"
-					onpointerdown={(e) => e.stopPropagation()}
-					onclick={(e) => {
-						e.stopPropagation()
-						void remove(row)
-					}}
-				>
-					<Icon name="trash" size={12} />
-				</button>
-			</span>
+			<span class="name" title={row.name}>{row.name}</span>
+			<button
+				type="button"
+				class="row-menu"
+				title="更多操作：新建、重命名、删除"
+				aria-label="更多操作：{row.name}"
+				aria-haspopup="menu"
+				aria-expanded={menu?.target?.id === row.id && menu?.target?.kind === row.kind}
+				onclick={(e) => showRowMenu(e, row)}
+				ondblclick={(e) => e.stopPropagation()}
+			>
+				<Icon name="more" size={14} />
+			</button>
 		{/if}
 	</div>
 
@@ -491,16 +522,25 @@
 {/snippet}
 
 <style>
-	/* 每棵图树：头部固定，树自己滚动（父级 details 已给它 flex 高度） */
 	.backend-graphs {
+		position: relative;
 		display: flex;
 		flex-direction: column;
-		min-height: 0;
-		flex: 1;
 	}
-	/* 图树头部比侧栏标题矮一档，和节点列表排在一起才不显臃肿 */
-	.backend-graphs > :global(.side-head) {
-		height: 30px;
-		padding: 0 6px 0 10px;
+	.tree { flex: none; overflow: visible; padding-bottom: 28px; }
+	.tree-row.archive-folder { background: var(--ui-accent-weak); outline: 1px solid var(--ui-accent); outline-offset: -1px; }
+	.row-menu {
+		display: grid;
+		place-items: center;
+		flex: none;
+		width: 24px;
+		height: 24px;
+		border: none;
+		border-radius: var(--ui-r-control);
+		background: transparent;
+		color: var(--ui-faint);
+		cursor: pointer;
 	}
+	.row-menu:hover, .row-menu[aria-expanded='true'] { color: var(--ui-text); background: var(--ui-track); }
+	.row-menu:focus-visible, .tree-row:focus-visible { outline: 1px solid var(--ui-accent); outline-offset: -1px; }
 </style>
